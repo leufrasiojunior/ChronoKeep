@@ -48,7 +48,7 @@ Não é necessário compilar nada nem usar scripts complexos. O executável **`C
 ### No Linux / WSL (Cross-Compile para Windows x64 MSVC):
 ```bash
 # 1. Compilar o Daemon e a DLL
-cargo build --manifest-path rust-workspace/Cargo.toml --target x86_64-pc-windows-msvc --release --bin chrono-daemon -p cr-bridge-dll
+cargo build --manifest-path rust-workspace/Cargo.toml --target x86_64-pc-windows-msvc --release -p cr-service -p cr-bridge-dll
 
 # 2. Atualizar os binários na pasta embutida do instalador
 mkdir -p rust-workspace/crates/cr-gui/embedded

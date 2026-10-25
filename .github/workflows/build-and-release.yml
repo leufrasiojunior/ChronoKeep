@@ -39,14 +39,15 @@ jobs:
       - name: Build Core Daemon & Bridge DLL
         shell: pwsh
         run: |
-          cargo build --manifest-path rust-workspace/Cargo.toml --release --bin chrono-daemon -p cr-bridge-dll
+          cargo build --manifest-path rust-workspace/Cargo.toml --release -p cr-service -p cr-bridge-dll
 
       - name: Update Embedded Binaries for Installer
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path rust-workspace/crates/cr-gui/embedded
-          Copy-Item -Force rust-workspace/target/release/chrono-daemon.exe rust-workspace/crates/cr-gui/embedded/
-          Copy-Item -Force rust-workspace/target/release/chronokeep.dll rust-workspace/crates/cr-gui/embedded/
+          $binDir = if (Test-Path "rust-workspace/target/release/chrono-daemon.exe") { "rust-workspace/target/release" } else { "rust-workspace/target/x86_64-pc-windows-msvc/release" }
+          Copy-Item -Force "$binDir/chrono-daemon.exe" rust-workspace/crates/cr-gui/embedded/
+          Copy-Item -Force "$binDir/chronokeep.dll" rust-workspace/crates/cr-gui/embedded/
           if (Test-Path dist/chronokeep.ini) {
             Copy-Item -Force dist/chronokeep.ini rust-workspace/crates/cr-gui/embedded/
           }
@@ -60,10 +61,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-artifacts
-          Copy-Item -Force rust-workspace/target/release/ChronoKeepSetup.exe release-artifacts/
-          Copy-Item -Force rust-workspace/target/release/chrono-daemon.exe release-artifacts/
-          Copy-Item -Force rust-workspace/target/release/chronokeep.dll release-artifacts/
-          Copy-Item -Force rust-workspace/target/release/chronokeep.dll release-artifacts/cloud_redirect.dll
+          $binDir = if (Test-Path "rust-workspace/target/release/ChronoKeepSetup.exe") { "rust-workspace/target/release" } else { "rust-workspace/target/x86_64-pc-windows-msvc/release" }
+          Copy-Item -Force "$binDir/ChronoKeepSetup.exe" release-artifacts/
+          Copy-Item -Force "$binDir/chrono-daemon.exe" release-artifacts/
+          Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/
+          Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/cloud_redirect.dll
           if (Test-Path dist/chronokeep.ini) {
             Copy-Item -Force dist/chronokeep.ini release-artifacts/
           }
