@@ -358,6 +358,24 @@ impl RpcEngine {
         let _ = self.vault.save_manifest(account_id, app_id, &manifest);
         self.full_manifest_sent.remove(&(account_id, app_id));
 
+        if let Some(ref sp) = self.vault.steam_path {
+            let exe_dir = sp.clone();
+            let rel_clone = raw_filename
+                .split_once('}')
+                .map(|(_, r)| r.trim_start_matches('/').trim_start_matches('\\').to_string())
+                .unwrap_or_else(|| raw_filename.to_string());
+            let bytes_clone = bytes.clone();
+            std::thread::spawn(move || {
+                let _ = crate::gdrive::sync_file_to_gdrive(
+                    &exe_dir,
+                    account_id,
+                    app_id,
+                    &rel_clone,
+                    &bytes_clone,
+                );
+            });
+        }
+
         (ERESULT_OK, build_commit_upload_response(true))
     }
 

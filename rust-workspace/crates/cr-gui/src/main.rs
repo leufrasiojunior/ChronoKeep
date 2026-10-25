@@ -1,18 +1,24 @@
 #![windows_subsystem = "windows"]
-//! Native Win32 GUI Installer & Configurator (`NebulaSetup.exe`).
-//! Installs the Bridge DLL (`nebula_core.dll` + optional host loader compatibility),
-//! deploys `cr-service.exe`, configures the Vault path & Google OAuth credentials,
-//! and manages the background service.
+//! Native Win32 GUI Installer & Configurator (`ChronoKeepSetup.exe`).
+//! Installs the Bridge DLL (`chronokeep.dll` + optional host loader compatibility),
+//! deploys `chrono-daemon.exe`, configures the Vault path, and provides 1-Click
+//! Google Drive OAuth2 Browser Login using the pre-verified Desktop OAuth client.
 
 use cr_proto::cloud_messages::DEFAULT_SERVICE_PORT;
 use std::env;
+use std::ffi::c_void;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::time::Duration;
+
+const GDRIVE_CLIENT_ID: &str =
+    "1072944905499-vm2v2i5dvn0a0d2o4ca36i1vge8cvbn0.apps.googleusercontent.com";
+const GDRIVE_CLIENT_SECRET: &str = "v6V3fKV_zWU7iw1DrpO1rknX";
+const GDRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 
 type HWND = usize;
 type HINSTANCE = usize;
@@ -22,6 +28,9 @@ type HBRUSH = usize;
 type WPARAM = usize;
 type LPARAM = isize;
 type LRESULT = isize;
+type HINTERNET = *mut c_void;
+type DWORD = u32;
+type BOOL = i32;
 
 const WS_OVERLAPPED: u32 = 0x0000_0000;
 const WS_CAPTION: u32 = 0x00C0_0000;
@@ -52,18 +61,26 @@ const MB_ICONINFORMATION: u32 = 0x0000_0040;
 const MB_ICONERROR: u32 = 0x0000_0010;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+const WINHTTP_ACCESS_TYPE_DEFAULT_PROXY: DWORD = 0;
+const INTERNET_DEFAULT_HTTPS_PORT: u16 = 443;
+const WINHTTP_FLAG_SECURE: DWORD = 0x0080_0000;
+const WINHTTP_FLAG_ESCAPE_DISABLE: DWORD = 0x0000_0040;
+const WINHTTP_ADDREQ_FLAG_ADD: DWORD = 0x2000_0000;
+const WINHTTP_QUERY_STATUS_CODE: DWORD = 19;
+const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x2000_0000;
+
 const ID_EDIT_STEAM: usize = 101;
 const ID_EDIT_VAULT: usize = 102;
 const ID_EDIT_PORT: usize = 103;
 const ID_EDIT_DLL_NAME: usize = 104;
 const ID_CHK_LOADER_COMPAT: usize = 105;
-const ID_EDIT_GOOGLE_ID: usize = 106;
-const ID_EDIT_GOOGLE_SECRET: usize = 107;
 const ID_BTN_INSTALL: usize = 201;
 const ID_BTN_START_SVC: usize = 202;
 const ID_BTN_OPEN_VAULT: usize = 203;
 const ID_BTN_OPEN_LOGS: usize = 204;
+const ID_BTN_GOOGLE_LOGIN: usize = 205;
 const ID_LBL_STATUS: usize = 301;
+const ID_LBL_GDRIVE_STATUS: usize = 302;
 
 #[repr(C)]
 struct WNDCLASSEXW {
@@ -116,7 +133,8 @@ extern "system" {
     ) -> HWND;
     fn ShowWindow(h_wnd: HWND, n_cmd_show: i32) -> i32;
     fn UpdateWindow(h_wnd: HWND) -> i32;
-    fn GetMessageW(lp_msg: *mut MSG, h_wnd: HWND, w_msg_filter_min: u32, w_msg_filter_max: u32) -> i32;
+    fn GetMessageW(lp_msg: *mut MSG, h_wnd: HWND, w_msg_filter_min: u32, w_msg_filter_max: u32)
+        -> i32;
     fn TranslateMessage(lp_msg: *const MSG) -> i32;
     fn DispatchMessageW(lp_msg: *const MSG) -> LRESULT;
     fn DefWindowProcW(h_wnd: HWND, msg: u32, w_param: WPARAM, l_param: LPARAM) -> LRESULT;
@@ -152,8 +170,129 @@ extern "system" {
     ) -> usize;
 }
 
+#[link(name = "winhttp")]
+extern "system" {
+    fn WinHttpOpen(
+        psz_agent_w: *const u16,
+        dw_access_type: DWORD,
+        psz_proxy_w: *const u16,
+        psz_proxy_bypass_w: *const u16,
+        dw_flags: DWORD,
+    ) -> HINTERNET;
+    fn WinHttpConnect(
+        h_session: HINTERNET,
+        pswz_server_name: *const u16,
+        n_server_port: u16,
+        dw_reserved: DWORD,
+    ) -> HINTERNET;
+    fn WinHttpOpenRequest(
+        h_connect: HINTERNET,
+        pwsz_verb: *const u16,
+        pwsz_object_name: *const u16,
+        pwsz_version: *const u16,
+        pwsz_referrer: *const u16,
+        ppwsz_accept_types: *const *const u16,
+        dw_flags: DWORD,
+    ) -> HINTERNET;
+    fn WinHttpAddRequestHeaders(
+        h_request: HINTERNET,
+        lpsz_headers: *const u16,
+        dw_headers_length: DWORD,
+        dw_modifiers: DWORD,
+    ) -> BOOL;
+    fn WinHttpSendRequest(
+        h_request: HINTERNET,
+        lpsz_headers: *const u16,
+        dw_headers_length: DWORD,
+        lp_optional: *const c_void,
+        dw_optional_length: DWORD,
+        dw_total_length: DWORD,
+        dw_context: usize,
+    ) -> BOOL;
+    fn WinHttpReceiveResponse(h_request: HINTERNET, lp_reserved: *mut c_void) -> BOOL;
+    fn WinHttpQueryHeaders(
+        h_request: HINTERNET,
+        dw_info_level: DWORD,
+        pwsz_name: *const u16,
+        lp_buffer: *mut c_void,
+        lpdw_buffer_length: *mut DWORD,
+        lpdw_index: *mut DWORD,
+    ) -> BOOL;
+    fn WinHttpQueryDataAvailable(h_request: HINTERNET, lpdw_number_of_bytes_available: *mut DWORD)
+        -> BOOL;
+    fn WinHttpReadData(
+        h_request: HINTERNET,
+        lp_buffer: *mut c_void,
+        dw_number_of_bytes_to_read: DWORD,
+        lpdw_number_of_bytes_read: *mut DWORD,
+    ) -> BOOL;
+    fn WinHttpCloseHandle(h_internet: HINTERNET) -> BOOL;
+}
+
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(v) = u8::from_str_radix(hex_str, 16) {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+            }
+        } else if bytes[i] == b'+' {
+            out.push(b' ');
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn extract_json_str(json: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\"", key);
+    let idx = json.find(&pattern)?;
+    let after_key = &json[idx + pattern.len()..];
+    let colon = after_key.find(':')?;
+    let after_colon = after_key[colon + 1..].trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    let content = &after_colon[1..];
+    let mut out = String::new();
+    let mut chars = content.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(esc) = chars.next() {
+                out.push(esc);
+            }
+        } else if c == '"' {
+            return Some(out);
+        } else {
+            out.push(c);
+        }
+    }
+    None
 }
 
 unsafe fn get_control_text(hwnd_parent: HWND, id: usize) -> String {
@@ -269,8 +408,6 @@ unsafe fn populate_existing_config(hwnd: HWND) {
     let mut vault_dir = detect_default_vault_dir();
     let mut port = DEFAULT_SERVICE_PORT.to_string();
     let mut dll_name = "chronokeep.dll".to_string();
-    let mut google_id = String::new();
-    let mut google_secret = String::new();
 
     let ini_path = Path::new(&steam_dir).join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -288,10 +425,6 @@ unsafe fn populate_existing_config(hwnd: HWND) {
                     port = v.to_string();
                 } else if k.eq_ignore_ascii_case("dll_name") && !v.is_empty() {
                     dll_name = v.to_string();
-                } else if k.eq_ignore_ascii_case("google_client_id") {
-                    google_id = v.to_string();
-                } else if k.eq_ignore_ascii_case("google_client_secret") {
-                    google_secret = v.to_string();
                 }
             }
         }
@@ -301,8 +434,6 @@ unsafe fn populate_existing_config(hwnd: HWND) {
     set_control_text(hwnd, ID_EDIT_VAULT, &vault_dir);
     set_control_text(hwnd, ID_EDIT_PORT, &port);
     set_control_text(hwnd, ID_EDIT_DLL_NAME, &dll_name);
-    set_control_text(hwnd, ID_EDIT_GOOGLE_ID, &google_id);
-    set_control_text(hwnd, ID_EDIT_GOOGLE_SECRET, &google_secret);
 
     let chk = GetDlgItem(hwnd, ID_CHK_LOADER_COMPAT as i32);
     if chk != 0 {
@@ -310,6 +441,16 @@ unsafe fn populate_existing_config(hwnd: HWND) {
     }
 
     refresh_status_label(hwnd);
+}
+
+fn is_gdrive_connected(steam_dir: &str) -> bool {
+    let token_path = Path::new(steam_dir).join("chronokeep_gdrive.json");
+    if let Ok(content) = fs::read_to_string(token_path) {
+        if let Some(rt) = extract_json_str(&content, "refresh_token") {
+            return !rt.is_empty();
+        }
+    }
+    false
 }
 
 unsafe fn refresh_status_label(hwnd: HWND) {
@@ -322,16 +463,25 @@ unsafe fn refresh_status_label(hwnd: HWND) {
     let dll_exists = Path::new(&steam_dir).join(&dll_name).exists()
         || Path::new(&steam_dir).join("cloud_redirect.dll").exists();
     let svc_online = check_service_online(port);
+    let gdrive_ok = is_gdrive_connected(&steam_dir);
+
+    let gdrive_text = if gdrive_ok {
+        "4. Conta Google Drive: [CONECTADA — Sincronizacao em nuvem ativa]"
+    } else {
+        "4. Conta Google Drive: [NAO CONECTADA — Clique abaixo para logar no navegador]"
+    };
+    set_control_text(hwnd, ID_LBL_GDRIVE_STATUS, gdrive_text);
 
     let status_text = format!(
-        "Status: DLL na Steam: [{}]   |   Servico Local (127.0.0.1:{}): [{}]",
+        "Status: DLL na Steam: [{}]   |   Daemon (127.0.0.1:{}): [{}]   |   GDrive: [{}]",
         if dll_exists {
             "INSTALADA"
         } else {
-            "NAO ENCONTRADA"
+            "NAO INSTALADA"
         },
         port,
-        if svc_online { "ONLINE" } else { "OFFLINE" }
+        if svc_online { "ONLINE" } else { "OFFLINE" },
+        if gdrive_ok { "OK" } else { "OFF" }
     );
     set_control_text(hwnd, ID_LBL_STATUS, &status_text);
 }
@@ -366,13 +516,237 @@ fn ensure_opensteamtool_cloud_enabled(steam_dir: &Path) {
     }
 }
 
+fn exchange_code_for_tokens(code: &str, redirect_uri: &str) -> Option<String> {
+    unsafe {
+        let body = format!(
+            "code={}&client_id={}&client_secret={}&redirect_uri={}&grant_type=authorization_code",
+            url_encode(code),
+            url_encode(GDRIVE_CLIENT_ID),
+            url_encode(GDRIVE_CLIENT_SECRET),
+            url_encode(redirect_uri)
+        );
+        let body_bytes = body.as_bytes();
+
+        let agent = to_wide("ChronoKeepSetup/1.0");
+        let h_session = WinHttpOpen(
+            agent.as_ptr(),
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            null(),
+            null(),
+            0,
+        );
+        if h_session.is_null() {
+            return None;
+        }
+
+        let host_w = to_wide("oauth2.googleapis.com");
+        let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if h_conn.is_null() {
+            WinHttpCloseHandle(h_session);
+            return None;
+        }
+
+        let verb_w = to_wide("POST");
+        let path_w = to_wide("/token");
+        let h_req = WinHttpOpenRequest(
+            h_conn,
+            verb_w.as_ptr(),
+            path_w.as_ptr(),
+            null(),
+            null(),
+            null(),
+            WINHTTP_FLAG_SECURE | WINHTTP_FLAG_ESCAPE_DISABLE,
+        );
+        if h_req.is_null() {
+            WinHttpCloseHandle(h_conn);
+            WinHttpCloseHandle(h_session);
+            return None;
+        }
+
+        let hdr_w = to_wide("Content-Type: application/x-www-form-urlencoded");
+        WinHttpAddRequestHeaders(
+            h_req,
+            hdr_w.as_ptr(),
+            hdr_w.len().saturating_sub(1) as DWORD,
+            WINHTTP_ADDREQ_FLAG_ADD,
+        );
+
+        let ok = WinHttpSendRequest(
+            h_req,
+            null(),
+            0,
+            body_bytes.as_ptr() as *const c_void,
+            body_bytes.len() as DWORD,
+            body_bytes.len() as DWORD,
+            0,
+        );
+        if ok == 0 || WinHttpReceiveResponse(h_req, null_mut()) == 0 {
+            WinHttpCloseHandle(h_req);
+            WinHttpCloseHandle(h_conn);
+            WinHttpCloseHandle(h_session);
+            return None;
+        }
+
+        let mut status_code: DWORD = 0;
+        let mut status_len: DWORD = std::mem::size_of::<DWORD>() as DWORD;
+        WinHttpQueryHeaders(
+            h_req,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            null(),
+            &mut status_code as *mut _ as *mut c_void,
+            &mut status_len,
+            null_mut(),
+        );
+
+        let mut resp_bytes = Vec::new();
+        loop {
+            let mut avail: DWORD = 0;
+            if WinHttpQueryDataAvailable(h_req, &mut avail) == 0 || avail == 0 {
+                break;
+            }
+            let mut chunk = vec![0u8; avail as usize];
+            let mut read: DWORD = 0;
+            if WinHttpReadData(
+                h_req,
+                chunk.as_mut_ptr() as *mut c_void,
+                avail,
+                &mut read,
+            ) == 0
+                || read == 0
+            {
+                break;
+            }
+            resp_bytes.extend_from_slice(&chunk[..read as usize]);
+        }
+
+        WinHttpCloseHandle(h_req);
+        WinHttpCloseHandle(h_conn);
+        WinHttpCloseHandle(h_session);
+
+        if status_code != 200 {
+            return None;
+        }
+        let json = String::from_utf8_lossy(&resp_bytes).into_owned();
+        if extract_json_str(&json, "refresh_token").is_some() {
+            Some(json)
+        } else {
+            None
+        }
+    }
+}
+
+unsafe fn on_google_browser_login(hwnd: HWND) {
+    let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);
+    let steam_dir = Path::new(&steam_dir_str);
+    if !steam_dir.exists() {
+        let msg = to_wide("Verifique o caminho da pasta da Steam antes de conectar o Google Drive.");
+        let cap = to_wide("ChronoKeep");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    let Ok(listener) = TcpListener::bind("127.0.0.1:0") else {
+        let msg = to_wide("Falha ao abrir porta local temporaria para o callback OAuth.");
+        let cap = to_wide("Erro");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR);
+        return;
+    };
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    let redirect_uri = format!("http://localhost:{}/callback", port);
+
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        url_encode(GDRIVE_CLIENT_ID),
+        url_encode(&redirect_uri),
+        url_encode(GDRIVE_SCOPE)
+    );
+
+    set_control_text(
+        hwnd,
+        ID_LBL_GDRIVE_STATUS,
+        "4. Conta Google Drive: [AGUARDANDO LOGIN NO NAVEGADOR...]",
+    );
+
+    let op = to_wide("open");
+    let url_w = to_wide(&auth_url);
+    ShellExecuteW(hwnd, op.as_ptr(), url_w.as_ptr(), null(), null(), SW_SHOWNORMAL);
+
+    // Wait for browser redirect callback
+    let mut auth_code: Option<String> = None;
+    for stream in listener.incoming().flatten() {
+        let mut s = stream;
+        let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut buf = [0u8; 4096];
+        let Ok(n) = s.read(&mut buf) else {
+            continue;
+        };
+        let req_str = String::from_utf8_lossy(&buf[..n]);
+        let first_line = req_str.lines().next().unwrap_or("");
+        if !first_line.contains("/callback") {
+            let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+            continue;
+        }
+
+        if let Some(q_idx) = first_line.find('?') {
+            let query_part = first_line[q_idx + 1..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
+            for pair in query_part.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    if k == "code" {
+                        auth_code = Some(url_decode(v));
+                    }
+                }
+            }
+        }
+
+        let html = "<html><head><meta charset='utf-8'><title>ChronoKeep</title></head>\
+            <body style='background:#0F172A;color:#F8FAFC;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+            <h1 style='color:#38BDF8;'>ChronoKeep Conectado!</h1>\
+            <p>Sua conta do Google Drive foi vinculada com sucesso. Voce ja pode fechar esta aba e voltar ao ChronoKeep.</p>\
+            </body></html>";
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            html.len(),
+            html
+        );
+        let _ = s.write_all(resp.as_bytes());
+        let _ = s.flush();
+        break;
+    }
+
+    let Some(code) = auth_code else {
+        refresh_status_label(hwnd);
+        let msg = to_wide("Nenhum codigo de autorizacao recebido do navegador.");
+        let cap = to_wide("ChronoKeep");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR);
+        return;
+    };
+
+    if let Some(token_json) = exchange_code_for_tokens(&code, &redirect_uri) {
+        let token_path = steam_dir.join("chronokeep_gdrive.json");
+        let _ = fs::write(&token_path, token_json);
+        refresh_status_label(hwnd);
+        let msg = to_wide(
+            "Conta Google Drive conectada com sucesso!\r\n\
+             Os seus saves agora serao sincronizados automaticamente na pasta 'ChronoKeep' do seu Google Drive.",
+        );
+        let cap = to_wide("ChronoKeep — Google Drive Conectado");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONINFORMATION);
+    } else {
+        refresh_status_label(hwnd);
+        let msg = to_wide("Falha ao trocar o codigo OAuth pelo token de acesso.");
+        let cap = to_wide("Erro OAuth");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR);
+    }
+}
+
 unsafe fn on_install_and_save(hwnd: HWND) {
     let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);
     let vault_dir_str = get_control_text(hwnd, ID_EDIT_VAULT);
     let port_str = get_control_text(hwnd, ID_EDIT_PORT);
     let mut dll_name = get_control_text(hwnd, ID_EDIT_DLL_NAME);
-    let google_id = get_control_text(hwnd, ID_EDIT_GOOGLE_ID);
-    let google_secret = get_control_text(hwnd, ID_EDIT_GOOGLE_SECRET);
     let compat_checked = is_checked(hwnd, ID_CHK_LOADER_COMPAT);
 
     if dll_name.is_empty() {
@@ -398,10 +772,8 @@ unsafe fn on_install_and_save(hwnd: HWND) {
         "# Configuracao do ChronoKeep gerada pelo Instalador GUI\r\n\
          port={}\r\n\
          vault_dir={}\r\n\
-         dll_name={}\r\n\
-         google_client_id={}\r\n\
-         google_client_secret={}\r\n",
-        port, vault_dir_str, dll_name, google_id, google_secret
+         dll_name={}\r\n",
+        port, vault_dir_str, dll_name
     );
     let ini_path = steam_dir.join("chronokeep.ini");
     if let Err(e) = fs::write(&ini_path, ini_content) {
@@ -531,7 +903,7 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "STATIC",
-                "2. Pasta do Cofre de Saves (Local / Google Drive Desktop / OneDrive):",
+                "2. Pasta Local do Cofre de Saves (Cache Local / Vault):",
                 0,
                 20,
                 74,
@@ -609,7 +981,7 @@ unsafe extern "system" fn wnd_proc(
                 "Criar tambem ponte de compatibilidade para OpenSteamTool / HubcapTools",
                 BS_AUTOCHECKBOX | WS_TABSTOP,
                 20,
-                190,
+                192,
                 560,
                 22,
                 ID_CHK_LOADER_COMPAT,
@@ -619,50 +991,25 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "STATIC",
-                "4. Google Drive API — OAuth Client ID (Opcional para sync direto via API):",
+                "4. Conta Google Drive: [Verificando...]",
                 0,
                 20,
-                224,
+                230,
                 560,
                 20,
-                0,
+                ID_LBL_GDRIVE_STATUS,
                 font,
             );
             create_child(
                 hwnd,
-                "EDIT",
-                "",
-                WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
+                "BUTTON",
+                "Conectar Conta Google Drive (Login de 1 Clique no Navegador)",
+                BS_PUSHBUTTON | WS_TABSTOP,
                 20,
-                246,
+                254,
                 560,
-                24,
-                ID_EDIT_GOOGLE_ID,
-                font,
-            );
-
-            create_child(
-                hwnd,
-                "STATIC",
-                "5. Google Drive API — OAuth Client Secret:",
-                0,
-                20,
-                280,
-                560,
-                20,
-                0,
-                font,
-            );
-            create_child(
-                hwnd,
-                "EDIT",
-                "",
-                WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
-                20,
-                302,
-                560,
-                24,
-                ID_EDIT_GOOGLE_SECRET,
+                34,
+                ID_BTN_GOOGLE_LOGIN,
                 font,
             );
 
@@ -672,7 +1019,7 @@ unsafe extern "system" fn wnd_proc(
                 "Instalar na Steam e Salvar Config",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 20,
-                344,
+                308,
                 240,
                 34,
                 ID_BTN_INSTALL,
@@ -684,7 +1031,7 @@ unsafe extern "system" fn wnd_proc(
                 "Iniciar Servico",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 272,
-                344,
+                308,
                 115,
                 34,
                 ID_BTN_START_SVC,
@@ -696,7 +1043,7 @@ unsafe extern "system" fn wnd_proc(
                 "Abrir Vault",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 396,
-                344,
+                308,
                 90,
                 34,
                 ID_BTN_OPEN_VAULT,
@@ -708,7 +1055,7 @@ unsafe extern "system" fn wnd_proc(
                 "Ver Logs",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 494,
-                344,
+                308,
                 86,
                 34,
                 ID_BTN_OPEN_LOGS,
@@ -721,7 +1068,7 @@ unsafe extern "system" fn wnd_proc(
                 "Status: Verificando...",
                 0,
                 20,
-                392,
+                358,
                 560,
                 22,
                 ID_LBL_STATUS,
@@ -739,6 +1086,9 @@ unsafe extern "system" fn wnd_proc(
         WM_COMMAND => {
             let id = w_param & 0xFFFF;
             match id {
+                ID_BTN_GOOGLE_LOGIN => {
+                    on_google_browser_login(hwnd);
+                }
                 ID_BTN_INSTALL => {
                     on_install_and_save(hwnd);
                 }
@@ -763,7 +1113,14 @@ unsafe extern "system" fn wnd_proc(
                     let _ = fs::create_dir_all(&vault_dir);
                     let op = to_wide("open");
                     let path_w = to_wide(&vault_dir);
-                    ShellExecuteW(hwnd, op.as_ptr(), path_w.as_ptr(), null(), null(), SW_SHOWNORMAL);
+                    ShellExecuteW(
+                        hwnd,
+                        op.as_ptr(),
+                        path_w.as_ptr(),
+                        null(),
+                        null(),
+                        SW_SHOWNORMAL,
+                    );
                 }
                 ID_BTN_OPEN_LOGS => {
                     let steam_dir = get_control_text(hwnd, ID_EDIT_STEAM);
@@ -775,7 +1132,14 @@ unsafe extern "system" fn wnd_proc(
                     };
                     let op = to_wide("open");
                     let path_w = to_wide(&target.to_string_lossy());
-                    ShellExecuteW(hwnd, op.as_ptr(), path_w.as_ptr(), null(), null(), SW_SHOWNORMAL);
+                    ShellExecuteW(
+                        hwnd,
+                        op.as_ptr(),
+                        path_w.as_ptr(),
+                        null(),
+                        null(),
+                        SW_SHOWNORMAL,
+                    );
                 }
                 _ => {}
             }
@@ -820,7 +1184,7 @@ fn main() {
             200,
             160,
             615,
-            465,
+            430,
             0,
             0,
             h_instance,
@@ -841,4 +1205,3 @@ fn main() {
         }
     }
 }
-

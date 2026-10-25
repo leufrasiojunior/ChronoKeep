@@ -30,8 +30,8 @@ impl Default for AppManifest {
 }
 
 pub struct VaultStorage {
-    vault_root: PathBuf,
-    steam_path: Option<PathBuf>,
+    pub vault_root: PathBuf,
+    pub steam_path: Option<PathBuf>,
 }
 
 impl VaultStorage {

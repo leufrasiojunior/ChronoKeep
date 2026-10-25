@@ -3,6 +3,7 @@
 //! 1. RPC forwarding from `cloud_redirect.dll` (`POST /v1/rpc`, `POST /v1/session`, `GET /v1/health`)
 //! 2. Native Steam Cloud file transfers from `steamclient64.dll` (`PUT /upload/...`, `GET /download/...`)
 
+mod gdrive;
 mod rpc_engine;
 mod vault;
 
