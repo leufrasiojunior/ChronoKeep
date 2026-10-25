@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fundo solido minimalista ( Midnight Slate ) -->
+  <rect width="512" height="512" rx="112" fill="#0F172A"/>
+  <!-- Simbolo geometrico unico em traco continuo: Ampulheta / Cofre (Chrono + Keep) -->
+  <path d="M168 136 H344 L280 232 C264 256 264 256 280 280 L344 376 H168 L232 280 C248 256 248 256 232 232 Z"
+        fill="none" stroke="#38BDF8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Ponto central flutuante (Save / Nucleo) -->
+  <circle cx="256" cy="256" r="18" fill="#F8FAFC"/>
+</svg>
+

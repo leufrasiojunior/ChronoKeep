@@ -1,0 +1,19 @@
+# Build & Toolchain local (WSL xwin / MSVC SDK)
+**/target/
+.toolchain/
+.xwin-cache/
+.cargo/
+rust-workspace/.cargo/
+
+# Pastas temporarias de analise/engenharia reversa
+repo/
+artifacts/
+
+# Pacote de distribuicao local e logs
+dist/
+*.pdb
+*.log
+
+# Imagens temporarias de teste
+icones_gerados/*.jpg
+icones_gerados/*.png

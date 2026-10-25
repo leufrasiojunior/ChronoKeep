@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cr-proto",
+    "crates/cr-service",
+    "crates/cr-bridge-dll",
+    "crates/cr-gui",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "none"
+panic = "unwind"

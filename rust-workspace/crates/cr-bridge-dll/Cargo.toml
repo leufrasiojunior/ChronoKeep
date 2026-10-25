@@ -1,0 +1,12 @@
+[package]
+name = "cr-bridge-dll"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "chronokeep"
+crate-type = ["cdylib"]
+
+[dependencies]
+cr-proto = { path = "../cr-proto" }
+

@@ -1,0 +1,547 @@
+//! ChronoKeep Bridge DLL (`chronokeep.dll`).
+//! Features:
+//! 1. Autonomous `DllMain` initialization thread (auto-discovers Steam path, `stplug-in` / `applist`
+//!    AppIDs, spawns `chrono-daemon.exe`, and hooks `steamclient64.dll` without requiring external calls).
+//! 2. Native `CK_*` API exports (`CK_AttachRuntime`, `CK_InstallTransportHooks`, `CK_DispatchCloudRpc`, etc.)
+//!    plus host-loader compatibility aliases so existing proxy DLLs work seamlessly.
+
+pub mod ipc;
+pub mod scanner;
+pub mod vtable;
+
+use cr_proto::cloud_messages::DEFAULT_SERVICE_PORT;
+use std::collections::HashSet;
+use std::ffi::CStr;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::raw::c_char;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn DisableThreadLibraryCalls(hLibModule: usize) -> i32;
+}
+
+const DLL_PROCESS_ATTACH: u32 = 1;
+const DLL_PROCESS_DETACH: u32 = 0;
+
+#[repr(C)]
+pub struct CK_PlaytimeRecord {
+    pub minutes_forever: u32,
+    pub minutes_last_two_weeks: u32,
+    pub last_played_time: u32,
+    pub playtime_windows: u32,
+    pub playtime_mac: u32,
+    pub playtime_linux: u32,
+}
+
+#[repr(C)]
+pub struct CK_AchievementRecord {
+    pub stat_id: u32,
+    pub bits: u32,
+    pub unlock_times: [u32; 32],
+}
+
+#[allow(non_camel_case_types)]
+pub type CK_NotifyCallback =
+    Option<unsafe extern "C" fn(level: i32, message: *const c_char, duration_ms: i32)>;
+
+static INIT_DONE: AtomicBool = AtomicBool::new(false);
+static ACCOUNT_ID: AtomicU32 = AtomicU32::new(0);
+static SERVICE_PORT: AtomicU16 = AtomicU16::new(DEFAULT_SERVICE_PORT);
+
+static STEAM_PATH: OnceLock<Mutex<String>> = OnceLock::new();
+static NAMESPACE_APPS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+
+fn steam_path_store() -> &'static Mutex<String> {
+    STEAM_PATH.get_or_init(|| Mutex::new(String::new()))
+}
+
+fn apps_store() -> &'static Mutex<HashSet<u32>> {
+    NAMESPACE_APPS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub fn get_steam_path() -> String {
+    steam_path_store()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+pub fn get_account_id() -> u32 {
+    ACCOUNT_ID.load(Ordering::Acquire)
+}
+
+pub fn set_account_id(id: u32) {
+    if id != 0 {
+        ACCOUNT_ID.store(id, Ordering::Release);
+    }
+}
+
+pub fn get_service_port() -> u16 {
+    SERVICE_PORT.load(Ordering::Acquire)
+}
+
+pub fn is_namespace_app(app_id: u32) -> bool {
+    apps_store()
+        .lock()
+        .map(|g| g.contains(&app_id))
+        .unwrap_or(false)
+}
+
+pub fn log_line(msg: &str) {
+    let base = get_steam_path();
+    let log_file = if base.is_empty() {
+        "chronokeep_bridge.log".to_string()
+    } else {
+        format!("{}chronokeep_bridge.log", base)
+    };
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let formatted = format!("[{}][chronokeep-bridge] {}\r\n", ts, msg);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_file) {
+        let _ = f.write_all(formatted.as_bytes());
+    }
+}
+
+fn auto_seed_local_apps(steam_path: &str) {
+    let mut discovered = Vec::new();
+
+    // 1. Scan <SteamDir>\config\stplug-in\ for <appId>.lua or <appId>.st
+    let st_dir = Path::new(steam_path).join("config").join("stplug-in");
+    if let Ok(entries) = fs::read_dir(st_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        discovered.push(app_id);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Scan <SteamDir>\AppList\ for GreenLuma-style <index>.txt files containing an AppID
+    let applist_dir = Path::new(steam_path).join("AppList");
+    if let Ok(entries) = fs::read_dir(applist_dir) {
+        for entry in entries.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if let Ok(app_id) = content.trim().parse::<u32>() {
+                    if app_id > 0 {
+                        discovered.push(app_id);
+                    }
+                }
+            }
+        }
+    }
+
+    if !discovered.is_empty() {
+        if let Ok(mut guard) = apps_store().lock() {
+            for &id in &discovered {
+                guard.insert(id);
+            }
+        }
+        log_line(&format!(
+            "[Init] Auto-descobertos {} AppIDs locais (stplug-in / AppList)",
+            discovered.len()
+        ));
+    }
+}
+
+fn sync_session_with_service() {
+    let steam_path = get_steam_path();
+    let port = get_service_port();
+    let acct = get_account_id();
+    let apps: Vec<u32> = apps_store()
+        .lock()
+        .map(|g| g.iter().copied().collect())
+        .unwrap_or_default();
+    let _ = ipc::push_session_update(port, &steam_path, acct, &apps);
+}
+
+fn bootstrap_autonomous_worker() {
+    // Wait briefly for host process initialization outside the Windows Loader Lock
+    std::thread::sleep(Duration::from_millis(800));
+
+    if !INIT_DONE.load(Ordering::Acquire) {
+        if let Ok(exe) = std::env::current_exe() {
+            // Only auto-attach if loaded inside steam.exe
+            let is_steam = exe
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.eq_ignore_ascii_case("steam.exe"))
+                .unwrap_or(false);
+            if !is_steam {
+                return;
+            }
+            if let Some(dir) = exe.parent() {
+                let mut s = dir.to_string_lossy().into_owned();
+                if !s.ends_with('\\') && !s.ends_with('/') {
+                    s.push('\\');
+                }
+                init_internal(&s, "DllMain-Autonomous");
+            }
+        }
+    }
+
+    // Poll up to 30 seconds for steamclient64.dll to be loaded by steam.exe, then hook vtable
+    for _ in 0..60 {
+        if vtable::is_vtable_hook_installed() {
+            break;
+        }
+        if vtable::install_vtable_hooks() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn init_internal(normalized_path: &str, source_tag: &str) -> bool {
+    if INIT_DONE.swap(true, Ordering::AcqRel) {
+        return true;
+    }
+
+    if let Ok(mut guard) = steam_path_store().lock() {
+        *guard = normalized_path.to_string();
+    }
+
+    let port = ipc::resolve_service_port(normalized_path);
+    SERVICE_PORT.store(port, Ordering::Release);
+
+    log_line(&format!(
+        "=== Bridge DLL inicializada [{}] (porta={}) ===",
+        source_tag, port
+    ));
+    log_line(&format!("Steam Path: {}", normalized_path));
+
+    auto_seed_local_apps(normalized_path);
+
+    let service_ok = ipc::ensure_service_running(normalized_path, port);
+    log_line(&format!(
+        "Conexao com chrono-daemon.exe em 127.0.0.1:{}: {}",
+        port,
+        if service_ok { "ONLINE" } else { "AGUARDANDO" }
+    ));
+
+    sync_session_with_service();
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn DllMain(
+    hinst_dll: usize,
+    fdw_reason: u32,
+    _lpv_reserved: *mut std::ffi::c_void,
+) -> i32 {
+    if fdw_reason == DLL_PROCESS_ATTACH {
+        let _ = DisableThreadLibraryCalls(hinst_dll);
+        std::thread::spawn(bootstrap_autonomous_worker);
+    } else if fdw_reason == DLL_PROCESS_DETACH {
+        log_line("[DllMain] Processo encerrando (DLL_PROCESS_DETACH)");
+    }
+    1
+}
+
+// ============================================================================
+// PRIMARY NATIVE API (`CK_*` — ChronoKeep Custom Function Names)
+// ============================================================================
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_AttachRuntime(
+    steam_path: *const c_char,
+    _notify: CK_NotifyCallback,
+) -> bool {
+    if steam_path.is_null() {
+        return false;
+    }
+    let raw_path = CStr::from_ptr(steam_path).to_string_lossy().into_owned();
+    let mut normalized = raw_path;
+    if !normalized.is_empty() && !normalized.ends_with('\\') && !normalized.ends_with('/') {
+        normalized.push('\\');
+    }
+    init_internal(&normalized, "CK_AttachRuntime")
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_InstallTransportHooks() -> bool {
+    if !INIT_DONE.load(Ordering::Acquire) {
+        return false;
+    }
+    vtable::install_vtable_hooks()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_DispatchCloudRpc(
+    method: *const c_char,
+    app_id: u32,
+    account_id: u32,
+    req_body: *const u8,
+    req_len: u32,
+    resp_buf: *mut u8,
+    resp_max_len: u32,
+    resp_len: *mut u32,
+    eresult: *mut i32,
+) -> bool {
+    if resp_len.is_null() || eresult.is_null() {
+        return false;
+    }
+    *resp_len = 0;
+    *eresult = 2;
+
+    if !INIT_DONE.load(Ordering::Acquire) || method.is_null() || resp_buf.is_null() {
+        return false;
+    }
+    if !is_namespace_app(app_id) {
+        return false;
+    }
+
+    if account_id != 0 && get_account_id() == 0 {
+        set_account_id(account_id);
+    }
+
+    let Ok(method_str) = CStr::from_ptr(method).to_str() else {
+        return false;
+    };
+
+    let req_slice = if req_body.is_null() || req_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(req_body, req_len as usize)
+    };
+
+    let steam_path = get_steam_path();
+    let port = get_service_port();
+    let eff_acct = if account_id != 0 {
+        account_id
+    } else {
+        get_account_id()
+    };
+
+    let Some((res_code, resp_bytes)) =
+        ipc::forward_rpc(port, &steam_path, method_str, app_id, eff_acct, req_slice)
+    else {
+        return false;
+    };
+
+    if resp_bytes.len() > resp_max_len as usize {
+        return false;
+    }
+
+    if !resp_bytes.is_empty() {
+        std::ptr::copy_nonoverlapping(resp_bytes.as_ptr(), resp_buf, resp_bytes.len());
+    }
+    *resp_len = resp_bytes.len() as u32;
+    *eresult = res_code;
+
+    log_line(&format!(
+        "[CK_DispatchCloudRpc] {} app={} -> eresult={} ({}B)",
+        method_str,
+        app_id,
+        res_code,
+        resp_bytes.len()
+    ));
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_RegisterAppList(app_ids: *const u32, count: u32) {
+    let slice = if app_ids.is_null() || count == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(app_ids, count as usize)
+    };
+
+    if let Ok(mut guard) = apps_store().lock() {
+        guard.clear();
+        for &id in slice {
+            if id != 0 {
+                guard.insert(id);
+            }
+        }
+    }
+
+    log_line(&format!("[CK_API] AppList atualizada: {} app(s)", slice.len()));
+    sync_session_with_service();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_RegisterApp(app_id: u32) {
+    if app_id == 0 {
+        return;
+    }
+    if let Ok(mut guard) = apps_store().lock() {
+        guard.insert(app_id);
+    }
+    log_line(&format!("[CK_API] App registrado: {}", app_id));
+    sync_session_with_service();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_UnregisterApp(app_id: u32) {
+    if let Ok(mut guard) = apps_store().lock() {
+        guard.remove(&app_id);
+    }
+    log_line(&format!("[CK_API] App removido: {}", app_id));
+    sync_session_with_service();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_QueryAppRegistered(app_id: u32) -> bool {
+    is_namespace_app(app_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_BindAccount(account_id: u32) {
+    if account_id != 0 {
+        set_account_id(account_id);
+        log_line(&format!("[CK_API] AccountId vinculado: {}", account_id));
+        sync_session_with_service();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_NotifyGameState(app_id: u32, running: bool) {
+    log_line(&format!(
+        "[CK_API] Estado do jogo: app={} running={}",
+        app_id, running
+    ));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CK_DetachRuntime() {
+    log_line("[CK_API] Runtime desconectado");
+}
+
+// ============================================================================
+// HOST LOADER COMPATIBILITY BRIDGES (For OpenSteamTool / HubcapTools / SteamTools)
+// ============================================================================
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_InitCloudSave(
+    steam_path: *const c_char,
+    notify: CK_NotifyCallback,
+) -> bool {
+    CK_AttachRuntime(steam_path, notify)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_InstallVtableHooks() -> bool {
+    CK_InstallTransportHooks()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_HandleCloudRpc(
+    method: *const c_char,
+    app_id: u32,
+    account_id: u32,
+    req_body: *const u8,
+    req_len: u32,
+    resp_buf: *mut u8,
+    resp_max_len: u32,
+    resp_len: *mut u32,
+    eresult: *mut i32,
+) -> bool {
+    CK_DispatchCloudRpc(
+        method,
+        app_id,
+        account_id,
+        req_body,
+        req_len,
+        resp_buf,
+        resp_max_len,
+        resp_len,
+        eresult,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_SetApps(app_ids: *const u32, count: u32) {
+    CK_RegisterAppList(app_ids, count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_AddApp(app_id: u32) {
+    CK_RegisterApp(app_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_RemoveApp(app_id: u32) {
+    CK_UnregisterApp(app_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_IsApp(app_id: u32) -> bool {
+    CK_QueryAppRegistered(app_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_SetAccountId(account_id: u32) {
+    CK_BindAccount(account_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_NotifyAppRunning(app_id: u32, running: bool) {
+    CK_NotifyGameState(app_id, running)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_EnableStatsSync(_achievements: bool, _playtime: bool) {}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_NotifyStatsStored(_app_id: u32) {}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_NotifyStatsStoredFrom(_app_id: u32, _native_app_id: u32) {}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_GetPlaytime(_app_id: u32, _out: *mut CK_PlaytimeRecord) -> bool {
+    false
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_GetAchievements(
+    _app_id: u32,
+    _out: *mut CK_AchievementRecord,
+    _max_blocks: u32,
+) -> u32 {
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_DrainPlaytimeUpdates() {}
+
+#[no_mangle]
+pub unsafe extern "C" fn CR_Shutdown() {
+    CK_DetachRuntime()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CloudOnSendPkt(
+    _this_ptr: *mut std::ffi::c_void,
+    _data: *mut std::ffi::c_void,
+    _len: u32,
+) {
+    if !INIT_DONE.load(Ordering::Acquire) {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let mut s = dir.to_string_lossy().into_owned();
+                if !s.ends_with('\\') {
+                    s.push('\\');
+                }
+                init_internal(&s, "CloudOnSendPkt");
+                vtable::install_vtable_hooks();
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn CloudRedirect_CliMain(_argc: i32, _argv: *mut *mut c_char) -> i32 {
+    0
+}

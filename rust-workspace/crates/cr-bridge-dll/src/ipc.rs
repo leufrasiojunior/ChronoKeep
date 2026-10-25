@@ -1,0 +1,173 @@
+//! Lightweight HTTP/TCP client in `cloud_redirect.dll` that communicates with `cr-service.exe`
+//! over `127.0.0.1:<port>` and auto-spawns `cr-service.exe` in the background if not running.
+
+use cr_proto::cloud_messages::DEFAULT_SERVICE_PORT;
+use std::fs;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub fn resolve_service_port(steam_path: &str) -> u16 {
+    let candidates = ["chronokeep.ini", "cr_clone_config.ini"];
+    for name in candidates {
+        let ini_path = Path::new(steam_path).join(name);
+        if let Ok(content) = fs::read_to_string(ini_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    if k.trim().eq_ignore_ascii_case("port") {
+                        if let Ok(p) = v.trim().parse::<u16>() {
+                            if p > 0 {
+                                return p;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    DEFAULT_SERVICE_PORT
+}
+
+pub fn ensure_service_running(steam_path: &str, port: u16) -> bool {
+    if check_health(port) {
+        return true;
+    }
+
+    // Try spawning <steam_path>\chrono-daemon.exe in background without console window
+    let candidates = ["chrono-daemon.exe", "cr-service.exe"];
+    for bin_name in candidates {
+        let exe_path: PathBuf = Path::new(steam_path).join(bin_name);
+        if exe_path.exists() {
+            let mut cmd = std::process::Command::new(&exe_path);
+            cmd.current_dir(steam_path);
+            #[cfg(target_os = "windows")]
+            {
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            if cmd.spawn().is_ok() {
+                for _ in 0..25 {
+                    std::thread::sleep(Duration::from_millis(60));
+                    if check_health(port) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    check_health(port)
+}
+
+pub fn check_health(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
+    let req = format!(
+        "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        port
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut resp = [0u8; 256];
+    let Ok(n) = stream.read(&mut resp) else {
+        return false;
+    };
+    let s = String::from_utf8_lossy(&resp[..n]);
+    s.contains("200 OK")
+}
+
+pub fn push_session_update(
+    port: u16,
+    steam_path: &str,
+    account_id: u32,
+    apps: &[u32],
+) -> bool {
+    let apps_csv = apps
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let payload = format!("{}\n{}\n{}\n", steam_path, account_id, apps_csv);
+    http_post(port, "/v1/session", payload.as_bytes(), Duration::from_secs(2)).is_some()
+}
+
+/// Forwards a `Cloud.*` RPC call to `cr-service.exe` and returns `Some((eresult, resp_bytes))`
+/// if handled by the service, or `None` on transport/unhandled fallback.
+pub fn forward_rpc(
+    port: u16,
+    steam_path: &str,
+    method: &str,
+    app_id: u32,
+    account_id: u32,
+    req_bytes: &[u8],
+) -> Option<(i32, Vec<u8>)> {
+    let method_bytes = method.as_bytes();
+    let mut payload = Vec::with_capacity(12 + method_bytes.len() + req_bytes.len());
+    payload.extend_from_slice(&(method_bytes.len() as u32).to_le_bytes());
+    payload.extend_from_slice(method_bytes);
+    payload.extend_from_slice(&app_id.to_le_bytes());
+    payload.extend_from_slice(&account_id.to_le_bytes());
+    payload.extend_from_slice(req_bytes);
+
+    let resp_body = match http_post(port, "/v1/rpc", &payload, Duration::from_secs(12)) {
+        Some(b) => b,
+        None => {
+            // If cr-service was closed mid-session, auto-respawn once and retry
+            if ensure_service_running(steam_path, port) {
+                http_post(port, "/v1/rpc", &payload, Duration::from_secs(12))?
+            } else {
+                return None;
+            }
+        }
+    };
+
+    if resp_body.len() < 5 || resp_body[0] == 0 {
+        return None;
+    }
+    let eresult = i32::from_le_bytes([resp_body[1], resp_body[2], resp_body[3], resp_body[4]]);
+    let proto_out = resp_body[5..].to_vec();
+    Some((eresult, proto_out))
+}
+
+fn http_post(port: u16, path: &str, body: &[u8], timeout: Duration) -> Option<Vec<u8>> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+
+    let header = format!(
+        "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        path,
+        port,
+        body.len()
+    );
+    stream.write_all(header.as_bytes()).ok()?;
+    if !body.is_empty() {
+        stream.write_all(body).ok()?;
+    }
+    stream.flush().ok()?;
+
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).ok()?;
+    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+    let status_str = String::from_utf8_lossy(&raw[..header_end]);
+    if !status_str.contains("200 OK") {
+        return None;
+    }
+    Some(raw[header_end..].to_vec())
+}
+

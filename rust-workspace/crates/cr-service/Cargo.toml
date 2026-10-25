@@ -1,0 +1,12 @@
+[package]
+name = "cr-service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "chrono-daemon"
+path = "src/main.rs"
+
+[dependencies]
+cr-proto = { path = "../cr-proto" }
+

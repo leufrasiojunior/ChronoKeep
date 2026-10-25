@@ -1,0 +1,420 @@
+//! `cr-service.exe` — External Cloud Save Daemon & Local HTTP Block Server.
+//! Listens on `127.0.0.1:<port>` (default `39771`) to serve both:
+//! 1. RPC forwarding from `cloud_redirect.dll` (`POST /v1/rpc`, `POST /v1/session`, `GET /v1/health`)
+//! 2. Native Steam Cloud file transfers from `steamclient64.dll` (`PUT /upload/...`, `GET /download/...`)
+
+mod rpc_engine;
+mod vault;
+
+use cr_proto::cloud_messages::{url_decode_path, DEFAULT_SERVICE_PORT};
+use cr_proto::zip_z::try_unwrap_steam_zip;
+use rpc_engine::RpcEngine;
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use vault::{now_unix, VaultStorage};
+
+#[derive(Debug, Clone)]
+struct ServiceConfig {
+    port: u16,
+    vault_dir: PathBuf,
+    log_path: PathBuf,
+}
+
+impl ServiceConfig {
+    fn load() -> Self {
+        let exe_dir = env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let config_path = exe_dir.join("chronokeep.ini");
+        let mut port = DEFAULT_SERVICE_PORT;
+        let mut vault_dir = default_vault_dir(&exe_dir);
+
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    let key = k.trim();
+                    let val = v.trim();
+                    if key.eq_ignore_ascii_case("port") {
+                        if let Ok(p) = val.parse::<u16>() {
+                            if p > 0 {
+                                port = p;
+                            }
+                        }
+                    } else if key.eq_ignore_ascii_case("vault_dir") && !val.is_empty() {
+                        vault_dir = PathBuf::from(val);
+                    }
+                }
+            }
+        } else {
+            let default_ini = format!(
+                "# Configuracao do ChronoKeep (Cloud Save Vault)\r\n\
+                 # Altere 'vault_dir' para sua pasta do Google Drive, OneDrive ou pasta local de preferencia.\r\n\
+                 port={}\r\n\
+                 vault_dir={}\r\n",
+                port,
+                vault_dir.display()
+            );
+            let _ = fs::write(&config_path, default_ini);
+        }
+
+        let log_path = exe_dir.join("chrono_daemon.log");
+        Self {
+            port,
+            vault_dir,
+            log_path,
+        }
+    }
+}
+
+fn default_vault_dir(exe_dir: &PathBuf) -> PathBuf {
+    if let Ok(user_profile) = env::var("USERPROFILE") {
+        let p = PathBuf::from(user_profile)
+            .join("Saved Games")
+            .join("ChronoKeepVault");
+        return p;
+    }
+    exe_dir.join("ChronoKeepVault")
+}
+
+fn log_msg(log_path: &PathBuf, msg: &str) {
+    let line = format!("[{}][chrono-daemon] {}\r\n", now_unix(), msg);
+    print!("{}", line);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    let cfg = ServiceConfig::load();
+
+    if args.len() >= 2 && args[1].eq_ignore_ascii_case("status") {
+        println!("=== ChronoKeep Daemon (chrono-daemon) ===");
+        println!("Porta configurada : 127.0.0.1:{}", cfg.port);
+        println!("Pasta do Vault    : {}", cfg.vault_dir.display());
+        println!("Arquivo de Log    : {}", cfg.log_path.display());
+        return;
+    }
+
+    let addr = format!("127.0.0.1:{}", cfg.port);
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            log_msg(
+                &cfg.log_path,
+                &format!("Bind em {} falhou (provavelmente ja em execucao): {}", addr, e),
+            );
+            return;
+        }
+    };
+
+    log_msg(
+        &cfg.log_path,
+        &format!(
+            "Servidor iniciado em 127.0.0.1:{} | Vault={}",
+            cfg.port,
+            cfg.vault_dir.display()
+        ),
+    );
+
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let vault = VaultStorage::new(cfg.vault_dir.clone(), exe_dir);
+    let engine = Arc::new(Mutex::new(RpcEngine::new(vault, cfg.port)));
+    let log_path = Arc::new(cfg.log_path);
+
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else {
+            continue;
+        };
+        let eng = Arc::clone(&engine);
+        let lp = Arc::clone(&log_path);
+        thread::spawn(move || {
+            handle_connection(stream, eng, lp);
+        });
+    }
+}
+
+fn handle_connection(
+    mut stream: TcpStream,
+    engine: Arc<Mutex<RpcEngine>>,
+    log_path: Arc<PathBuf>,
+) {
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
+
+    let Some((method, path, body)) = read_http_request(&mut stream) else {
+        return;
+    };
+
+    if method == "GET" && path == "/v1/health" {
+        let _ = write_http_response(&mut stream, "200 OK", "application/json", b"{\"ok\":true}");
+        return;
+    }
+
+    if method == "POST" && path == "/v1/session" {
+        // Text lines: line 0 = steam_path, line 1 = account_id, line 2 = comma-separated app_ids
+        let text = String::from_utf8_lossy(&body);
+        let mut lines = text.lines();
+        let steam_path = lines.next().map(|s| s.trim().to_string());
+        let account_id = lines
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let apps: Vec<u32> = lines
+            .next()
+            .unwrap_or("")
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u32>().ok())
+            .collect();
+
+        log_msg(
+            &log_path,
+            &format!(
+                "Sessao atualizada: account_id={} apps={} steam_path={:?}",
+                account_id,
+                apps.len(),
+                steam_path
+            ),
+        );
+
+        if let Ok(mut guard) = engine.lock() {
+            guard.update_session(steam_path, account_id, apps);
+        }
+        let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"OK");
+        return;
+    }
+
+    if method == "POST" && path == "/v1/rpc" {
+        // Binary frame:
+        // [0..4]: u32 method_len (LE)
+        // [4..4+method_len]: method UTF-8
+        // [..+4]: u32 app_id (LE)
+        // [..+4]: u32 account_id (LE)
+        // [..]: raw request protobuf bytes
+        if body.len() < 12 {
+            let _ = write_http_response(&mut stream, "400 Bad Request", "text/plain", b"");
+            return;
+        }
+        let method_len = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
+        if 12 + method_len > body.len() {
+            let _ = write_http_response(&mut stream, "400 Bad Request", "text/plain", b"");
+            return;
+        }
+        let rpc_method = String::from_utf8_lossy(&body[4..4 + method_len]).into_owned();
+        let off = 4 + method_len;
+        let app_id = u32::from_le_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]);
+        let account_id = u32::from_le_bytes([
+            body[off + 4],
+            body[off + 5],
+            body[off + 6],
+            body[off + 7],
+        ]);
+        let req_bytes = &body[off + 8..];
+
+        let rpc_res = engine
+            .lock()
+            .ok()
+            .and_then(|mut g| g.handle_rpc(&rpc_method, app_id, account_id, req_bytes));
+
+        match rpc_res {
+            Some((eresult, resp_bytes)) => {
+                log_msg(
+                    &log_path,
+                    &format!(
+                        "RPC {} app={} acct={} req={}B -> eresult={} resp={}B",
+                        rpc_method,
+                        app_id,
+                        account_id,
+                        req_bytes.len(),
+                        eresult,
+                        resp_bytes.len()
+                    ),
+                );
+                let mut out = Vec::with_capacity(5 + resp_bytes.len());
+                out.push(1u8); // handled = true
+                out.extend_from_slice(&eresult.to_le_bytes());
+                out.extend_from_slice(&resp_bytes);
+                let _ = write_http_response(&mut stream, "200 OK", "application/octet-stream", &out);
+            }
+            None => {
+                let _ = write_http_response(&mut stream, "200 OK", "application/octet-stream", &[0u8]);
+            }
+        }
+        return;
+    }
+
+    if method == "PUT" && path.starts_with("/upload/") {
+        if let Some((account_id, app_id, clean_filename)) = parse_blob_route(&path, "/upload/") {
+            let final_bytes = match try_unwrap_steam_zip(&body) {
+                Some(unwrapped) => {
+                    log_msg(
+                        &log_path,
+                        &format!(
+                            "PUT upload app={} file='{}': ZIP 'z' descomprimido ({}B -> {}B)",
+                            app_id,
+                            clean_filename,
+                            body.len(),
+                            unwrapped.len()
+                        ),
+                    );
+                    unwrapped
+                }
+                None => {
+                    log_msg(
+                        &log_path,
+                        &format!(
+                            "PUT upload app={} file='{}': armazenado bruto ({}B)",
+                            app_id,
+                            clean_filename,
+                            body.len()
+                        ),
+                    );
+                    body
+                }
+            };
+
+            if let Ok(mut guard) = engine.lock() {
+                guard.store_uploaded_blob(account_id, app_id, clean_filename, final_bytes);
+            }
+            let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"");
+            return;
+        }
+        let _ = write_http_response(&mut stream, "404 Not Found", "text/plain", b"");
+        return;
+    }
+
+    if method == "GET" && path.starts_with("/download/") {
+        if let Some((account_id, app_id, clean_filename)) = parse_blob_route(&path, "/download/") {
+            let maybe_data = engine
+                .lock()
+                .ok()
+                .and_then(|g| g.retrieve_download_blob(account_id, app_id, &clean_filename));
+
+            if let Some(data) = maybe_data {
+                log_msg(
+                    &log_path,
+                    &format!(
+                        "GET download app={} file='{}' -> {}B enviados",
+                        app_id,
+                        clean_filename,
+                        data.len()
+                    ),
+                );
+                let _ = write_http_response(&mut stream, "200 OK", "application/octet-stream", &data);
+                return;
+            }
+        }
+        let _ = write_http_response(&mut stream, "404 Not Found", "text/plain", b"");
+        return;
+    }
+
+    let _ = write_http_response(&mut stream, "404 Not Found", "text/plain", b"");
+}
+
+fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {
+    let rest = path.strip_prefix(prefix)?;
+    let rest = rest.split('?').next().unwrap_or(rest);
+    let mut parts = rest.splitn(3, '/');
+    let account_id = parts.next()?.parse::<u32>().ok()?;
+    let app_id = parts.next()?.parse::<u32>().ok()?;
+    let raw_file = parts.next()?;
+    let decoded = url_decode_path(raw_file);
+    let clean = cr_proto::cloud_messages::sanitize_rel_path(&decoded);
+    if clean.is_empty() {
+        return None;
+    }
+    Some((account_id, app_id, clean))
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
+    let mut buf = Vec::with_capacity(8192);
+    let mut chunk = [0u8; 4096];
+    let header_end;
+
+    loop {
+        let n = stream.read(&mut chunk).ok()?;
+        if n == 0 {
+            return None;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+            header_end = pos + 4;
+            break;
+        }
+        if buf.len() > 65536 {
+            return None;
+        }
+    }
+
+    let header_str = String::from_utf8_lossy(&buf[..header_end]);
+    let mut lines = header_str.lines();
+    let req_line = lines.next()?;
+    let mut req_parts = req_line.split_whitespace();
+    let method = req_parts.next()?.to_uppercase();
+    let path = req_parts.next()?.to_string();
+
+    let mut content_length = 0usize;
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                content_length = v.trim().parse::<usize>().unwrap_or(0);
+            }
+        }
+    }
+
+    if content_length > 512 * 1024 * 1024 {
+        return None;
+    }
+
+    let mut body = Vec::with_capacity(content_length);
+    if buf.len() > header_end {
+        body.extend_from_slice(&buf[header_end..]);
+    }
+    while body.len() < content_length {
+        let n = stream.read(&mut chunk).ok()?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+
+    Some((method, path, body))
+}
+
+fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let header = format!(
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        status,
+        content_type,
+        body.len()
+    );
+    stream.write_all(header.as_bytes())?;
+    if !body.is_empty() {
+        stream.write_all(body)?;
+    }
+    stream.flush()
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|w| w == needle)
+}

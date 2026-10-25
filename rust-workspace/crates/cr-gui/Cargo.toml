@@ -1,0 +1,12 @@
+[package]
+name = "cr-gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ChronoKeepSetup"
+path = "src/main.rs"
+
+[dependencies]
+cr-proto = { path = "../cr-proto" }
+
