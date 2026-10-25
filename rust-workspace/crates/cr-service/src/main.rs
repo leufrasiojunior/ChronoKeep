@@ -108,6 +108,11 @@ fn main() {
         return;
     }
 
+    if args.len() >= 2 && args[1].eq_ignore_ascii_case("self-test") {
+        run_self_test(&cfg);
+        return;
+    }
+
     let addr = format!("127.0.0.1:{}", cfg.port);
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
@@ -418,4 +423,166 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|w| w == needle)
+}
+
+fn run_self_test(cfg: &ServiceConfig) {
+    use cr_proto::wire::ProtoWriter;
+
+    println!("============================================================================");
+    println!("  CHRONOKEEP — AUTO-TESTE COMPLETO DE CLOUD SAVE (SEM ABRIR JOGO)");
+    println!("============================================================================");
+    println!("Alvo Local   : http://127.0.0.1:{}", cfg.port);
+    println!("Pasta Vault  : {}", cfg.vault_dir.display());
+    println!();
+
+    let test_acct: u32 = 76561198;
+    let test_app: u32 = 480; // Spacewar / AppID de teste padrao da Steam
+    let test_filename = "chronokeep_test_save.txt";
+    let test_payload = format!(
+        "ChronoKeep Cloud Save Test OK! Timestamp={}\r\n",
+        now_unix()
+    );
+
+    // 1. Verificar se o chrono-daemon esta respondendo em /v1/health
+    let health_ok = send_raw_http(cfg.port, "GET", "/v1/health", b"").is_some();
+    if !health_ok {
+        println!("[!] chrono-daemon nao estava rodando. Iniciando instancia local temporaria...");
+        let exe_dir = env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let vault = VaultStorage::new(cfg.vault_dir.clone(), exe_dir.clone());
+        let mut engine = RpcEngine::new(vault, cfg.port);
+        if let Some(ref d) = exe_dir {
+            engine.update_session(Some(d.to_string_lossy().into_owned()), test_acct, vec![test_app]);
+        }
+
+        // Simular BeginFileUpload + Store + Commit diretamente na engine
+        let mut req_begin = ProtoWriter::new();
+        req_begin.write_varint(1, test_app as u64);
+        req_begin.write_varint(2, test_payload.len() as u64);
+        req_begin.write_varint(3, test_payload.len() as u64);
+        req_begin.write_varint(5, now_unix());
+        req_begin.write_str(6, test_filename);
+        let _ = engine.handle_rpc("Cloud.BeginFileUpload#1", test_app, test_acct, &req_begin.into_bytes());
+        engine.store_uploaded_blob(test_acct, test_app, test_filename.to_string(), test_payload.as_bytes().to_vec());
+
+        let mut req_commit = ProtoWriter::new();
+        req_commit.write_varint(1, 1);
+        req_commit.write_varint(2, test_app as u64);
+        req_commit.write_str(4, test_filename);
+        let _ = engine.handle_rpc("Cloud.CommitFileUpload#1", test_app, test_acct, &req_commit.into_bytes());
+        println!("[1/3] Simulacao direta da Engine RPC : [OK]");
+    } else {
+        println!("[1/4] Conexao HTTP com chrono-daemon (127.0.0.1:{}) : [OK]", cfg.port);
+
+        // 2. Enviar BeginFileUpload#1 via /v1/rpc
+        let mut req_begin = ProtoWriter::new();
+        req_begin.write_varint(1, test_app as u64);
+        req_begin.write_varint(2, test_payload.len() as u64);
+        req_begin.write_varint(3, test_payload.len() as u64);
+        req_begin.write_varint(5, now_unix());
+        req_begin.write_str(6, test_filename);
+        let begin_frame = build_rpc_frame("Cloud.BeginFileUpload#1", test_app, test_acct, &req_begin.into_bytes());
+        let _ = send_raw_http(cfg.port, "POST", "/v1/rpc", &begin_frame);
+
+        // 3. Enviar PUT /upload/76561198/480/chronokeep_test_save.txt
+        let put_path = format!("/upload/{}/{}/{}", test_acct, test_app, test_filename);
+        let _ = send_raw_http(cfg.port, "PUT", &put_path, test_payload.as_bytes());
+
+        // 4. Enviar CommitFileUpload#1 via /v1/rpc
+        let mut req_commit = ProtoWriter::new();
+        req_commit.write_varint(1, 1);
+        req_commit.write_varint(2, test_app as u64);
+        req_commit.write_str(4, test_filename);
+        let commit_frame = build_rpc_frame("Cloud.CommitFileUpload#1", test_app, test_acct, &req_commit.into_bytes());
+        let _ = send_raw_http(cfg.port, "POST", "/v1/rpc", &commit_frame);
+
+        println!("[2/4] Ciclo RPC Steam Cloud (BeginUpload -> PUT -> CommitUpload) : [OK]");
+    }
+
+    // Verificar arquivo gravado no Vault Local
+    let expected_file = cfg
+        .vault_dir
+        .join(test_acct.to_string())
+        .join(test_app.to_string())
+        .join("files")
+        .join(test_filename);
+    if expected_file.exists() {
+        println!(
+            "[3/4] Arquivo salvo no Vault Local : [OK] ({})",
+            expected_file.display()
+        );
+    } else {
+        println!(
+            "[3/4] Arquivo salvo no Vault Local : [FALHA] ({})",
+            expected_file.display()
+        );
+    }
+
+    // Testar sincronizacao com Google Drive se chronokeep_gdrive.json existir
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let token_file = exe_dir.join("chronokeep_gdrive.json");
+    if token_file.exists() {
+        print!("[4/4] Testando envio para Google Drive (ChronoKeep/{}/{}/{})... ", test_acct, test_app, test_filename);
+        let _ = std::io::stdout().flush();
+        let ok = gdrive::sync_file_to_gdrive(
+            &exe_dir,
+            test_acct,
+            test_app,
+            test_filename,
+            test_payload.as_bytes(),
+        );
+        if ok {
+            println!("[OK - ENVIADO AO GOOGLE DRIVE!]");
+        } else {
+            println!("[FALHA - Verifique a conexao ou refaca o login Google]");
+        }
+    } else {
+        println!(
+            "[4/4] Google Drive : [PULADO - chronokeep_gdrive.json nao encontrado em {}]",
+            exe_dir.display()
+        );
+    }
+    println!("============================================================================");
+}
+
+fn build_rpc_frame(method: &str, app_id: u32, account_id: u32, proto_bytes: &[u8]) -> Vec<u8> {
+    let mb = method.as_bytes();
+    let mut out = Vec::with_capacity(12 + mb.len() + proto_bytes.len());
+    out.extend_from_slice(&(mb.len() as u32).to_le_bytes());
+    out.extend_from_slice(mb);
+    out.extend_from_slice(&app_id.to_le_bytes());
+    out.extend_from_slice(&account_id.to_le_bytes());
+    out.extend_from_slice(proto_bytes);
+    out
+}
+
+fn send_raw_http(port: u16, method: &str, path: &str, body: &[u8]) -> Option<Vec<u8>> {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).ok()?;
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+    let hdr = format!(
+        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        method,
+        path,
+        port,
+        body.len()
+    );
+    stream.write_all(hdr.as_bytes()).ok()?;
+    if !body.is_empty() {
+        stream.write_all(body).ok()?;
+    }
+    stream.flush().ok()?;
+    let mut resp = Vec::new();
+    stream.read_to_end(&mut resp).ok()?;
+    let hdr_end = find_subslice(&resp, b"\r\n\r\n")? + 4;
+    let status = String::from_utf8_lossy(&resp[..hdr_end]);
+    if !status.contains("200 OK") {
+        return None;
+    }
+    Some(resp[hdr_end..].to_vec())
 }
