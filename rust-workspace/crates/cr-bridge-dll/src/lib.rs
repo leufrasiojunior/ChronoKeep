@@ -15,18 +15,76 @@ use std::ffi::CStr;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::raw::c_char;
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+
+#[repr(C)]
+#[allow(non_snake_case)]
+struct SYSTEMTIME {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+}
 
 #[link(name = "kernel32")]
 extern "system" {
     fn DisableThreadLibraryCalls(hLibModule: usize) -> i32;
+    fn CreateThread(
+        lpThreadAttributes: *mut std::ffi::c_void,
+        dwStackSize: usize,
+        lpStartAddress: Option<unsafe extern "system" fn(*mut std::ffi::c_void) -> u32>,
+        lpParameter: *mut std::ffi::c_void,
+        dwCreationFlags: u32,
+        lpThreadId: *mut u32,
+    ) -> usize;
+    fn GetModuleFileNameW(hModule: usize, lpFilename: *mut u16, nSize: u32) -> u32;
+    fn GetCurrentProcessId() -> u32;
+    fn GetLocalTime(lpSystemTime: *mut SYSTEMTIME);
+}
+
+pub fn get_local_timestamp_str() -> String {
+    let mut st = SYSTEMTIME {
+        wYear: 0,
+        wMonth: 0,
+        wDayOfWeek: 0,
+        wDay: 0,
+        wHour: 0,
+        wMinute: 0,
+        wSecond: 0,
+        wMilliseconds: 0,
+    };
+    unsafe { GetLocalTime(&mut st) };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+    )
 }
 
 const DLL_PROCESS_ATTACH: u32 = 1;
 const DLL_PROCESS_DETACH: u32 = 0;
+
+static DLL_HMODULE: AtomicUsize = AtomicUsize::new(0);
+
+pub fn get_dll_directory() -> Option<PathBuf> {
+    let hmod = DLL_HMODULE.load(Ordering::Acquire);
+    let mut buf = [0u16; 1024];
+    unsafe {
+        let len = GetModuleFileNameW(hmod, buf.as_mut_ptr(), buf.len() as u32);
+        if len > 0 {
+            let path_str = String::from_utf16_lossy(&buf[..len as usize]);
+            let p = PathBuf::from(path_str);
+            return p.parent().map(|d| d.to_path_buf());
+        }
+    }
+    None
+}
 
 #[repr(C)]
 pub struct CK_PlaytimeRecord {
@@ -86,26 +144,120 @@ pub fn get_service_port() -> u16 {
 }
 
 pub fn is_namespace_app(app_id: u32) -> bool {
-    apps_store()
-        .lock()
-        .map(|g| g.contains(&app_id))
-        .unwrap_or(false)
+    if app_id == 0 {
+        return false;
+    }
+
+    if let Ok(guard) = apps_store().lock() {
+        if guard.contains(&app_id) {
+            return true;
+        }
+    }
+
+    // Auto-detecção dinâmica caso o jogo tenha sido adicionado enquanto a Steam já estava rodando
+    let steam_path = get_steam_path();
+    if !steam_path.is_empty() {
+        let base = Path::new(&steam_path);
+
+        // 1. Verifica se existe config\stplug-in\<app_id>.lua ou .st
+        let lua_file = base.join("config").join("stplug-in").join(format!("{}.lua", app_id));
+        let st_file = base.join("config").join("stplug-in").join(format!("{}.st", app_id));
+        if lua_file.exists() || st_file.exists() {
+            if let Ok(mut guard) = apps_store().lock() {
+                guard.insert(app_id);
+            }
+            log_line(&format!(
+                "[AutoDetect] AppID {} detectado em stplug-in (*.lua) -> Registrado dinamicamente!",
+                app_id
+            ));
+            sync_session_with_service();
+            return true;
+        }
+
+        // 2. Verifica se existe AppList\<app_id>.txt ou se consta nos arquivos do AppList
+        let applist_dir = base.join("AppList");
+        if applist_dir.is_dir() {
+            if applist_dir.join(format!("{}.txt", app_id)).exists() {
+                if let Ok(mut guard) = apps_store().lock() {
+                    guard.insert(app_id);
+                }
+                log_line(&format!(
+                    "[AutoDetect] AppID {} detectado em AppList/{}.txt -> Registrado dinamicamente!",
+                    app_id, app_id
+                ));
+                sync_session_with_service();
+                return true;
+            }
+            if let Ok(entries) = fs::read_dir(&applist_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(content) = fs::read_to_string(entry.path()) {
+                        if let Ok(id) = content.trim().parse::<u32>() {
+                            if id == app_id {
+                                if let Ok(mut guard) = apps_store().lock() {
+                                    guard.insert(app_id);
+                                }
+                                log_line(&format!(
+                                    "[AutoDetect] AppID {} detectado dentro do AppList -> Registrado dinamicamente!",
+                                    app_id
+                                ));
+                                sync_session_with_service();
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Verifica se existe pasta do app em userdata\<account_id>\<app_id>
+        let userdata_dir = base.join("userdata");
+        if userdata_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&userdata_dir) {
+                for entry in entries.flatten() {
+                    let user_folder = entry.path();
+                    if user_folder.is_dir() && user_folder.join(app_id.to_string()).exists() {
+                        if let Ok(mut guard) = apps_store().lock() {
+                            guard.insert(app_id);
+                        }
+                        log_line(&format!(
+                            "[AutoDetect] AppID {} detectado em userdata -> Registrado dinamicamente!",
+                            app_id
+                        ));
+                        sync_session_with_service();
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 pub fn log_line(msg: &str) {
-    let base = get_steam_path();
-    let log_file = if base.is_empty() {
-        "chronokeep_bridge.log".to_string()
+    let steam_dir = get_steam_path();
+    let base_dir = if !steam_dir.is_empty() {
+        PathBuf::from(steam_dir)
+    } else if let Some(dll_dir) = get_dll_directory() {
+        dll_dir
     } else {
-        format!("{}chronokeep_bridge.log", base)
+        PathBuf::from(".")
     };
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+
+    let ts = get_local_timestamp_str();
     let formatted = format!("[{}][chronokeep-bridge] {}\r\n", ts, msg);
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_file) {
+
+    // Grava tanto em chronokeep_bridge.log quanto em cloud_redirect.log para total visibilidade
+    let p1 = base_dir.join("chronokeep_bridge.log");
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&p1) {
         let _ = f.write_all(formatted.as_bytes());
+        let _ = f.flush();
+    }
+
+    let p2 = base_dir.join("cloud_redirect.log");
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&p2) {
+        let _ = f.write_all(formatted.as_bytes());
+        let _ = f.flush();
     }
 }
 
@@ -165,37 +317,35 @@ fn sync_session_with_service() {
     let _ = ipc::push_session_update(port, &steam_path, acct, &apps);
 }
 
+unsafe extern "system" fn worker_thread_proc(_param: *mut std::ffi::c_void) -> u32 {
+    bootstrap_autonomous_worker();
+    0
+}
+
 fn bootstrap_autonomous_worker() {
     // Wait briefly for host process initialization outside the Windows Loader Lock
-    std::thread::sleep(Duration::from_millis(800));
+    std::thread::sleep(Duration::from_millis(500));
 
     if !INIT_DONE.load(Ordering::Acquire) {
-        if let Ok(exe) = std::env::current_exe() {
-            // Only auto-attach if loaded inside steam.exe
-            let is_steam = exe
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.eq_ignore_ascii_case("steam.exe"))
-                .unwrap_or(false);
-            if !is_steam {
-                return;
+        let dir_opt = get_dll_directory().or_else(|| {
+            std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()))
+        });
+        if let Some(dir) = dir_opt {
+            let mut s = dir.to_string_lossy().into_owned();
+            if !s.ends_with('\\') && !s.ends_with('/') {
+                s.push('\\');
             }
-            if let Some(dir) = exe.parent() {
-                let mut s = dir.to_string_lossy().into_owned();
-                if !s.ends_with('\\') && !s.ends_with('/') {
-                    s.push('\\');
-                }
-                init_internal(&s, "DllMain-Autonomous");
-            }
+            init_internal(&s, "DllMain-Autonomous");
         }
     }
 
-    // Poll up to 30 seconds for steamclient64.dll to be loaded by steam.exe, then hook vtable
-    for _ in 0..60 {
+    // Poll up to 45 seconds for steamclient64.dll to be loaded, then hook vtable
+    for _ in 0..90 {
         if vtable::is_vtable_hook_installed() {
             break;
         }
         if vtable::install_vtable_hooks() {
+            log_line("[Bootstrap] Vtable hooks instalados com sucesso via worker!");
             break;
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -240,8 +390,36 @@ pub unsafe extern "system" fn DllMain(
     _lpv_reserved: *mut std::ffi::c_void,
 ) -> i32 {
     if fdw_reason == DLL_PROCESS_ATTACH {
+        DLL_HMODULE.store(hinst_dll, Ordering::Release);
         let _ = DisableThreadLibraryCalls(hinst_dll);
-        std::thread::spawn(bootstrap_autonomous_worker);
+
+        // Pre-resolve Steam path immediately from the DLL location itself
+        if let Some(dll_dir) = get_dll_directory() {
+            let mut s = dll_dir.to_string_lossy().into_owned();
+            if !s.ends_with('\\') && !s.ends_with('/') {
+                s.push('\\');
+            }
+            if let Ok(mut guard) = steam_path_store().lock() {
+                if guard.is_empty() {
+                    *guard = s;
+                }
+            }
+        }
+
+        log_line(&format!(
+            "DLL carregada com sucesso no processo (PID={})",
+            GetCurrentProcessId()
+        ));
+
+        // Use raw Win32 CreateThread to avoid Rust std::thread runtime deadlock inside DllMain
+        CreateThread(
+            std::ptr::null_mut(),
+            0,
+            Some(worker_thread_proc),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+        );
     } else if fdw_reason == DLL_PROCESS_DETACH {
         log_line("[DllMain] Processo encerrando (DLL_PROCESS_DETACH)");
     }
@@ -357,16 +535,22 @@ pub unsafe extern "C" fn CK_RegisterAppList(app_ids: *const u32, count: u32) {
         std::slice::from_raw_parts(app_ids, count as usize)
     };
 
-    if let Ok(mut guard) = apps_store().lock() {
-        guard.clear();
+    let total = if let Ok(mut guard) = apps_store().lock() {
         for &id in slice {
             if id != 0 {
                 guard.insert(id);
             }
         }
-    }
+        guard.len()
+    } else {
+        0
+    };
 
-    log_line(&format!("[CK_API] AppList atualizada: {} app(s)", slice.len()));
+    log_line(&format!(
+        "[CK_API] AppList atualizada: +{} apps recebidos do loader (total gerenciados={})",
+        slice.len(),
+        total
+    ));
     sync_session_with_service();
 }
 
@@ -524,21 +708,26 @@ pub unsafe extern "C" fn CR_Shutdown() {
 #[no_mangle]
 pub unsafe extern "C" fn CloudOnSendPkt(
     _this_ptr: *mut std::ffi::c_void,
-    _data: *mut std::ffi::c_void,
-    _len: u32,
-) {
+    _data: *const u8,
+    _size: u32,
+    _recv_pkt_fn: *mut std::ffi::c_void,
+) -> i32 {
     if !INIT_DONE.load(Ordering::Acquire) {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                let mut s = dir.to_string_lossy().into_owned();
-                if !s.ends_with('\\') {
-                    s.push('\\');
-                }
-                init_internal(&s, "CloudOnSendPkt");
-                vtable::install_vtable_hooks();
+        let dir_opt = get_dll_directory().or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+        });
+        if let Some(dir) = dir_opt {
+            let mut s = dir.to_string_lossy().into_owned();
+            if !s.ends_with('\\') && !s.ends_with('/') {
+                s.push('\\');
             }
+            init_internal(&s, "CloudOnSendPkt");
+            vtable::install_vtable_hooks();
         }
     }
+    0
 }
 
 #[no_mangle]

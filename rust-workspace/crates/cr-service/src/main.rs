@@ -19,6 +19,42 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use vault::{now_unix, VaultStorage};
 
+#[repr(C)]
+#[allow(non_snake_case)]
+struct SYSTEMTIME {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetLocalTime(lpSystemTime: *mut SYSTEMTIME);
+}
+
+pub fn get_local_timestamp_str() -> String {
+    let mut st = SYSTEMTIME {
+        wYear: 0,
+        wMonth: 0,
+        wDayOfWeek: 0,
+        wDay: 0,
+        wHour: 0,
+        wMinute: 0,
+        wSecond: 0,
+        wMilliseconds: 0,
+    };
+    unsafe { GetLocalTime(&mut st) };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+    )
+}
+
 #[derive(Debug, Clone)]
 struct ServiceConfig {
     port: u16,
@@ -89,10 +125,11 @@ fn default_vault_dir(exe_dir: &PathBuf) -> PathBuf {
 }
 
 fn log_msg(log_path: &PathBuf, msg: &str) {
-    let line = format!("[{}][chrono-daemon] {}\r\n", now_unix(), msg);
+    let line = format!("[{}][chrono-daemon] {}\r\n", get_local_timestamp_str(), msg);
     print!("{}", line);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = f.write_all(line.as_bytes());
+        let _ = f.flush();
     }
 }
 
@@ -161,7 +198,7 @@ fn handle_connection(
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
     let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
 
-    let Some((method, path, body)) = read_http_request(&mut stream) else {
+    let Some((method, path, body)) = read_http_request(&mut stream, &log_path) else {
         return;
     };
 
@@ -237,13 +274,15 @@ fn handle_connection(
 
         match rpc_res {
             Some((eresult, resp_bytes)) => {
+                let extra_info = extract_rpc_log_detail(&rpc_method, req_bytes);
                 log_msg(
                     &log_path,
                     &format!(
-                        "RPC {} app={} acct={} req={}B -> eresult={} resp={}B",
+                        "RPC {} app={} acct={}{} req={}B -> eresult={} resp={}B",
                         rpc_method,
                         app_id,
                         account_id,
+                        extra_info,
                         req_bytes.len(),
                         eresult,
                         resp_bytes.len()
@@ -263,6 +302,10 @@ fn handle_connection(
     }
 
     if method == "PUT" && path.starts_with("/upload/") {
+        log_msg(
+            &log_path,
+            &format!("[HTTP] PUT recebido para {} (tamanho={}B)", path, body.len()),
+        );
         if let Some((account_id, app_id, clean_filename)) = parse_blob_route(&path, "/upload/") {
             let final_bytes = match try_unwrap_steam_zip(&body) {
                 Some(unwrapped) => {
@@ -296,9 +339,15 @@ fn handle_connection(
                 guard.store_uploaded_blob(account_id, app_id, clean_filename, final_bytes);
             }
             let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"");
+            let _ = stream.shutdown(std::net::Shutdown::Write);
             return;
         }
+        log_msg(
+            &log_path,
+            &format!("[HTTP] PUT falhou: Rota invalida ou caminho inseguro: '{}'", path),
+        );
         let _ = write_http_response(&mut stream, "404 Not Found", "text/plain", b"");
+        let _ = stream.shutdown(std::net::Shutdown::Write);
         return;
     }
 
@@ -330,6 +379,26 @@ fn handle_connection(
     let _ = write_http_response(&mut stream, "404 Not Found", "text/plain", b"");
 }
 
+fn extract_rpc_log_detail(method: &str, req_bytes: &[u8]) -> String {
+    use cr_proto::cloud_messages::{
+        RPC_BEGIN_UPLOAD, RPC_COMMIT_UPLOAD, RPC_DELETE_FILE, RPC_FILE_DOWNLOAD,
+    };
+    use cr_proto::wire::{find_field, parse_message};
+
+    let field_num = match method {
+        RPC_FILE_DOWNLOAD | RPC_DELETE_FILE => 2,
+        RPC_COMMIT_UPLOAD => 4,
+        RPC_BEGIN_UPLOAD => 6,
+        _ => return String::new(),
+    };
+    let fields = parse_message(req_bytes);
+    if let Some(fname) = find_field(&fields, field_num).and_then(|f| f.as_str()) {
+        format!(" file='{}'", fname)
+    } else {
+        String::new()
+    }
+}
+
 fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {
     let rest = path.strip_prefix(prefix)?;
     let rest = rest.split('?').next().unwrap_or(rest);
@@ -345,7 +414,10 @@ fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {
     Some((account_id, app_id, clean))
 }
 
-fn read_http_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
+fn read_http_request(
+    stream: &mut TcpStream,
+    log_path: &PathBuf,
+) -> Option<(String, String, Vec<u8>)> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0u8; 4096];
     let header_end;
@@ -373,15 +445,41 @@ fn read_http_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)
     let path = req_parts.next()?.to_string();
 
     let mut content_length = 0usize;
+    let mut has_expect_100 = false;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
-            if k.trim().eq_ignore_ascii_case("content-length") {
-                content_length = v.trim().parse::<usize>().unwrap_or(0);
+            let key = k.trim();
+            let val = v.trim();
+            if key.eq_ignore_ascii_case("content-length") {
+                content_length = val.parse::<usize>().unwrap_or(0);
+            } else if key.eq_ignore_ascii_case("expect")
+                && val.to_ascii_lowercase().contains("100-continue")
+            {
+                has_expect_100 = true;
             }
         }
     }
 
+    if has_expect_100 {
+        log_msg(
+            log_path,
+            &format!(
+                "[HTTP] {} {} -> Header Expect: 100-continue detectado. Enviando 100 Continue",
+                method, path
+            ),
+        );
+        let _ = stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n");
+        let _ = stream.flush();
+    }
+
     if content_length > 512 * 1024 * 1024 {
+        log_msg(
+            log_path,
+            &format!(
+                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de 512MB",
+                method, path, content_length
+            ),
+        );
         return None;
     }
 
@@ -390,12 +488,28 @@ fn read_http_request(stream: &mut TcpStream) -> Option<(String, String, Vec<u8>)
         body.extend_from_slice(&buf[header_end..]);
     }
     while body.len() < content_length {
-        let n = stream.read(&mut chunk).ok()?;
+        let to_read = (content_length - body.len()).min(chunk.len());
+        let n = stream.read(&mut chunk[..to_read]).ok()?;
         if n == 0 {
             break;
         }
         body.extend_from_slice(&chunk[..n]);
     }
+
+    if content_length > 0 && body.len() < content_length {
+        log_msg(
+            log_path,
+            &format!(
+                "[HTTP] {} {} -> Leitura incompleta do body: {} de {} bytes recebidos",
+                method,
+                path,
+                body.len(),
+                content_length
+            ),
+        );
+        return None;
+    }
+    body.truncate(content_length);
 
     Some((method, path, body))
 }
@@ -406,12 +520,19 @@ fn write_http_response(
     content_type: &str,
     body: &[u8],
 ) -> std::io::Result<()> {
-    let header = format!(
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        status,
-        content_type,
-        body.len()
-    );
+    let header = if body.is_empty() {
+        format!(
+            "HTTP/1.1 {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            status
+        )
+    } else {
+        format!(
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            status,
+            content_type,
+            body.len()
+        )
+    };
     stream.write_all(header.as_bytes())?;
     if !body.is_empty() {
         stream.write_all(body)?;
@@ -463,38 +584,38 @@ fn run_self_test(cfg: &ServiceConfig) {
         req_begin.write_varint(3, test_payload.len() as u64);
         req_begin.write_varint(5, now_unix());
         req_begin.write_str(6, test_filename);
-        let _ = engine.handle_rpc("Cloud.BeginFileUpload#1", test_app, test_acct, &req_begin.into_bytes());
+        let _ = engine.handle_rpc("Cloud.ClientBeginFileUpload#1", test_app, test_acct, &req_begin.into_bytes());
         engine.store_uploaded_blob(test_acct, test_app, test_filename.to_string(), test_payload.as_bytes().to_vec());
 
         let mut req_commit = ProtoWriter::new();
         req_commit.write_varint(1, 1);
         req_commit.write_varint(2, test_app as u64);
         req_commit.write_str(4, test_filename);
-        let _ = engine.handle_rpc("Cloud.CommitFileUpload#1", test_app, test_acct, &req_commit.into_bytes());
+        let _ = engine.handle_rpc("Cloud.ClientCommitFileUpload#1", test_app, test_acct, &req_commit.into_bytes());
         println!("[1/3] Simulacao direta da Engine RPC : [OK]");
     } else {
         println!("[1/4] Conexao HTTP com chrono-daemon (127.0.0.1:{}) : [OK]", cfg.port);
 
-        // 2. Enviar BeginFileUpload#1 via /v1/rpc
+        // 2. Enviar ClientBeginFileUpload#1 via /v1/rpc
         let mut req_begin = ProtoWriter::new();
         req_begin.write_varint(1, test_app as u64);
         req_begin.write_varint(2, test_payload.len() as u64);
         req_begin.write_varint(3, test_payload.len() as u64);
         req_begin.write_varint(5, now_unix());
         req_begin.write_str(6, test_filename);
-        let begin_frame = build_rpc_frame("Cloud.BeginFileUpload#1", test_app, test_acct, &req_begin.into_bytes());
+        let begin_frame = build_rpc_frame("Cloud.ClientBeginFileUpload#1", test_app, test_acct, &req_begin.into_bytes());
         let _ = send_raw_http(cfg.port, "POST", "/v1/rpc", &begin_frame);
 
         // 3. Enviar PUT /upload/76561198/480/chronokeep_test_save.txt
         let put_path = format!("/upload/{}/{}/{}", test_acct, test_app, test_filename);
         let _ = send_raw_http(cfg.port, "PUT", &put_path, test_payload.as_bytes());
 
-        // 4. Enviar CommitFileUpload#1 via /v1/rpc
+        // 4. Enviar ClientCommitFileUpload#1 via /v1/rpc
         let mut req_commit = ProtoWriter::new();
         req_commit.write_varint(1, 1);
         req_commit.write_varint(2, test_app as u64);
         req_commit.write_str(4, test_filename);
-        let commit_frame = build_rpc_frame("Cloud.CommitFileUpload#1", test_app, test_acct, &req_commit.into_bytes());
+        let commit_frame = build_rpc_frame("Cloud.ClientCommitFileUpload#1", test_app, test_acct, &req_commit.into_bytes());
         let _ = send_raw_http(cfg.port, "POST", "/v1/rpc", &commit_frame);
 
         println!("[2/4] Ciclo RPC Steam Cloud (BeginUpload -> PUT -> CommitUpload) : [OK]");

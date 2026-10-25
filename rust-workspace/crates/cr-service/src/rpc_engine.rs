@@ -110,7 +110,18 @@ impl RpcEngine {
                 return Some(data.clone());
             }
         }
-        self.vault.read_save_file(acct, app_id, clean_filename)
+        if let Some(bytes) = self.vault.read_save_file(acct, app_id, clean_filename) {
+            return Some(bytes);
+        }
+        let manifest = self.vault.load_and_reconcile_manifest(acct, app_id);
+        for k in manifest.files.keys() {
+            if k.eq_ignore_ascii_case(clean_filename) {
+                if let Some(bytes) = self.vault.read_save_file(acct, app_id, k) {
+                    return Some(bytes);
+                }
+            }
+        }
+        Some(Vec::new())
     }
 
     pub fn handle_rpc(
@@ -164,27 +175,22 @@ impl RpcEngine {
         fields: &[ProtoField<'_>],
     ) -> (i32, Vec<u8>) {
         let synced_cn = find_field(fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
-        let manifest = self.vault.load_and_reconcile_manifest(account_id, app_id);
+        let mut manifest = self.vault.load_and_reconcile_manifest(account_id, app_id);
+        if manifest.change_number < synced_cn {
+            manifest.change_number = synced_cn;
+            let _ = self.vault.save_manifest(account_id, app_id, &manifest);
+        }
 
         let key = (account_id, app_id);
-        let already_sent = self.full_manifest_sent.contains(&key);
+        self.full_manifest_sent.insert(key);
 
-        let (is_only_delta, files_vec): (bool, Vec<CloudFileRecord>) = if manifest.files.is_empty()
-        {
-            (false, Vec::new())
-        } else if already_sent && synced_cn == manifest.change_number {
-            (true, Vec::new())
-        } else {
-            self.full_manifest_sent.insert(key);
-            let mut list: Vec<CloudFileRecord> = manifest.files.values().cloned().collect();
-            list.sort_by(|a, b| a.filename.cmp(&b.filename));
-            (false, list)
-        };
+        let mut list: Vec<CloudFileRecord> = manifest.files.values().cloned().collect();
+        list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
         let resp = build_changelist_response(
             manifest.change_number,
-            is_only_delta,
-            &files_vec,
+            false,
+            &list,
             "CHRONOKEEP-PC",
             manifest.app_build_id,
         );
@@ -406,16 +412,37 @@ impl RpcEngine {
         let raw_filename = find_field(fields, 2).and_then(|f| f.as_str()).unwrap_or("");
         let (_, clean_name) = split_root_token(raw_filename);
         if clean_name.is_empty() {
-            return (ERESULT_FAIL, Vec::new());
+            return (ERESULT_OK, Vec::new());
         }
 
         let manifest = self.vault.load_and_reconcile_manifest(account_id, app_id);
-        let (file_size, sha1, timestamp) = if let Some(entry) = manifest.files.get(&clean_name) {
-            (entry.raw_size, entry.sha1, entry.timestamp)
+        let ci_entry = manifest
+            .files
+            .get(&clean_name)
+            .or_else(|| {
+                manifest
+                    .files
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(&clean_name))
+                    .map(|(_, v)| v)
+            });
+
+        let (resolved_name, file_size, sha1, timestamp) = if let Some(entry) = ci_entry {
+            (
+                entry.filename.clone(),
+                entry.raw_size,
+                entry.sha1,
+                entry.timestamp,
+            )
         } else if let Some(bytes) = self.vault.read_save_file(account_id, app_id, &clean_name) {
-            (bytes.len() as u64, sha1_digest(&bytes), now_unix())
+            (
+                clean_name.clone(),
+                bytes.len() as u64,
+                sha1_digest(&bytes),
+                now_unix(),
+            )
         } else {
-            return (ERESULT_FAIL, Vec::new());
+            (clean_name.clone(), 0u64, sha1_digest(&[]), now_unix())
         };
 
         let url_host = format!("127.0.0.1:{}", self.listen_port);
@@ -423,7 +450,7 @@ impl RpcEngine {
             "/download/{}/{}/{}",
             account_id,
             app_id,
-            url_encode_path(&clean_name)
+            url_encode_path(&resolved_name)
         );
         let resp = build_file_download_response(
             app_id, file_size, &sha1, timestamp, &url_host, &url_path,

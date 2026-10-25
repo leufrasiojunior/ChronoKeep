@@ -79,21 +79,17 @@ impl VaultStorage {
     }
 
     /// Loads the manifest for `(account_id, app_id)`, importing existing local Steam `userdata`
-    /// saves on first run if the Vault is new, and reconciles with `<vault_root>/<account_id>/<app_id>/files/`.
+    /// and legacy `cloud_redirect\storage` saves, and reconciles with `<vault_root>/<account_id>/<app_id>/files/`.
     pub fn load_and_reconcile_manifest(&self, account_id: u32, app_id: u32) -> AppManifest {
-        if !self.manifest_path(account_id, app_id).exists()
-            && !self.files_dir(account_id, app_id).exists()
-        {
-            self.seed_from_steam_userdata_if_present(account_id, app_id);
-        }
+        let is_first_seed = !self.manifest_path(account_id, app_id).exists();
+        self.seed_from_steam_userdata_if_present(account_id, app_id);
 
         let mut manifest = self.load_manifest_raw(account_id, app_id);
-        if manifest.change_number == 0 {
-            if let Some(vdf_cn) = self.read_remotecache_change_number(account_id, app_id) {
-                if vdf_cn > 0 {
-                    manifest.change_number = vdf_cn;
-                }
-            }
+        let (vdf_cn_opt, vdf_files) = self.read_remotecache_metadata(account_id, app_id);
+        let legacy_tokens = self.read_legacy_file_tokens(account_id, app_id);
+        let vdf_cn = vdf_cn_opt.unwrap_or(0);
+        if manifest.change_number < vdf_cn {
+            manifest.change_number = vdf_cn;
         }
 
         let files_root = self.files_dir(account_id, app_id);
@@ -118,26 +114,47 @@ impl VaultStorage {
                 .map(|d| d.as_secs())
                 .unwrap_or_else(now_unix);
 
+            let vdf_meta = vdf_files.get(&rel_name);
+            let preferred_token = legacy_tokens
+                .get(&rel_name)
+                .cloned()
+                .or_else(|| vdf_meta.map(|(tok, _)| tok.clone()))
+                .filter(|t| !t.is_empty());
+
             let needs_hash = match manifest.files.get(&rel_name) {
-                Some(entry) => entry.raw_size != disk_size || entry.persist_state != 0,
+                Some(entry) => {
+                    let token_mismatch = preferred_token
+                        .as_ref()
+                        .map(|pt| entry.root_token.is_empty() && !pt.is_empty())
+                        .unwrap_or(false);
+                    entry.raw_size != disk_size || entry.persist_state != 0 || token_mismatch
+                }
                 None => true,
             };
 
             if needs_hash {
                 if let Ok(bytes) = fs::read(&full_path) {
                     let sha = sha1_digest(&bytes);
-                    let root_token = manifest
-                        .files
-                        .get(&rel_name)
-                        .map(|e| e.root_token.clone())
+                    let root_token = preferred_token
+                        .or_else(|| {
+                            manifest
+                                .files
+                                .get(&rel_name)
+                                .map(|e| e.root_token.clone())
+                                .filter(|t| !t.is_empty())
+                        })
                         .unwrap_or_else(|| manifest.default_root_token.clone());
+                    let ts = vdf_meta
+                        .map(|(_, t)| *t)
+                        .filter(|&t| t > 0)
+                        .unwrap_or(disk_mtime);
                     manifest.files.insert(
                         rel_name.clone(),
                         CloudFileRecord {
                             filename: rel_name,
                             root_token,
                             sha1: sha,
-                            timestamp: disk_mtime,
+                            timestamp: ts,
                             raw_size: bytes.len() as u64,
                             persist_state: 0,
                             platforms_to_sync: 0xFFFF_FFFF,
@@ -155,7 +172,9 @@ impl VaultStorage {
         }
 
         if modified {
-            if manifest.change_number == 0 {
+            if is_first_seed && vdf_cn > 0 {
+                manifest.change_number = vdf_cn;
+            } else if manifest.change_number == 0 {
                 manifest.change_number = 1;
             } else {
                 manifest.change_number = manifest.change_number.saturating_add(1);
@@ -166,26 +185,33 @@ impl VaultStorage {
         manifest
     }
 
-    /// On first initialization of an AppID in the Vault, copies any existing save files from:
+    /// Imports any missing save files from:
     /// 1) `<SteamDir>/userdata/<account_id>/<app_id>/remote/`
-    /// 2) `<SteamDir>/cloud_redirect_cache/<account_id>/<app_id>/` (if migrating from original CloudRedirect)
+    /// 2) `<SteamDir>/cloud_redirect/storage/<account_id>/<app_id>/`
+    /// 3) `C:\Backup_CloudRedirect\Steam_Folder\cloud_redirect\storage\<account_id>\<app_id>\`
     fn seed_from_steam_userdata_if_present(&self, account_id: u32, app_id: u32) {
-        let Some(ref steam_root) = self.steam_path else {
-            return;
-        };
-
-        let candidates = [
-            steam_root
-                .join("userdata")
-                .join(account_id.to_string())
-                .join(app_id.to_string())
-                .join("remote"),
-            steam_root
-                .join("cloud_redirect")
-                .join("blobs")
+        let mut candidates = Vec::new();
+        if let Some(ref steam_root) = self.steam_path {
+            candidates.push(
+                steam_root
+                    .join("userdata")
+                    .join(account_id.to_string())
+                    .join(app_id.to_string())
+                    .join("remote"),
+            );
+            candidates.push(
+                steam_root
+                    .join("cloud_redirect")
+                    .join("storage")
+                    .join(account_id.to_string())
+                    .join(app_id.to_string()),
+            );
+        }
+        candidates.push(
+            PathBuf::from(r"C:\Backup_CloudRedirect\Steam_Folder\cloud_redirect\storage")
                 .join(account_id.to_string())
                 .join(app_id.to_string()),
-        ];
+        );
 
         for src_dir in candidates {
             if !src_dir.exists() {
@@ -194,36 +220,142 @@ impl VaultStorage {
             let mut found = Vec::new();
             collect_files_recursive(&src_dir, &src_dir, &mut found);
             for (rel_name, src_path) in found {
-                if rel_name.starts_with('.') || rel_name.contains(".cloudredirect") {
+                let lower = rel_name.to_lowercase();
+                if lower.starts_with('.')
+                    || lower.contains(".cloudredirect")
+                    || lower == "cn.dat"
+                    || lower == "roottoken.dat"
+                    || lower == "root_token.dat"
+                    || lower == "filetokens.dat"
+                    || lower == "file_tokens.dat"
+                    || lower == "manifest.dat"
+                    || lower == "deleted.dat"
+                    || lower.ends_with(".tmp")
+                {
                     continue;
                 }
-                if let Ok(bytes) = fs::read(&src_path) {
-                    let _ = self.write_save_file(account_id, app_id, &rel_name, &bytes);
+                if let Some(dest) = self.resolve_file_disk_path(account_id, app_id, &rel_name) {
+                    if !dest.exists() {
+                        if let Ok(bytes) = fs::read(&src_path) {
+                            let _ = self.write_save_file(account_id, app_id, &rel_name, &bytes);
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn read_remotecache_change_number(&self, account_id: u32, app_id: u32) -> Option<u64> {
-        let steam_root = self.steam_path.as_ref()?;
+    fn read_legacy_file_tokens(&self, account_id: u32, app_id: u32) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+        let mut dirs = Vec::new();
+        if let Some(ref steam_root) = self.steam_path {
+            dirs.push(
+                steam_root
+                    .join("cloud_redirect")
+                    .join("storage")
+                    .join(account_id.to_string())
+                    .join(app_id.to_string()),
+            );
+            dirs.push(
+                steam_root
+                    .join("cloud_redirect")
+                    .join("metadata")
+                    .join(account_id.to_string())
+                    .join(app_id.to_string()),
+            );
+        }
+        dirs.push(
+            PathBuf::from(r"C:\Backup_CloudRedirect\Steam_Folder\cloud_redirect\storage")
+                .join(account_id.to_string())
+                .join(app_id.to_string()),
+        );
+        dirs.push(
+            PathBuf::from(r"C:\Backup_CloudRedirect\Steam_Folder\cloud_redirect\metadata")
+                .join(account_id.to_string())
+                .join(app_id.to_string()),
+        );
+
+        for d in dirs {
+            for fname in ["file_tokens.cloudredirect", "file_tokens.dat"] {
+                let p = d.join(fname);
+                if let Ok(content) = fs::read_to_string(&p) {
+                    for line in content.lines() {
+                        let line = line.trim_end_matches(&['\r', '\n'][..]);
+                        if let Some((clean, tok)) = line.split_once('\t') {
+                            let clean = sanitize_rel_path(clean);
+                            if !clean.is_empty() && !tok.is_empty() {
+                                out.entry(clean).or_insert_with(|| tok.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn read_remotecache_metadata(
+        &self,
+        account_id: u32,
+        app_id: u32,
+    ) -> (Option<u64>, HashMap<String, (String, u64)>) {
+        let mut cn_opt = None;
+        let mut files_meta = HashMap::new();
+        let Some(ref steam_root) = self.steam_path else {
+            return (None, files_meta);
+        };
         let vdf_path = steam_root
             .join("userdata")
             .join(account_id.to_string())
             .join(app_id.to_string())
             .join("remotecache.vdf");
-        let content = fs::read_to_string(vdf_path).ok()?;
+        let Ok(content) = fs::read_to_string(vdf_path) else {
+            return (None, files_meta);
+        };
+
+        let app_str = app_id.to_string();
+        let mut current_file: Option<String> = None;
+        let mut cur_root_id: u32 = 0;
+        let mut cur_time: u64 = 0;
+
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("\"ChangeNumber\"") {
-                let parts: Vec<&str> = trimmed.split('"').collect();
-                if parts.len() >= 4 {
-                    if let Ok(cn) = parts[3].parse::<u64>() {
-                        return Some(cn);
+            if trimmed == "}" {
+                if let Some(fname) = current_file.take() {
+                    let clean = sanitize_rel_path(&fname);
+                    if !clean.is_empty() {
+                        files_meta.insert(clean, (root_id_to_token(cur_root_id), cur_time));
                     }
+                }
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split('"').collect();
+            if parts.len() >= 4 {
+                let key = parts[1];
+                let val = parts[3];
+                if current_file.is_none() && key.eq_ignore_ascii_case("ChangeNumber") {
+                    if let Ok(cn) = val.parse::<u64>() {
+                        cn_opt = Some(cn);
+                    }
+                } else if current_file.is_some() {
+                    if key.eq_ignore_ascii_case("root") {
+                        cur_root_id = val.parse::<u32>().unwrap_or(0);
+                    } else if key.eq_ignore_ascii_case("remotetime")
+                        || (key.eq_ignore_ascii_case("time") && cur_time == 0)
+                    {
+                        cur_time = val.parse::<u64>().unwrap_or(0);
+                    }
+                }
+            } else if parts.len() >= 2 && current_file.is_none() {
+                let key = parts[1];
+                if key != app_str && !key.is_empty() {
+                    current_file = Some(key.to_string());
+                    cur_root_id = 0;
+                    cur_time = 0;
                 }
             }
         }
-        None
+        (cn_opt, files_meta)
     }
 
     fn load_manifest_raw(&self, account_id: u32, app_id: u32) -> AppManifest {
@@ -232,16 +364,18 @@ impl VaultStorage {
             return AppManifest::default();
         };
         let mut manifest = AppManifest::default();
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+        for raw_line in content.lines() {
+            let line = raw_line.trim_end_matches(&['\r', '\n'][..]);
+            if line.trim().is_empty() || line.starts_with('#') {
                 continue;
             }
             let parts: Vec<&str> = line.split('\t').collect();
-            if parts[0] == "META" && parts.len() >= 4 {
+            if parts[0] == "META" && parts.len() >= 3 {
                 manifest.change_number = parts[1].parse().unwrap_or(0);
                 manifest.app_build_id = parts[2].parse().unwrap_or(0);
-                manifest.default_root_token = parts[3].to_string();
+                if parts.len() >= 4 {
+                    manifest.default_root_token = parts[3].to_string();
+                }
             } else if parts[0] == "FILE" && parts.len() >= 7 {
                 let filename = sanitize_rel_path(parts[1]);
                 if filename.is_empty() {
@@ -390,6 +524,25 @@ fn collect_files_recursive(base: &Path, current: &Path, out: &mut Vec<(String, P
                 }
             }
         }
+    }
+}
+
+pub fn root_id_to_token(root_id: u32) -> String {
+    match root_id {
+        1 => "%GameInstall%".to_string(),
+        2 => "%WinMyDocuments%".to_string(),
+        3 => "%WinAppDataLocal%".to_string(),
+        4 => "%WinAppDataRoaming%".to_string(),
+        5 => "%SteamUserBaseStorage%".to_string(),
+        9 => "%WinSavedGames%".to_string(),
+        10 => "%WinProgramData%".to_string(),
+        11 => "%SteamCloudDocuments%".to_string(),
+        12 => "%WinAppDataLocalLow%".to_string(),
+        14 => "%LinuxHome%".to_string(),
+        15 => "%LinuxXdgDataHome%".to_string(),
+        16 => "%LinuxXdgConfigHome%".to_string(),
+        18 => "%WindowsHome%".to_string(),
+        _ => String::new(),
     }
 }
 

@@ -221,6 +221,12 @@ unsafe extern "C" fn hooked_slot4(
     let fields = parse_message(&req_bytes);
     let app_id = extract_app_id(method, &fields);
     if app_id == 0 || !is_namespace_app(app_id) {
+        if app_id != 0 {
+            log_line(&format!(
+                "[Slot4] PASSTHROUGH {} app={} (não é namespace app -> enviado para a Valve)",
+                method, app_id
+            ));
+        }
         return orig(thisptr, method_name, req_body, resp_body, flags);
     }
 
@@ -293,6 +299,12 @@ unsafe extern "C" fn hooked_slot5(
     let fields = parse_message(&req_bytes);
     let app_id = extract_app_id(method, &fields);
     if app_id == 0 || !is_namespace_app(app_id) {
+        if app_id != 0 {
+            log_line(&format!(
+                "[Slot5] PASSTHROUGH {} app={} (não é namespace app -> enviado para a Valve)",
+                method, app_id
+            ));
+        }
         return orig(thisptr, method_name, request_msg, response_msg, flags);
     }
 

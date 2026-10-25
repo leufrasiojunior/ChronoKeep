@@ -1,29 +1,68 @@
 # ChronoKeep
 
-**ChronoKeep** é um sistema de redirecionamento e proteção de Cloud Saves para Steam em Windows x64, escrito 100% em **Rust** (`no external dependencies` / clean-room architecture), dividido em uma **Bridge DLL ultraleve (`chronokeep.dll`)**, um **Daemon Local (`chrono-daemon.exe`)** e um **Instalador/Configurador GUI nativo (`ChronoKeepSetup.exe`)**.
+**ChronoKeep** é um sistema de redirecionamento, preservação e backup automático de Saves da Steam Cloud para Windows x64.
+Construído 100% em **Rust** (arquitetura *clean-room*, código limpo e seguro), substitui soluções legadas trazendo estabilidade total, suporte a arquivos compactados (ZIP RFC 1951), timestamps legíveis e integração nativa com o Google Drive.
 
 ---
 
-## Arquitetura
+## 🚀 Como Usar (Instalação Rápida para Usuário Comum)
 
-1. **`chronokeep.dll` (Bridge DLL — `crates/cr-bridge-dll`)**
-   - Injetada no processo `steam.exe` (autônoma via `DllMain` ou carregada por proxy loaders).
-   - Exporta a API nativa **`CK_*`** (`CK_AttachRuntime`, `CK_InstallTransportHooks`, `CK_DispatchCloudRpc`, `CK_RegisterAppList`, `CK_RegisterApp`, `CK_UnregisterApp`, `CK_QueryAppRegistered`, `CK_BindAccount`, `CK_NotifyGameState`, `CK_DetachRuntime`) além de pontes de compatibilidade para loaders existentes.
-   - Localiza `CClientUnifiedServiceTransport` no `steamclient64.dll` via RTTI x64 (`.?AVCClientUnifiedServiceTransport@@`), instala hooks nos Slots `4`, `5`, `7` e `8` da vtable e encaminha apenas os AppIDs gerenciados para o `chrono-daemon.exe`.
+Não é necessário compilar nada nem usar scripts complexos. O executável **`ChronoKeepSetup.exe`** é **100% autocontido** (todos os binários e DLLs necessários estão embutidos dentro dele).
 
-2. **`chrono-daemon.exe` (Local Cloud Save Daemon — `crates/cr-service`)**
-   - Escuta localmente em `127.0.0.1:39771` (configurável via `chronokeep.ini`).
-   - Implementa todos os 12 métodos RPC `Cloud.*` da Steam e os endpoints HTTP `PUT /upload/...` e `GET /download/...`.
-   - Descomprime automaticamente pacotes ZIP `"z"` da Steam (RFC 1951 `INFLATE`), mantendo os saves puros e legíveis na pasta do Vault (`%USERPROFILE%\Saved Games\ChronoKeepVault` ou Google Drive / OneDrive).
+1. Acesse a aba **[Releases](../../releases)** deste repositório e baixe o arquivo **`ChronoKeepSetup.exe`**.
+2. Execute o **`ChronoKeepSetup.exe`**.
+3. O instalador detectará sua pasta da Steam automaticamente:
+   - Se o seu **OpenSteamTool** estiver com o recurso cloud desativado (`opensteamtool.toml`), o ChronoKeep avisará na hora e oferecerá para ativar com 1 clique.
+4. Clique no botão **`Instalar na Steam (1-Clique)`**:
+   - Ele implantará automaticamente a DLL principal (`chronokeep.dll`), a ponte (`cloud_redirect.dll`), o daemon em segundo plano (`chrono-daemon.exe`) e iniciará o serviço.
+5. *(Opcional)* Clique em **`Conectar Conta Google Drive`** para fazer login com 1 clique no navegador e salvar uma cópia na nuvem.
+6. Pronto! Abra sua Steam e jogue normalmente. Seus saves estarão sempre sincronizados e seguros em `%USERPROFILE%\Saved Games\ChronoKeepVault`.
 
-3. **`ChronoKeepSetup.exe` (Native Win32 GUI — `crates/cr-gui`)**
-   - Interface gráfica nativa Win32 para instalar `chronokeep.dll` e `chrono-daemon.exe` na pasta da Steam, configurar o diretório do Vault, a porta local e as credenciais Google Drive OAuth2.
+> 💡 **Dica (Instalação Silenciosa)**: Você também pode rodar `ChronoKeepSetup.exe /silent` ou clicar no botão **`Instalar Silencioso`** na interface para implantar tudo instantaneamente sem confirmações adicionais.
 
 ---
 
-## Compilação (WSL / Linux -> Windows x64 MSVC)
+## 🏛️ Arquitetura
 
+1. **`ChronoKeepSetup.exe` (Instalador All-In-One — `crates/cr-gui`)**
+   - Executável nativo Win32 leve (~1 MB).
+   - Contém a DLL e o Daemon embutidos via `include_bytes!`. Funciona mesmo executado isolado em um computador sem outros arquivos.
+   - Suporte a modo silencioso via `/silent`, `/S` ou `/install`.
+   - Gerenciador de conexão OAuth2 para Google Drive.
+
+2. **`chronokeep.dll` / `cloud_redirect.dll` (Bridge DLL — `crates/cr-bridge-dll`)**
+   - Injetada no processo `steam.exe` (via OpenSteamTool ou proxy DLL).
+   - Hooka a vtable de `steamclient64.dll` e intercepta as chamadas de Cloud RPC dos jogos gerenciados.
+   - Logs com data e hora local legível (`[YYYY-MM-DD HH:MM:SS]`).
+
+3. **`chrono-daemon.exe` (Local Cloud Save Daemon — `crates/cr-service`)**
+   - Servidor HTTP local em `127.0.0.1:39771`.
+   - Suporte ao protocolo HTTP/1.1 completo (incluindo `Expect: 100-continue` para uploads grandes da Steam).
+   - Descompressão automática de pacotes ZIP `"z"` da Steam e salvamento no Vault.
+   - Sincronização em tempo real com o Google Drive via API REST oficial.
+
+---
+
+## 🛠️ Compilação Manual
+
+### No Linux / WSL (Cross-Compile para Windows x64 MSVC):
 ```bash
-cargo build --manifest-path rust-workspace/Cargo.toml --target x86_64-pc-windows-msvc --release
+# 1. Compilar o Daemon e a DLL
+cargo build --manifest-path rust-workspace/Cargo.toml --target x86_64-pc-windows-msvc --release --bin chrono-daemon -p cr-bridge-dll
+
+# 2. Atualizar os binários na pasta embutida do instalador
+mkdir -p rust-workspace/crates/cr-gui/embedded
+cp rust-workspace/target/x86_64-pc-windows-msvc/release/chrono-daemon.exe rust-workspace/crates/cr-gui/embedded/
+cp rust-workspace/target/x86_64-pc-windows-msvc/release/chronokeep.dll rust-workspace/crates/cr-gui/embedded/
+
+# 3. Compilar o Instalador GUI Autocontido
+cargo build --manifest-path rust-workspace/Cargo.toml --target x86_64-pc-windows-msvc --release -p cr-gui
 ```
 
+### No Windows:
+Abra o PowerShell na pasta raiz e execute:
+```powershell
+cargo build --manifest-path rust-workspace/Cargo.toml --release
+```
+
+Ou deixe o **GitHub Actions** compilar tudo automaticamente e gerar a Release pronta para você!

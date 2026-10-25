@@ -57,9 +57,18 @@ const COLOR_WINDOW: i32 = 5;
 const DEFAULT_GUI_FONT: i32 = 17;
 const SW_SHOWNORMAL: i32 = 1;
 const MB_OK: u32 = 0x0000_0000;
+const MB_YESNO: u32 = 0x0000_0004;
 const MB_ICONINFORMATION: u32 = 0x0000_0040;
+const MB_ICONQUESTION: u32 = 0x0000_0020;
+const MB_ICONWARNING: u32 = 0x0000_0030;
 const MB_ICONERROR: u32 = 0x0000_0010;
+const IDYES: i32 = 6;
+#[allow(dead_code)]
+const IDNO: i32 = 7;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+const EMBEDDED_CHRONOKEEP_DLL: &[u8] = include_bytes!("../embedded/chronokeep.dll");
+const EMBEDDED_CHRONO_DAEMON: &[u8] = include_bytes!("../embedded/chrono-daemon.exe");
 
 const WINHTTP_ACCESS_TYPE_DEFAULT_PROXY: DWORD = 0;
 const INTERNET_DEFAULT_HTTPS_PORT: u16 = 443;
@@ -79,6 +88,7 @@ const ID_BTN_START_SVC: usize = 202;
 const ID_BTN_OPEN_VAULT: usize = 203;
 const ID_BTN_OPEN_LOGS: usize = 204;
 const ID_BTN_GOOGLE_LOGIN: usize = 205;
+const ID_BTN_SILENT_INSTALL: usize = 206;
 const ID_LBL_STATUS: usize = 301;
 const ID_LBL_GDRIVE_STATUS: usize = 302;
 
@@ -510,10 +520,93 @@ fn ensure_opensteamtool_cloud_enabled(steam_dir: &Path) {
     let Ok(content) = fs::read_to_string(&toml_path) else {
         return;
     };
-    if !content.contains("[cloud]") {
-        let updated = format!("{}\r\n[cloud]\r\nenabled = true\r\n", content.trim_end());
-        let _ = fs::write(&toml_path, updated);
+
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut in_cloud_section = false;
+    let mut cloud_found = false;
+    let mut enabled_found = false;
+
+    for line in &mut lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_cloud_section = trimmed.eq_ignore_ascii_case("[cloud]");
+            if in_cloud_section {
+                cloud_found = true;
+            }
+        } else if in_cloud_section && trimmed.to_ascii_lowercase().starts_with("enabled") {
+            *line = "enabled = true".to_string();
+            enabled_found = true;
+        }
     }
+
+    if !cloud_found {
+        lines.push(String::new());
+        lines.push("[cloud]".to_string());
+        lines.push("enabled = true".to_string());
+    } else if !enabled_found {
+        if let Some(pos) = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("[cloud]")) {
+            lines.insert(pos + 1, "enabled = true".to_string());
+        }
+    }
+
+    let updated = lines.join("\r\n") + "\r\n";
+    let _ = fs::write(&toml_path, updated);
+}
+
+fn is_opensteamtool_cloud_disabled(steam_dir: &Path) -> bool {
+    let toml_path = steam_dir.join("opensteamtool.toml");
+    if !toml_path.exists() {
+        return false;
+    }
+    let Ok(content) = fs::read_to_string(&toml_path) else {
+        return false;
+    };
+    let mut in_cloud = false;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            in_cloud = t.eq_ignore_ascii_case("[cloud]");
+        } else if in_cloud && t.to_ascii_lowercase().starts_with("enabled") {
+            if let Some((_, v)) = t.split_once('=') {
+                return !v.trim().eq_ignore_ascii_case("true");
+            }
+        }
+    }
+    // Secao cloud ausente ou sem enabled=true
+    true
+}
+
+unsafe fn prompt_enable_cloud_if_needed(hwnd: HWND, steam_dir: &Path) -> bool {
+    let toml_path = steam_dir.join("opensteamtool.toml");
+    if !toml_path.exists() {
+        return true;
+    }
+    if is_opensteamtool_cloud_disabled(steam_dir) {
+        let msg = to_wide(
+            "AVISO IMPORTANTE:\r\n\r\n\
+             O recurso [cloud] do OpenSteamTool está DESATIVADO no arquivo 'opensteamtool.toml'.\r\n\r\n\
+             Se você não ativar o [cloud], o redirecionamento de saves da Steam pelo ChronoKeep NÃO irá funcionar!\r\n\r\n\
+             Deseja que o ChronoKeep ative automaticamente o recurso [cloud] no seu opensteamtool.toml agora?",
+        );
+        let cap = to_wide("ChronoKeep — Recurso Cloud do OpenSteamTool");
+        let resp = MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONQUESTION);
+        if resp == IDYES {
+            ensure_opensteamtool_cloud_enabled(steam_dir);
+            let ok_msg = to_wide("Recurso [cloud] ativado com sucesso em opensteamtool.toml!");
+            let ok_cap = to_wide("Configuracao Atualizada");
+            MessageBoxW(hwnd, ok_msg.as_ptr(), ok_cap.as_ptr(), MB_OK | MB_ICONINFORMATION);
+            return true;
+        } else {
+            let warn = to_wide(
+                "Atenção: O recurso [cloud] permaneceu desativado.\r\n\
+                 Lembre-se de ativá-lo no opensteamtool.toml para que os saves da nuvem sejam interceptados.",
+            );
+            let warn_cap = to_wide("Aviso");
+            MessageBoxW(hwnd, warn.as_ptr(), warn_cap.as_ptr(), MB_OK | MB_ICONWARNING);
+            return false;
+        }
+    }
+    true
 }
 
 fn exchange_code_for_tokens(code: &str, redirect_uri: &str) -> Option<String> {
@@ -742,12 +835,82 @@ unsafe fn on_google_browser_login(hwnd: HWND) {
     }
 }
 
+fn deploy_bytes_safe(data: &[u8], dst: &Path) -> bool {
+    if let Some(parent) = dst.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if fs::write(dst, data).is_ok() {
+        return true;
+    }
+    let old_path = dst.with_extension("old");
+    let _ = fs::remove_file(&old_path);
+    let _ = fs::rename(dst, &old_path);
+    fs::write(dst, data).is_ok()
+}
+
+fn deploy_component(target: &Path, companion_name: &str, embedded: &[u8]) -> bool {
+    let bytes = if let Some(local_path) = find_companion_binary(companion_name) {
+        fs::read(local_path).unwrap_or_else(|_| embedded.to_vec())
+    } else {
+        embedded.to_vec()
+    };
+    deploy_bytes_safe(&bytes, target)
+}
+
+fn run_silent_install() -> i32 {
+    let steam_dir_str = detect_default_steam_dir();
+    let vault_dir_str = detect_default_vault_dir();
+    let port = DEFAULT_SERVICE_PORT;
+    let steam_dir = Path::new(&steam_dir_str);
+
+    if !steam_dir.exists() {
+        return 1;
+    }
+
+    let _ = fs::create_dir_all(&vault_dir_str);
+
+    // 1. Grava chronokeep.ini
+    let ini_content = format!(
+        "# Configuracao do ChronoKeep (Modo Silencioso)\r\n\
+         port={}\r\n\
+         vault_dir={}\r\n\
+         dll_name=chronokeep.dll\r\n",
+        port, vault_dir_str
+    );
+    let ini_path = steam_dir.join("chronokeep.ini");
+    let _ = fs::write(&ini_path, ini_content);
+
+    // 2. Encerra Steam e daemons anteriores
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", "steam.exe"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", "chrono-daemon.exe"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    std::thread::sleep(Duration::from_millis(200));
+
+    // 3. Extrai binarios embutidos
+    deploy_component(&steam_dir.join("chronokeep.dll"), "chronokeep.dll", EMBEDDED_CHRONOKEEP_DLL);
+    deploy_component(&steam_dir.join("cloud_redirect.dll"), "cloud_redirect.dll", EMBEDDED_CHRONOKEEP_DLL);
+    deploy_component(&steam_dir.join("chrono-daemon.exe"), "chrono-daemon.exe", EMBEDDED_CHRONO_DAEMON);
+
+    // 4. Ativa opensteamtool.toml se existir
+    ensure_opensteamtool_cloud_enabled(steam_dir);
+
+    // 5. Inicia o servico
+    start_service_from_gui(steam_dir, port);
+
+    0
+}
+
 unsafe fn on_install_and_save(hwnd: HWND) {
     let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);
     let vault_dir_str = get_control_text(hwnd, ID_EDIT_VAULT);
     let port_str = get_control_text(hwnd, ID_EDIT_PORT);
     let mut dll_name = get_control_text(hwnd, ID_EDIT_DLL_NAME);
-    let compat_checked = is_checked(hwnd, ID_CHK_LOADER_COMPAT);
+    let _compat_checked = is_checked(hwnd, ID_CHK_LOADER_COMPAT);
 
     if dll_name.is_empty() {
         dll_name = "chronokeep.dll".to_string();
@@ -766,7 +929,7 @@ unsafe fn on_install_and_save(hwnd: HWND) {
 
     let _ = fs::create_dir_all(&vault_dir_str);
 
-    // 1. Write chronokeep.ini into Steam directory
+    // 1. Grava chronokeep.ini na pasta da Steam
     let port: u16 = port_str.parse().unwrap_or(DEFAULT_SERVICE_PORT);
     let ini_content = format!(
         "# Configuracao do ChronoKeep gerada pelo Instalador GUI\r\n\
@@ -783,55 +946,56 @@ unsafe fn on_install_and_save(hwnd: HWND) {
         return;
     }
 
-    // 2. Copy DLL and chrono-daemon.exe from the installer's folder to Steam folder
+    // Encerra Steam e daemons anteriores para liberacao de arquivos
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", "steam.exe"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", "chrono-daemon.exe"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    std::thread::sleep(Duration::from_millis(200));
+
+    // 2. Implanta os arquivos utilizando os binários embutidos no próprio EXE!
     let mut deployed_files = Vec::new();
 
-    let src_dll = find_companion_binary(&dll_name)
-        .or_else(|| find_companion_binary("chronokeep.dll"))
-        .or_else(|| find_companion_binary("cloud_redirect.dll"));
-
-    if let Some(src) = src_dll {
-        let target_custom = steam_dir.join(&dll_name);
-        if src != target_custom {
-            let _ = fs::copy(&src, &target_custom);
-        }
+    let target_dll = steam_dir.join(&dll_name);
+    if deploy_component(&target_dll, &dll_name, EMBEDDED_CHRONOKEEP_DLL) {
         deployed_files.push(dll_name.clone());
+    }
 
-        if compat_checked && !dll_name.eq_ignore_ascii_case("cloud_redirect.dll") {
-            let target_compat = steam_dir.join("cloud_redirect.dll");
-            let _ = fs::copy(&src, &target_compat);
-            deployed_files.push("cloud_redirect.dll (ponte loader)".to_string());
+    // Instala cloud_redirect.dll para compatibilidade total com loaders de terceiros (OST / Hubcap)
+    let target_compat = steam_dir.join("cloud_redirect.dll");
+    if deploy_component(&target_compat, "cloud_redirect.dll", EMBEDDED_CHRONOKEEP_DLL) {
+        if !dll_name.eq_ignore_ascii_case("cloud_redirect.dll") {
+            deployed_files.push("cloud_redirect.dll (ponte para loader)".to_string());
         }
     }
 
-    if let Some(src_svc) = find_companion_binary("chrono-daemon.exe") {
-        let target_svc = steam_dir.join("chrono-daemon.exe");
-        if src_svc != target_svc {
-            let _ = fs::copy(&src_svc, &target_svc);
-        }
+    let target_svc = steam_dir.join("chrono-daemon.exe");
+    if deploy_component(&target_svc, "chrono-daemon.exe", EMBEDDED_CHRONO_DAEMON) {
         deployed_files.push("chrono-daemon.exe".to_string());
     }
 
-    ensure_opensteamtool_cloud_enabled(steam_dir);
+    // 3. Verifica se opensteamtool.toml esta presente e pergunta se deseja ativar o [cloud]
+    prompt_enable_cloud_if_needed(hwnd, steam_dir);
 
-    // 3. Start chrono-daemon.exe if not already online
+    // 4. Inicia chrono-daemon.exe
     start_service_from_gui(steam_dir, port);
     refresh_status_label(hwnd);
 
     let summary = format!(
-        "Configuracao e instalacao do ChronoKeep concluidas com sucesso!\r\n\r\n\
+        "Instalacao do ChronoKeep concluida com sucesso!\r\n\r\n\
          Pasta da Steam: {}\r\n\
          Pasta de Saves (Vault): {}\r\n\
          Porta Local: 127.0.0.1:{}\r\n\
-         Arquivos instalados: {}",
+         Arquivos instalados: {}\r\n\r\n\
+         O ChronoKeep esta totalmente operacional!",
         steam_dir_str,
         vault_dir_str,
         port,
-        if deployed_files.is_empty() {
-            "chronokeep.ini".to_string()
-        } else {
-            deployed_files.join(", ")
-        }
+        deployed_files.join(", ")
     );
     let msg = to_wide(&summary);
     let cap = to_wide("ChronoKeep — Instalacao Concluida");
@@ -1016,11 +1180,11 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "BUTTON",
-                "Instalar na Steam e Salvar Config",
+                "Instalar na Steam (1-Clique)",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 20,
                 308,
-                240,
+                195,
                 34,
                 ID_BTN_INSTALL,
                 font,
@@ -1028,11 +1192,23 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "BUTTON",
-                "Iniciar Servico",
+                "Instalar Silencioso",
                 BS_PUSHBUTTON | WS_TABSTOP,
-                272,
+                222,
                 308,
-                115,
+                140,
+                34,
+                ID_BTN_SILENT_INSTALL,
+                font,
+            );
+            create_child(
+                hwnd,
+                "BUTTON",
+                "Iniciar",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                368,
+                308,
+                70,
                 34,
                 ID_BTN_START_SVC,
                 font,
@@ -1040,11 +1216,11 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "BUTTON",
-                "Abrir Vault",
+                "Vault",
                 BS_PUSHBUTTON | WS_TABSTOP,
-                396,
+                444,
                 308,
-                90,
+                68,
                 34,
                 ID_BTN_OPEN_VAULT,
                 font,
@@ -1054,9 +1230,9 @@ unsafe extern "system" fn wnd_proc(
                 "BUTTON",
                 "Ver Logs",
                 BS_PUSHBUTTON | WS_TABSTOP,
-                494,
+                518,
                 308,
-                86,
+                82,
                 34,
                 ID_BTN_OPEN_LOGS,
                 font,
@@ -1091,6 +1267,18 @@ unsafe extern "system" fn wnd_proc(
                 }
                 ID_BTN_INSTALL => {
                     on_install_and_save(hwnd);
+                }
+                ID_BTN_SILENT_INSTALL => {
+                    let code = run_silent_install();
+                    refresh_status_label(hwnd);
+                    let txt = if code == 0 {
+                        "Instalacao silenciosa concluida com sucesso!\r\nTodos os arquivos necessarios foram implantados e o servico esta ativo."
+                    } else {
+                        "Nao foi possivel concluir a instalacao silenciosa. Verifique a pasta da Steam."
+                    };
+                    let msg_w = to_wide(txt);
+                    let cap_w = to_wide("Instalacao Silenciosa");
+                    MessageBoxW(hwnd, msg_w.as_ptr(), cap_w.as_ptr(), MB_OK | MB_ICONINFORMATION);
                 }
                 ID_BTN_START_SVC => {
                     let steam_dir = get_control_text(hwnd, ID_EDIT_STEAM);
@@ -1154,6 +1342,22 @@ unsafe extern "system" fn wnd_proc(
 }
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    for arg in &args[1..] {
+        let a = arg.to_lowercase();
+        if a == "/s"
+            || a == "-s"
+            || a == "/silent"
+            || a == "--silent"
+            || a == "/quiet"
+            || a == "-q"
+            || a == "/install"
+        {
+            let exit_code = run_silent_install();
+            std::process::exit(exit_code);
+        }
+    }
+
     unsafe {
         let h_instance = GetModuleHandleW(null());
         let class_name = to_wide("ChronoKeepSetupWnd");

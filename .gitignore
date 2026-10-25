@@ -17,3 +17,4 @@ dist/
 # Imagens temporarias de teste
 icones_gerados/*.jpg
 icones_gerados/*.png
+log.txt
