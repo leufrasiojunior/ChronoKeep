@@ -118,6 +118,11 @@ pub fn push_session_update(
     http_post(port, "/v1/session", payload.as_bytes(), Duration::from_secs(2)).is_some()
 }
 
+pub fn push_game_state(port: u16, app_id: u32, account_id: u32, running: bool) -> bool {
+    let payload = format!("{}\n{}\n{}\n", app_id, account_id, running);
+    http_post(port, "/v1/game_state", payload.as_bytes(), Duration::from_secs(2)).is_some()
+}
+
 /// Forwards a `Cloud.*` RPC call to `cr-service.exe` and returns `Some((eresult, resp_bytes))`
 /// if handled by the service, or `None` on transport/unhandled fallback.
 pub fn forward_rpc(

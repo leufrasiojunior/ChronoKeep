@@ -304,6 +304,38 @@ fn handle_connection(
         return;
     }
 
+    if method == "POST" && path == "/v1/game_state" {
+        let text = String::from_utf8_lossy(&body);
+        let mut lines = text.lines();
+        let app_id = lines
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let account_id = lines
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let running = lines
+            .next()
+            .map(|s| s.trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if !running && app_id != 0 {
+            log_msg(
+                &log_path,
+                &format!(
+                    "[API] Notificacao de jogo encerrado recebida da bridge: app={} acct={}",
+                    app_id, account_id
+                ),
+            );
+            if let Ok(mut guard) = engine.lock() {
+                guard.on_exit_sync(account_id, app_id);
+            }
+        }
+        let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"OK");
+        return;
+    }
+
     if method == "POST" && path == "/v1/rpc" {
         // Binary frame:
         // [0..4]: u32 method_len (LE)
@@ -719,6 +751,7 @@ fn run_self_test(cfg: &ServiceConfig) {
             test_app,
             test_filename,
             test_payload.as_bytes(),
+            Some(&cfg.log_path),
         );
         if ok {
             println!("[OK - ENVIADO AO GOOGLE DRIVE!]");

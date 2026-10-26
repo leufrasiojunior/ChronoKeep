@@ -128,7 +128,10 @@ impl VaultStorage {
                         .as_ref()
                         .map(|pt| entry.root_token.is_empty() && !pt.is_empty())
                         .unwrap_or(false);
-                    entry.raw_size != disk_size || entry.persist_state != 0 || token_mismatch
+                    entry.raw_size != disk_size
+                        || disk_mtime > entry.timestamp
+                        || entry.persist_state != 0
+                        || token_mismatch
                 }
                 None => true,
             };
@@ -186,11 +189,14 @@ impl VaultStorage {
         manifest
     }
 
-    /// Imports any missing save files from:
-    /// 1) `<SteamDir>/userdata/<account_id>/<app_id>/remote/`
-    /// 2) `<SteamDir>/cloud_redirect/storage/<account_id>/<app_id>/`
-    /// 3) `C:\Backup_CloudRedirect\Steam_Folder\cloud_redirect\storage\<account_id>\<app_id>\`
-    fn seed_from_steam_userdata_if_present(&self, account_id: u32, app_id: u32) {
+    /// Scans local Steam `userdata` (and legacy cloud_redirect folders) for new or modified
+    /// save files, syncs them into the Vault storage, and returns `Vec<(rel_name, bytes)>` of modified files.
+    pub fn sync_local_saves_to_vault(
+        &self,
+        account_id: u32,
+        app_id: u32,
+    ) -> Vec<(String, Vec<u8>)> {
+        let mut modified = Vec::new();
         let mut candidates = Vec::new();
         if let Some(ref steam_root) = self.steam_path {
             candidates.push(
@@ -235,15 +241,40 @@ impl VaultStorage {
                 {
                     continue;
                 }
-                if let Some(dest) = self.resolve_file_disk_path(account_id, app_id, &rel_name) {
-                    if !dest.exists() {
-                        if let Ok(bytes) = fs::read(&src_path) {
-                            let _ = self.write_save_file(account_id, app_id, &rel_name, &bytes);
-                        }
+                let Some(dest) = self.resolve_file_disk_path(account_id, app_id, &rel_name) else {
+                    continue;
+                };
+
+                let Ok(src_bytes) = fs::read(&src_path) else {
+                    continue;
+                };
+
+                let is_different = if dest.exists() {
+                    match fs::read(&dest) {
+                        Ok(dest_bytes) => dest_bytes != src_bytes,
+                        Err(_) => true,
+                    }
+                } else {
+                    true
+                };
+
+                if is_different {
+                    if self
+                        .write_save_file(account_id, app_id, &rel_name, &src_bytes)
+                        .is_ok()
+                    {
+                        modified.push((rel_name, src_bytes));
                     }
                 }
             }
         }
+
+        modified
+    }
+
+    /// Imports any missing or modified save files from Steam userdata into the Vault.
+    fn seed_from_steam_userdata_if_present(&self, account_id: u32, app_id: u32) {
+        let _ = self.sync_local_saves_to_vault(account_id, app_id);
     }
 
     fn read_legacy_file_tokens(&self, account_id: u32, app_id: u32) -> HashMap<String, String> {

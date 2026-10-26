@@ -595,6 +595,11 @@ pub unsafe extern "C" fn CK_NotifyGameState(app_id: u32, running: bool) {
         "[CK_API] Estado do jogo: app={} running={}",
         app_id, running
     ));
+    if !running && app_id != 0 {
+        let port = get_service_port();
+        let acct = get_account_id();
+        let _ = ipc::push_game_state(port, app_id, acct, false);
+    }
 }
 
 #[no_mangle]

@@ -358,26 +358,80 @@ pub fn sync_file_to_gdrive(
     app_id: u32,
     rel_filename: &str,
     data: &[u8],
+    log_path: Option<&PathBuf>,
 ) -> bool {
-    let token_path: PathBuf = exe_dir.join("chronokeep_gdrive.json");
+    let mut token_path = exe_dir.join("chronokeep_gdrive.json");
     if !token_path.exists() {
+        if let Ok(cur) = std::env::current_exe() {
+            if let Some(parent) = cur.parent() {
+                let candidate = parent.join("chronokeep_gdrive.json");
+                if candidate.exists() {
+                    token_path = candidate;
+                }
+            }
+        }
+    }
+
+    if !token_path.exists() {
+        if let Some(lp) = log_path {
+            crate::log_msg(
+                lp,
+                &format!(
+                    "[Google Drive Upload] Abortado: chronokeep_gdrive.json nao encontrado em {:?}",
+                    exe_dir
+                ),
+            );
+        }
         return false;
     }
+
     let Some(token) = get_valid_access_token(&token_path) else {
+        if let Some(lp) = log_path {
+            crate::log_msg(
+                lp,
+                "[Google Drive Upload] Erro: Falha ao obter access_token valido com refresh_token.",
+            );
+        }
         return false;
     };
 
     let Some(root_id) = find_or_create_drive_folder(&token, "ChronoKeep", None) else {
+        if let Some(lp) = log_path {
+            crate::log_msg(
+                lp,
+                "[Google Drive Upload] Erro: Falha ao encontrar ou criar pasta raiz 'ChronoKeep'.",
+            );
+        }
         return false;
     };
+
     let Some(acct_id) =
         find_or_create_drive_folder(&token, &account_id.to_string(), Some(&root_id))
     else {
+        if let Some(lp) = log_path {
+            crate::log_msg(
+                lp,
+                &format!(
+                    "[Google Drive Upload] Erro: Falha ao encontrar ou criar pasta da conta {}",
+                    account_id
+                ),
+            );
+        }
         return false;
     };
+
     let Some(mut parent_id) =
         find_or_create_drive_folder(&token, &app_id.to_string(), Some(&acct_id))
     else {
+        if let Some(lp) = log_path {
+            crate::log_msg(
+                lp,
+                &format!(
+                    "[Google Drive Upload] Erro: Falha ao encontrar ou criar pasta do app {}",
+                    app_id
+                ),
+            );
+        }
         return false;
     };
 
@@ -427,7 +481,7 @@ pub fn sync_file_to_gdrive(
     body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
 
     let (method, upload_path) = match existing_id {
-        Some(id) => (
+        Some(ref id) => (
             "PATCH",
             format!("/upload/drive/v3/files/{}?uploadType=multipart&fields=id", id),
         ),
@@ -442,7 +496,37 @@ pub fn sync_file_to_gdrive(
         format!("Content-Type: multipart/related; boundary={}", boundary),
     ];
     if let Some((status, _)) = https_request(method, "www.googleapis.com", &upload_path, &headers, &body) {
-        return (200..300).contains(&status);
+        let ok = (200..300).contains(&status);
+        if let Some(lp) = log_path {
+            if ok {
+                crate::log_msg(
+                    lp,
+                    &format!(
+                        "[Google Drive Upload] SUCESSO: app={} file='{}' ({}B) enviado via HTTP {}",
+                        app_id, rel_filename, data.len(), status
+                    ),
+                );
+            } else {
+                crate::log_msg(
+                    lp,
+                    &format!(
+                        "[Google Drive Upload] ERRO HTTP {}: Falha ao enviar app={} file='{}'",
+                        status, app_id, rel_filename
+                    ),
+                );
+            }
+        }
+        return ok;
+    }
+
+    if let Some(lp) = log_path {
+        crate::log_msg(
+            lp,
+            &format!(
+                "[Google Drive Upload] Erro de rede/conexao HTTPS ao enviar app={} file='{}'",
+                app_id, rel_filename
+            ),
+        );
     }
     false
 }
@@ -616,6 +700,18 @@ fn pull_drive_folder_recursive(
                         .is_ok()
                     {
                         downloaded_count += 1;
+                        if let Some(ref sp) = vault.steam_path {
+                            let user_dest = sp
+                                .join("userdata")
+                                .join(account_id.to_string())
+                                .join(app_id.to_string())
+                                .join("remote")
+                                .join(&rel_file);
+                            if let Some(p) = user_dest.parent() {
+                                let _ = fs::create_dir_all(p);
+                            }
+                            let _ = fs::write(user_dest, &bytes);
+                        }
                         if let Some(lp) = log_path {
                             crate::log_msg(
                                 lp,
@@ -707,20 +803,103 @@ pub fn pull_app_from_gdrive(
 pub fn start_background_pull_all(
     steam_dir: PathBuf,
     account_id: u32,
-    apps: Vec<u32>,
+    _apps: Vec<u32>,
     vault: crate::vault::VaultStorage,
     log_path: Option<PathBuf>,
 ) {
     std::thread::spawn(move || {
-        let token_path = steam_dir.join("chronokeep_gdrive.json");
+        let mut token_path = steam_dir.join("chronokeep_gdrive.json");
+        if !token_path.exists() {
+            if let Ok(cur) = std::env::current_exe() {
+                if let Some(parent) = cur.parent() {
+                    let candidate = parent.join("chronokeep_gdrive.json");
+                    if candidate.exists() {
+                        token_path = candidate;
+                    }
+                }
+            }
+        }
         if !token_path.exists() {
             return;
         }
-        for app_id in apps {
+
+        let Some(token) = get_valid_access_token(&token_path) else {
+            if let Some(ref lp) = log_path {
+                crate::log_msg(lp, "[Google Drive] Falha ao renovar token de acesso no pull em background.");
+            }
+            return;
+        };
+
+        let Some(root_id) = find_drive_folder(&token, "ChronoKeep", None) else {
+            return;
+        };
+        let Some(acct_id) = find_drive_folder(&token, &account_id.to_string(), Some(&root_id)) else {
+            return;
+        };
+
+        if let Some(ref lp) = log_path {
+            crate::log_msg(
+                lp,
+                &format!(
+                    "[Google Drive] Descobrindo jogos com saves sincronizados no Drive para account_id={}",
+                    account_id
+                ),
+            );
+        }
+
+        // Lista as pastas de jogos diretamente no Drive em uma única consulta rápida
+        let app_folders = list_drive_files(&token, &acct_id);
+        for item in app_folders {
+            if item.mime_type != "application/vnd.google-apps.folder" {
+                continue;
+            }
+            let Ok(app_id) = item.name.parse::<u32>() else {
+                continue;
+            };
             if app_id == 0 || app_id == 7 || app_id == 760 || app_id == 241100 {
                 continue;
             }
-            pull_app_from_gdrive(&steam_dir, account_id, app_id, &vault, log_path.as_ref());
+
+            // Armazena no cache de pastas para futuras chamadas
+            if let Ok(mut guard) = FOLDER_CACHE.lock() {
+                let map = guard.get_or_insert_with(HashMap::new);
+                map.insert(format!("{}:{}", acct_id, item.name), item.id.clone());
+            }
+
+            if let Some(ref lp) = log_path {
+                crate::log_msg(
+                    lp,
+                    &format!(
+                        "[Google Drive] Sincronizando saves da nuvem para app={}",
+                        app_id
+                    ),
+                );
+            }
+
+            let count = pull_drive_folder_recursive(
+                &token,
+                &item.id,
+                "",
+                account_id,
+                app_id,
+                &vault,
+                log_path.as_ref(),
+            );
+
+            let manifest = vault.load_and_reconcile_manifest(account_id, app_id);
+            let _ = vault.save_manifest(account_id, app_id, &manifest);
+
+            if count > 0 {
+                if let Some(ref lp) = log_path {
+                    crate::log_msg(
+                        lp,
+                        &format!(
+                            "[Google Drive] Sincronizacao concluida: {} arquivos novos/atualizados para app={}",
+                            count, app_id
+                        ),
+                    );
+                }
+            }
         }
     });
 }

@@ -156,7 +156,10 @@ impl RpcEngine {
         match method {
             RPC_GET_CHANGELIST => Some(self.on_get_changelist(account_id, resolved_app_id, &fields)),
             RPC_LAUNCH_INTENT => Some((ERESULT_OK, build_launch_intent_response())),
-            RPC_SUSPEND_SESSION => Some((ERESULT_OK, Vec::new())),
+            RPC_SUSPEND_SESSION => {
+                self.on_exit_sync(account_id, resolved_app_id);
+                Some((ERESULT_OK, Vec::new()))
+            }
             RPC_RESUME_SESSION => Some((ERESULT_OK, Vec::new())),
             RPC_QUOTA_USAGE => Some(self.on_quota_usage(account_id, resolved_app_id)),
             RPC_BEGIN_BATCH => Some(self.on_begin_batch(account_id, resolved_app_id, &fields)),
@@ -165,7 +168,11 @@ impl RpcEngine {
             RPC_COMPLETE_BATCH => Some(self.on_complete_batch(account_id, resolved_app_id, &fields)),
             RPC_FILE_DOWNLOAD => Some(self.on_file_download(account_id, resolved_app_id, &fields)),
             RPC_DELETE_FILE => Some(self.on_delete_file(account_id, resolved_app_id, &fields)),
-            RPC_EXIT_SYNC | RPC_CONFLICT | RPC_TRANSFER_REPORT | RPC_SYNC_STATS => {
+            RPC_EXIT_SYNC => {
+                self.on_exit_sync(account_id, resolved_app_id);
+                Some((ERESULT_OK, Vec::new()))
+            }
+            RPC_CONFLICT | RPC_TRANSFER_REPORT | RPC_SYNC_STATS => {
                 Some((ERESULT_OK, Vec::new()))
             }
             _ => None,
@@ -178,18 +185,30 @@ impl RpcEngine {
         app_id: u32,
         fields: &[ProtoField<'_>],
     ) -> (i32, Vec<u8>) {
-        // Se este app ainda não foi sincronizado do Google Drive nesta sessão, faz o pull antes de montar a resposta!
+        // Se este app ainda não foi sincronizado do Google Drive nesta sessão, dispara em background para nunca travar o RPC
         if self.synced_apps_from_cloud.insert((account_id, app_id)) {
-            if let Some(ref sp) = self.vault.steam_path {
-                let _ = crate::gdrive::pull_app_from_gdrive(
-                    sp,
-                    account_id,
-                    app_id,
-                    &self.vault,
-                    self.log_path.as_ref(),
-                );
+            let sp_opt = self.vault.steam_path.clone().or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            });
+            if let Some(sp) = sp_opt {
+                let vault_clone = self.vault.clone();
+                let lp_clone = self.log_path.clone();
+                std::thread::spawn(move || {
+                    let _ = crate::gdrive::pull_app_from_gdrive(
+                        &sp,
+                        account_id,
+                        app_id,
+                        &vault_clone,
+                        lp_clone.as_ref(),
+                    );
+                });
             }
         }
+
+        // Reconcilia arquivos salvos localmente em userdata para o Vault
+        let _ = self.vault.sync_local_saves_to_vault(account_id, app_id);
 
         let synced_cn = find_field(fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
         let mut manifest = self.vault.load_and_reconcile_manifest(account_id, app_id);
@@ -363,7 +382,7 @@ impl RpcEngine {
         manifest.files.insert(
             clean_name.clone(),
             CloudFileRecord {
-                filename: clean_name,
+                filename: clean_name.clone(),
                 root_token: effective_token,
                 sha1,
                 timestamp: if staged.timestamp > 0 {
@@ -389,35 +408,118 @@ impl RpcEngine {
         let _ = self.vault.save_manifest(account_id, app_id, &manifest);
         self.full_manifest_sent.remove(&(account_id, app_id));
 
-        if let Some(ref sp) = self.vault.steam_path {
-            let exe_dir = sp.clone();
-            let rel_clone = raw_filename
-                .split_once('}')
-                .map(|(_, r)| r.trim_start_matches('/').trim_start_matches('\\').to_string())
-                .unwrap_or_else(|| raw_filename.to_string());
+        let sp_opt = self.vault.steam_path.clone().or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        });
+
+        if let Some(sp) = sp_opt {
+            let clean_name_clone = clean_name.clone();
             let bytes_clone = bytes.clone();
             let m_bytes = std::fs::read(self.vault.manifest_path(account_id, app_id)).ok();
+            let lp_clone = self.log_path.clone();
             std::thread::spawn(move || {
                 let _ = crate::gdrive::sync_file_to_gdrive(
-                    &exe_dir,
+                    &sp,
                     account_id,
                     app_id,
-                    &rel_clone,
+                    &clean_name_clone,
                     &bytes_clone,
+                    lp_clone.as_ref(),
                 );
                 if let Some(mb) = m_bytes {
                     let _ = crate::gdrive::sync_file_to_gdrive(
-                        &exe_dir,
+                        &sp,
                         account_id,
                         app_id,
                         "manifest.tsv",
                         &mb,
+                        lp_clone.as_ref(),
                     );
                 }
             });
         }
 
         (ERESULT_OK, build_commit_upload_response(true))
+    }
+
+    /// Called when a game session exits, is suspended, or terminates. Reconciles any saves
+    /// written to local Steam `userdata` directly by the game into the Vault, and syncs to Google Drive.
+    pub fn on_exit_sync(&mut self, account_id: u32, app_id: u32) {
+        if account_id == 0 || app_id == 0 || app_id == 7 || app_id == 760 || app_id == 241100 {
+            return;
+        }
+
+        if let Some(ref lp) = self.log_path {
+            crate::log_msg(
+                lp,
+                &format!(
+                    "[ExitSync] Jogo finalizado ou sessao suspensa: app={} acct={}. Verificando saves locais...",
+                    app_id, account_id
+                ),
+            );
+        }
+
+        let modified = self.vault.sync_local_saves_to_vault(account_id, app_id);
+        if !modified.is_empty() {
+            let manifest = self.vault.load_and_reconcile_manifest(account_id, app_id);
+            let _ = self.vault.save_manifest(account_id, app_id, &manifest);
+
+            if let Some(ref lp) = self.log_path {
+                crate::log_msg(
+                    lp,
+                    &format!(
+                        "[ExitSync] Detectados {} arquivos modificados no disco local para app={}. Disparando upload para o Google Drive!",
+                        modified.len(),
+                        app_id
+                    ),
+                );
+            }
+
+            let sp_opt = self.vault.steam_path.clone().or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            });
+
+            if let Some(sp) = sp_opt {
+                let m_bytes = std::fs::read(self.vault.manifest_path(account_id, app_id)).ok();
+                let lp_clone = self.log_path.clone();
+                std::thread::spawn(move || {
+                    for (rel_name, bytes) in modified {
+                        let _ = crate::gdrive::sync_file_to_gdrive(
+                            &sp,
+                            account_id,
+                            app_id,
+                            &rel_name,
+                            &bytes,
+                            lp_clone.as_ref(),
+                        );
+                    }
+                    if let Some(mb) = m_bytes {
+                        let _ = crate::gdrive::sync_file_to_gdrive(
+                            &sp,
+                            account_id,
+                            app_id,
+                            "manifest.tsv",
+                            &mb,
+                            lp_clone.as_ref(),
+                        );
+                    }
+                });
+            }
+        } else {
+            if let Some(ref lp) = self.log_path {
+                crate::log_msg(
+                    lp,
+                    &format!(
+                        "[ExitSync] Nenhum arquivo modificado detectado no disco para app={}",
+                        app_id
+                    ),
+                );
+            }
+        }
     }
 
     fn on_complete_batch(
