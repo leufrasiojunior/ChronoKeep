@@ -285,7 +285,20 @@ fn handle_connection(
         );
 
         if let Ok(mut guard) = engine.lock() {
-            guard.update_session(steam_path, account_id, apps);
+            guard.update_session(steam_path.clone(), account_id, apps.clone());
+            if let Some(ref sp) = steam_path {
+                if account_id != 0 && !apps.is_empty() {
+                    let vault_clone = guard.vault.clone();
+                    let lp_clone = log_path.as_ref().clone();
+                    crate::gdrive::start_background_pull_all(
+                        PathBuf::from(sp),
+                        account_id,
+                        apps,
+                        vault_clone,
+                        Some(lp_clone),
+                    );
+                }
+            }
         }
         let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"OK");
         return;

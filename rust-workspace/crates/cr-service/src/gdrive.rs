@@ -2,10 +2,16 @@
 //! Uses the built-in verified Desktop OAuth2 client by default (or custom credentials if set)
 //! and automatically refreshes the `access_token` from `chronokeep_gdrive.json`.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
+use std::sync::Mutex;
+use std::time::Instant;
+
+static TOKEN_CACHE: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+static FOLDER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 pub const DEFAULT_GDRIVE_CLIENT_ID: &str =
     "1072944905499-vm2v2i5dvn0a0d2o4ca36i1vge8cvbn0.apps.googleusercontent.com";
@@ -258,7 +264,32 @@ pub fn refresh_access_token(token_file: &Path) -> Option<String> {
     extract_json_str(&resp_str, "access_token")
 }
 
+pub fn get_valid_access_token(token_file: &Path) -> Option<String> {
+    if let Ok(guard) = TOKEN_CACHE.lock() {
+        if let Some((ref tok, ref inst)) = *guard {
+            if inst.elapsed().as_secs() < 3000 {
+                return Some(tok.clone());
+            }
+        }
+    }
+
+    let token = refresh_access_token(token_file)?;
+    if let Ok(mut guard) = TOKEN_CACHE.lock() {
+        *guard = Some((token.clone(), Instant::now()));
+    }
+    Some(token)
+}
+
 fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option<&str>) -> Option<String> {
+    let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
+    if let Ok(guard) = FOLDER_CACHE.lock() {
+        if let Some(ref map) = *guard {
+            if let Some(id) = map.get(&cache_key) {
+                return Some(id.clone());
+            }
+        }
+    }
+
     let parent_clause = match parent_id {
         Some(pid) => format!("'{}' in parents", pid),
         None => "'root' in parents".to_string(),
@@ -274,6 +305,10 @@ fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option
         let s = String::from_utf8_lossy(&body);
         if let Some(id) = extract_json_str(&s, "id") {
             if !id.is_empty() {
+                if let Ok(mut guard) = FOLDER_CACHE.lock() {
+                    let map = guard.get_or_insert_with(HashMap::new);
+                    map.insert(cache_key, id.clone());
+                }
                 return Some(id);
             }
         }
@@ -303,7 +338,15 @@ fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option
     )?;
     if (200..300).contains(&status) {
         let s = String::from_utf8_lossy(&body);
-        return extract_json_str(&s, "id");
+        if let Some(id) = extract_json_str(&s, "id") {
+            if !id.is_empty() {
+                if let Ok(mut guard) = FOLDER_CACHE.lock() {
+                    let map = guard.get_or_insert_with(HashMap::new);
+                    map.insert(cache_key, id.clone());
+                }
+                return Some(id);
+            }
+        }
     }
     None
 }
@@ -320,7 +363,7 @@ pub fn sync_file_to_gdrive(
     if !token_path.exists() {
         return false;
     }
-    let Some(token) = refresh_access_token(&token_path) else {
+    let Some(token) = get_valid_access_token(&token_path) else {
         return false;
     };
 
@@ -454,6 +497,15 @@ pub fn find_drive_folder(
     name: &str,
     parent_id: Option<&str>,
 ) -> Option<String> {
+    let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
+    if let Ok(guard) = FOLDER_CACHE.lock() {
+        if let Some(ref map) = *guard {
+            if let Some(id) = map.get(&cache_key) {
+                return Some(id.clone());
+            }
+        }
+    }
+
     let parent_clause = match parent_id {
         Some(pid) => format!("'{}' in parents", pid),
         None => "'root' in parents".to_string(),
@@ -469,6 +521,10 @@ pub fn find_drive_folder(
         let s = String::from_utf8_lossy(&body);
         if let Some(id) = extract_json_str(&s, "id") {
             if !id.is_empty() {
+                if let Ok(mut guard) = FOLDER_CACHE.lock() {
+                    let map = guard.get_or_insert_with(HashMap::new);
+                    map.insert(cache_key, id.clone());
+                }
                 return Some(id);
             }
         }
@@ -591,7 +647,7 @@ pub fn pull_app_from_gdrive(
     if !token_path.exists() {
         return false;
     }
-    let Some(token) = refresh_access_token(&token_path) else {
+    let Some(token) = get_valid_access_token(&token_path) else {
         if let Some(lp) = log_path {
             crate::log_msg(
                 lp,
@@ -646,4 +702,25 @@ pub fn pull_app_from_gdrive(
     }
 
     true
+}
+
+pub fn start_background_pull_all(
+    steam_dir: PathBuf,
+    account_id: u32,
+    apps: Vec<u32>,
+    vault: crate::vault::VaultStorage,
+    log_path: Option<PathBuf>,
+) {
+    std::thread::spawn(move || {
+        let token_path = steam_dir.join("chronokeep_gdrive.json");
+        if !token_path.exists() {
+            return;
+        }
+        for app_id in apps {
+            if app_id == 0 || app_id == 7 || app_id == 760 || app_id == 241100 {
+                continue;
+            }
+            pull_app_from_gdrive(&steam_dir, account_id, app_id, &vault, log_path.as_ref());
+        }
+    });
 }

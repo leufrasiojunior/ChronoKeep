@@ -249,6 +249,13 @@ pub fn build_file_download_response(
     body.into_bytes()
 }
 
+/// Builds the Protobuf response for `Cloud.SignalAppLaunchIntent#1`.
+pub fn build_launch_intent_response() -> Vec<u8> {
+    let mut body = ProtoWriter::new();
+    body.write_varint(1, 0); // pending_remote_operations = false
+    body.into_bytes()
+}
+
 /// Builds the Protobuf response for `Cloud.ClientGetAppQuotaUsage#1`.
 pub fn build_quota_response(
     existing_files: u32,

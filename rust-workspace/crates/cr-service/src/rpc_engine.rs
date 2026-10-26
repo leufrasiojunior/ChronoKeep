@@ -155,7 +155,7 @@ impl RpcEngine {
 
         match method {
             RPC_GET_CHANGELIST => Some(self.on_get_changelist(account_id, resolved_app_id, &fields)),
-            RPC_LAUNCH_INTENT => Some((ERESULT_OK, Vec::new())),
+            RPC_LAUNCH_INTENT => Some((ERESULT_OK, build_launch_intent_response())),
             RPC_SUSPEND_SESSION => Some((ERESULT_OK, Vec::new())),
             RPC_RESUME_SESSION => Some((ERESULT_OK, Vec::new())),
             RPC_QUOTA_USAGE => Some(self.on_quota_usage(account_id, resolved_app_id)),
@@ -204,11 +204,14 @@ impl RpcEngine {
         let mut list: Vec<CloudFileRecord> = manifest.files.values().cloned().collect();
         list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
+        let machine_name = std::env::var("COMPUTERNAME")
+            .unwrap_or_else(|_| "CHRONOKEEP-PC".to_string());
+
         let resp = build_changelist_response(
             manifest.change_number,
             false,
             &list,
-            "CHRONOKEEP-PC",
+            &machine_name,
             manifest.app_build_id,
         );
         (ERESULT_OK, resp)
@@ -277,7 +280,12 @@ impl RpcEngine {
 
         let (root_token, clean_name) = split_root_token(raw_filename);
         if clean_name.is_empty() {
-            return (ERESULT_FAIL, Vec::new());
+            let url_host = format!("127.0.0.1:{}", self.listen_port);
+            let url_path = format!("/upload/{}/{}/empty", account_id, app_id);
+            return (
+                ERESULT_OK,
+                build_begin_upload_response(&url_host, &url_path, 0),
+            );
         }
 
         self.staged_uploads.insert(

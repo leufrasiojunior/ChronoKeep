@@ -29,6 +29,7 @@ impl Default for AppManifest {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct VaultStorage {
     pub vault_root: PathBuf,
     pub steam_path: Option<PathBuf>,
