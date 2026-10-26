@@ -403,3 +403,247 @@ pub fn sync_file_to_gdrive(
     }
     false
 }
+
+#[derive(Debug, Clone)]
+pub struct DriveFileItem {
+    pub id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+}
+
+pub fn parse_drive_file_list(json: &str) -> Vec<DriveFileItem> {
+    let mut items = Vec::new();
+    let Some(files_idx) = json.find("\"files\"") else {
+        return items;
+    };
+    let rest = &json[files_idx + 7..];
+    let Some(arr_start) = rest.find('[') else {
+        return items;
+    };
+    let mut slice = &rest[arr_start + 1..];
+
+    while let Some(obj_start) = slice.find('{') {
+        let after_start = &slice[obj_start + 1..];
+        let Some(obj_end) = after_start.find('}') else {
+            break;
+        };
+        let obj_str = &after_start[..obj_end];
+        if let (Some(id), Some(name)) = (
+            extract_json_str(obj_str, "id"),
+            extract_json_str(obj_str, "name"),
+        ) {
+            let mime_type = extract_json_str(obj_str, "mimeType").unwrap_or_default();
+            let size: u64 = extract_json_str(obj_str, "size")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            items.push(DriveFileItem {
+                id,
+                name,
+                mime_type,
+                size,
+            });
+        }
+        slice = &after_start[obj_end + 1..];
+    }
+    items
+}
+
+pub fn find_drive_folder(
+    access_token: &str,
+    name: &str,
+    parent_id: Option<&str>,
+) -> Option<String> {
+    let parent_clause = match parent_id {
+        Some(pid) => format!("'{}' in parents", pid),
+        None => "'root' in parents".to_string(),
+    };
+    let q = format!(
+        "name='{}' and mimeType='application/vnd.google-apps.folder' and trashed=false and {}",
+        name.replace('\'', "\\'"),
+        parent_clause
+    );
+    let path = format!("/drive/v3/files?q={}&fields=files(id)&pageSize=1", url_encode(&q));
+    let auth_hdr = vec![format!("Authorization: Bearer {}", access_token)];
+    if let Some((200, body)) = https_request("GET", "www.googleapis.com", &path, &auth_hdr, &[]) {
+        let s = String::from_utf8_lossy(&body);
+        if let Some(id) = extract_json_str(&s, "id") {
+            if !id.is_empty() {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+pub fn list_drive_files(access_token: &str, parent_id: &str) -> Vec<DriveFileItem> {
+    let q = format!("'{}' in parents and trashed=false", parent_id);
+    let path = format!(
+        "/drive/v3/files?q={}&fields=files(id,name,mimeType,size)&pageSize=1000",
+        url_encode(&q)
+    );
+    let auth_hdr = vec![format!("Authorization: Bearer {}", access_token)];
+    if let Some((200, body)) = https_request("GET", "www.googleapis.com", &path, &auth_hdr, &[]) {
+        let s = String::from_utf8_lossy(&body);
+        return parse_drive_file_list(&s);
+    }
+    Vec::new()
+}
+
+pub fn download_drive_file(access_token: &str, file_id: &str) -> Option<Vec<u8>> {
+    let path = format!("/drive/v3/files/{}?alt=media", file_id);
+    let auth_hdr = vec![format!("Authorization: Bearer {}", access_token)];
+    if let Some((200, body)) = https_request("GET", "www.googleapis.com", &path, &auth_hdr, &[]) {
+        return Some(body);
+    }
+    None
+}
+
+fn pull_drive_folder_recursive(
+    access_token: &str,
+    folder_id: &str,
+    rel_prefix: &str,
+    account_id: u32,
+    app_id: u32,
+    vault: &crate::vault::VaultStorage,
+    log_path: Option<&PathBuf>,
+) -> usize {
+    let items = list_drive_files(access_token, folder_id);
+    let mut downloaded_count = 0;
+
+    for item in items {
+        if item.mime_type == "application/vnd.google-apps.folder" {
+            let next_prefix = if rel_prefix.is_empty() {
+                item.name.clone()
+            } else {
+                format!("{}/{}", rel_prefix, item.name)
+            };
+            downloaded_count += pull_drive_folder_recursive(
+                access_token,
+                &item.id,
+                &next_prefix,
+                account_id,
+                app_id,
+                vault,
+                log_path,
+            );
+        } else {
+            let rel_file = if rel_prefix.is_empty() {
+                item.name.clone()
+            } else {
+                format!("{}/{}", rel_prefix, item.name)
+            };
+
+            // Se for manifest.tsv, baixa e salva no local do manifest
+            if rel_file == "manifest.tsv" {
+                if let Some(bytes) = download_drive_file(access_token, &item.id) {
+                    let m_path = vault.manifest_path(account_id, app_id);
+                    if let Some(parent) = m_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let _ = fs::write(&m_path, bytes);
+                }
+                continue;
+            }
+
+            // Verifica se o arquivo local já existe com o mesmo tamanho
+            let local_exists_and_matches = vault
+                .resolve_file_disk_path(account_id, app_id, &rel_file)
+                .and_then(|p| fs::metadata(&p).ok())
+                .map(|m| m.len() == item.size && item.size > 0)
+                .unwrap_or(false);
+
+            if !local_exists_and_matches {
+                if let Some(bytes) = download_drive_file(access_token, &item.id) {
+                    if vault
+                        .write_save_file(account_id, app_id, &rel_file, &bytes)
+                        .is_ok()
+                    {
+                        downloaded_count += 1;
+                        if let Some(lp) = log_path {
+                            crate::log_msg(
+                                lp,
+                                &format!(
+                                    "[Google Drive] Download concluido: app={} file='{}' ({}B)",
+                                    app_id,
+                                    rel_file,
+                                    bytes.len()
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    downloaded_count
+}
+
+pub fn pull_app_from_gdrive(
+    steam_dir: &Path,
+    account_id: u32,
+    app_id: u32,
+    vault: &crate::vault::VaultStorage,
+    log_path: Option<&PathBuf>,
+) -> bool {
+    let token_path = steam_dir.join("chronokeep_gdrive.json");
+    if !token_path.exists() {
+        return false;
+    }
+    let Some(token) = refresh_access_token(&token_path) else {
+        if let Some(lp) = log_path {
+            crate::log_msg(
+                lp,
+                "[Google Drive] Falha ao renovar access_token com refresh_token.",
+            );
+        }
+        return false;
+    };
+
+    let Some(root_id) = find_drive_folder(&token, "ChronoKeep", None) else {
+        return false;
+    };
+    let Some(acct_id) = find_drive_folder(&token, &account_id.to_string(), Some(&root_id)) else {
+        return false;
+    };
+    let Some(app_folder_id) = find_drive_folder(&token, &app_id.to_string(), Some(&acct_id)) else {
+        return false;
+    };
+
+    if let Some(lp) = log_path {
+        crate::log_msg(
+            lp,
+            &format!(
+                "[Google Drive] Sincronizando saves da nuvem para o Vault local (app={})",
+                app_id
+            ),
+        );
+    }
+
+    let count = pull_drive_folder_recursive(
+        &token,
+        &app_folder_id,
+        "",
+        account_id,
+        app_id,
+        vault,
+        log_path,
+    );
+
+    // Reconcilia o manifest local após baixar os arquivos da nuvem
+    let manifest = vault.load_and_reconcile_manifest(account_id, app_id);
+    let _ = vault.save_manifest(account_id, app_id, &manifest);
+
+    if let Some(lp) = log_path {
+        crate::log_msg(
+            lp,
+            &format!(
+                "[Google Drive] Sincronizacao concluida: {} arquivos novos/atualizados para app={}",
+                count, app_id
+            ),
+        );
+    }
+
+    true
+}

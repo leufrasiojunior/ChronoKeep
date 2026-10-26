@@ -28,23 +28,27 @@ pub struct RpcEngine {
     pub listen_port: u16,
     pub account_id: u32,
     pub namespace_apps: HashSet<u32>,
+    pub log_path: Option<PathBuf>,
     next_batch_id: u64,
     active_batches: HashMap<(u32, u32), ActiveBatch>,
     staged_uploads: HashMap<(u32, u32, String), StagedUpload>,
     full_manifest_sent: HashSet<(u32, u32)>,
+    synced_apps_from_cloud: HashSet<(u32, u32)>,
 }
 
 impl RpcEngine {
-    pub fn new(vault: VaultStorage, listen_port: u16) -> Self {
+    pub fn new(vault: VaultStorage, listen_port: u16, log_path: Option<PathBuf>) -> Self {
         Self {
             vault,
             listen_port,
             account_id: 0,
             namespace_apps: HashSet::new(),
+            log_path,
             next_batch_id: 1,
             active_batches: HashMap::new(),
             staged_uploads: HashMap::new(),
             full_manifest_sent: HashSet::new(),
+            synced_apps_from_cloud: HashSet::new(),
         }
     }
 
@@ -174,6 +178,19 @@ impl RpcEngine {
         app_id: u32,
         fields: &[ProtoField<'_>],
     ) -> (i32, Vec<u8>) {
+        // Se este app ainda não foi sincronizado do Google Drive nesta sessão, faz o pull antes de montar a resposta!
+        if self.synced_apps_from_cloud.insert((account_id, app_id)) {
+            if let Some(ref sp) = self.vault.steam_path {
+                let _ = crate::gdrive::pull_app_from_gdrive(
+                    sp,
+                    account_id,
+                    app_id,
+                    &self.vault,
+                    self.log_path.as_ref(),
+                );
+            }
+        }
+
         let synced_cn = find_field(fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
         let mut manifest = self.vault.load_and_reconcile_manifest(account_id, app_id);
         if manifest.change_number < synced_cn {
@@ -371,6 +388,7 @@ impl RpcEngine {
                 .map(|(_, r)| r.trim_start_matches('/').trim_start_matches('\\').to_string())
                 .unwrap_or_else(|| raw_filename.to_string());
             let bytes_clone = bytes.clone();
+            let m_bytes = std::fs::read(self.vault.manifest_path(account_id, app_id)).ok();
             std::thread::spawn(move || {
                 let _ = crate::gdrive::sync_file_to_gdrive(
                     &exe_dir,
@@ -379,6 +397,15 @@ impl RpcEngine {
                     &rel_clone,
                     &bytes_clone,
                 );
+                if let Some(mb) = m_bytes {
+                    let _ = crate::gdrive::sync_file_to_gdrive(
+                        &exe_dir,
+                        account_id,
+                        app_id,
+                        "manifest.tsv",
+                        &mb,
+                    );
+                }
             });
         }
 

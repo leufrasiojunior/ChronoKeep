@@ -42,16 +42,15 @@ const WS_TABSTOP: u32 = 0x0001_0000;
 const WS_BORDER: u32 = 0x0080_0000;
 const ES_AUTOHSCROLL: u32 = 0x0080;
 const BS_PUSHBUTTON: u32 = 0x0000;
-const BS_AUTOCHECKBOX: u32 = 0x0003;
 
 const WM_CREATE: u32 = 0x0001;
 const WM_DESTROY: u32 = 0x0002;
 const WM_COMMAND: u32 = 0x0111;
 const WM_SETFONT: u32 = 0x0030;
 const WM_CTLCOLORSTATIC: u32 = 0x0138;
-const BM_GETCHECK: u32 = 0x00F0;
-const BM_SETCHECK: u32 = 0x00F1;
-const BST_CHECKED: usize = 1;
+const WM_SETICON: u32 = 0x0080;
+const ICON_SMALL: usize = 0;
+const ICON_BIG: usize = 1;
 
 const COLOR_WINDOW: i32 = 5;
 const DEFAULT_GUI_FONT: i32 = 17;
@@ -80,15 +79,11 @@ const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x2000_0000;
 
 const ID_EDIT_STEAM: usize = 101;
 const ID_EDIT_VAULT: usize = 102;
-const ID_EDIT_PORT: usize = 103;
-const ID_EDIT_DLL_NAME: usize = 104;
-const ID_CHK_LOADER_COMPAT: usize = 105;
 const ID_BTN_INSTALL: usize = 201;
 const ID_BTN_START_SVC: usize = 202;
 const ID_BTN_OPEN_VAULT: usize = 203;
 const ID_BTN_OPEN_LOGS: usize = 204;
 const ID_BTN_GOOGLE_LOGIN: usize = 205;
-const ID_BTN_SILENT_INSTALL: usize = 206;
 const ID_LBL_STATUS: usize = 301;
 const ID_LBL_GDRIVE_STATUS: usize = 302;
 
@@ -155,6 +150,7 @@ extern "system" {
     fn GetWindowTextW(h_wnd: HWND, lp_string: *mut u16, n_max_count: i32) -> i32;
     fn MessageBoxW(h_wnd: HWND, lp_text: *const u16, lp_caption: *const u16, u_type: u32) -> i32;
     fn LoadCursorW(h_instance: HINSTANCE, lp_cursor_name: *const u16) -> usize;
+    fn LoadIconW(h_instance: HINSTANCE, lp_icon_name: *const u16) -> usize;
 }
 
 #[link(name = "gdi32")]
@@ -328,14 +324,6 @@ unsafe fn set_control_text(hwnd_parent: HWND, id: usize, text: &str) {
     }
 }
 
-unsafe fn is_checked(hwnd_parent: HWND, id: usize) -> bool {
-    let h_ctrl = GetDlgItem(hwnd_parent, id as i32);
-    if h_ctrl == 0 {
-        return false;
-    }
-    SendMessageW(h_ctrl, BM_GETCHECK, 0, 0) as usize == BST_CHECKED
-}
-
 fn detect_default_steam_dir() -> String {
     let candidates = [
         r"C:\Program Files (x86)\Steam",
@@ -416,8 +404,6 @@ unsafe fn create_child(
 unsafe fn populate_existing_config(hwnd: HWND) {
     let steam_dir = detect_default_steam_dir();
     let mut vault_dir = detect_default_vault_dir();
-    let mut port = DEFAULT_SERVICE_PORT.to_string();
-    let mut dll_name = "chronokeep.dll".to_string();
 
     let ini_path = Path::new(&steam_dir).join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -431,10 +417,6 @@ unsafe fn populate_existing_config(hwnd: HWND) {
                 let v = v.trim();
                 if k.eq_ignore_ascii_case("vault_dir") && !v.is_empty() {
                     vault_dir = v.to_string();
-                } else if k.eq_ignore_ascii_case("port") && !v.is_empty() {
-                    port = v.to_string();
-                } else if k.eq_ignore_ascii_case("dll_name") && !v.is_empty() {
-                    dll_name = v.to_string();
                 }
             }
         }
@@ -442,14 +424,8 @@ unsafe fn populate_existing_config(hwnd: HWND) {
 
     set_control_text(hwnd, ID_EDIT_STEAM, &steam_dir);
     set_control_text(hwnd, ID_EDIT_VAULT, &vault_dir);
-    set_control_text(hwnd, ID_EDIT_PORT, &port);
-    set_control_text(hwnd, ID_EDIT_DLL_NAME, &dll_name);
 
-    let chk = GetDlgItem(hwnd, ID_CHK_LOADER_COMPAT as i32);
-    if chk != 0 {
-        SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
-    }
-
+    prompt_enable_cloud_if_needed(hwnd, Path::new(&steam_dir));
     refresh_status_label(hwnd);
 }
 
@@ -463,22 +439,44 @@ fn is_gdrive_connected(steam_dir: &str) -> bool {
     false
 }
 
+fn resolve_service_port_for_gui(steam_path: &str) -> u16 {
+    let port_dat = Path::new(steam_path).join("chrono_port.dat");
+    if let Ok(content) = fs::read_to_string(&port_dat) {
+        if let Ok(p) = content.trim().parse::<u16>() {
+            if p > 0 {
+                return p;
+            }
+        }
+    }
+    let ini_path = Path::new(steam_path).join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("port") {
+                    if let Ok(p) = v.trim().parse::<u16>() {
+                        return p;
+                    }
+                }
+            }
+        }
+    }
+    DEFAULT_SERVICE_PORT
+}
+
 unsafe fn refresh_status_label(hwnd: HWND) {
     let steam_dir = get_control_text(hwnd, ID_EDIT_STEAM);
-    let dll_name = get_control_text(hwnd, ID_EDIT_DLL_NAME);
-    let port: u16 = get_control_text(hwnd, ID_EDIT_PORT)
-        .parse()
-        .unwrap_or(DEFAULT_SERVICE_PORT);
+    let port = resolve_service_port_for_gui(&steam_dir);
 
-    let dll_exists = Path::new(&steam_dir).join(&dll_name).exists()
+    let dll_exists = Path::new(&steam_dir).join("chronokeep.dll").exists()
         || Path::new(&steam_dir).join("cloud_redirect.dll").exists();
     let svc_online = check_service_online(port);
     let gdrive_ok = is_gdrive_connected(&steam_dir);
 
     let gdrive_text = if gdrive_ok {
-        "4. Conta Google Drive: [CONECTADA — Sincronizacao em nuvem ativa]"
+        "3. Conta Google Drive: [CONECTADA — Sincronizacao em nuvem ativa]"
     } else {
-        "4. Conta Google Drive: [NAO CONECTADA — Clique abaixo para logar no navegador]"
+        "3. Conta Google Drive: [NAO CONECTADA — Clique abaixo para logar no navegador]"
     };
     set_control_text(hwnd, ID_LBL_GDRIVE_STATUS, gdrive_text);
 
@@ -835,6 +833,42 @@ unsafe fn on_google_browser_login(hwnd: HWND) {
     }
 }
 
+fn is_process_running(proc_name: &str) -> bool {
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {}", proc_name)])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    if let Ok(output) = out {
+        let text = String::from_utf8_lossy(&output.stdout);
+        text.to_ascii_lowercase().contains(&proc_name.to_ascii_lowercase())
+    } else {
+        false
+    }
+}
+
+fn kill_process_and_wait(proc_name: &str, max_wait_ms: u64) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", proc_name])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let start = std::time::Instant::now();
+    while start.elapsed().as_millis() < max_wait_ms as u128 {
+        if !is_process_running(proc_name) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+fn launch_steam(steam_dir: &Path) {
+    let steam_exe = steam_dir.join("steam.exe");
+    if steam_exe.exists() {
+        let mut cmd = std::process::Command::new(&steam_exe);
+        cmd.current_dir(steam_dir);
+        let _ = cmd.spawn();
+    }
+}
+
 fn deploy_bytes_safe(data: &[u8], dst: &Path) -> bool {
     if let Some(parent) = dst.parent() {
         let _ = fs::create_dir_all(parent);
@@ -881,15 +915,11 @@ fn run_silent_install() -> i32 {
     let _ = fs::write(&ini_path, ini_content);
 
     // 2. Encerra Steam e daemons anteriores
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", "steam.exe"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", "chrono-daemon.exe"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    std::thread::sleep(Duration::from_millis(200));
+    let steam_was_running = is_process_running("steam.exe");
+    if steam_was_running {
+        kill_process_and_wait("steam.exe", 5000);
+    }
+    kill_process_and_wait("chrono-daemon.exe", 2500);
 
     // 3. Extrai binarios embutidos
     deploy_component(&steam_dir.join("chronokeep.dll"), "chronokeep.dll", EMBEDDED_CHRONOKEEP_DLL);
@@ -902,22 +932,18 @@ fn run_silent_install() -> i32 {
     // 5. Inicia o servico
     start_service_from_gui(steam_dir, port);
 
+    // 6. Reabre a Steam se estava rodando
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        launch_steam(steam_dir);
+    }
+
     0
 }
 
 unsafe fn on_install_and_save(hwnd: HWND) {
     let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);
     let vault_dir_str = get_control_text(hwnd, ID_EDIT_VAULT);
-    let port_str = get_control_text(hwnd, ID_EDIT_PORT);
-    let mut dll_name = get_control_text(hwnd, ID_EDIT_DLL_NAME);
-    let _compat_checked = is_checked(hwnd, ID_CHK_LOADER_COMPAT);
-
-    if dll_name.is_empty() {
-        dll_name = "chronokeep.dll".to_string();
-    }
-    if !dll_name.to_lowercase().ends_with(".dll") {
-        dll_name.push_str(".dll");
-    }
 
     let steam_dir = Path::new(&steam_dir_str);
     if !steam_dir.exists() {
@@ -929,14 +955,14 @@ unsafe fn on_install_and_save(hwnd: HWND) {
 
     let _ = fs::create_dir_all(&vault_dir_str);
 
-    // 1. Grava chronokeep.ini na pasta da Steam
-    let port: u16 = port_str.parse().unwrap_or(DEFAULT_SERVICE_PORT);
+    // 1. Grava chronokeep.ini com a porta padrao (o daemon aloca dinamicamente se ocupada)
+    let port: u16 = DEFAULT_SERVICE_PORT;
     let ini_content = format!(
         "# Configuracao do ChronoKeep gerada pelo Instalador GUI\r\n\
          port={}\r\n\
          vault_dir={}\r\n\
-         dll_name={}\r\n",
-        port, vault_dir_str, dll_name
+         dll_name=chronokeep.dll\r\n",
+        port, vault_dir_str
     );
     let ini_path = steam_dir.join("chronokeep.ini");
     if let Err(e) = fs::write(&ini_path, ini_content) {
@@ -946,31 +972,26 @@ unsafe fn on_install_and_save(hwnd: HWND) {
         return;
     }
 
-    // Encerra Steam e daemons anteriores para liberacao de arquivos
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", "steam.exe"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", "chrono-daemon.exe"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
-    std::thread::sleep(Duration::from_millis(200));
+    // 2. Verifica se a Steam estava em execucao
+    let steam_was_running = is_process_running("steam.exe");
+    if steam_was_running {
+        kill_process_and_wait("steam.exe", 5000);
+    }
+    kill_process_and_wait("chrono-daemon.exe", 2500);
 
-    // 2. Implanta os arquivos utilizando os binários embutidos no próprio EXE!
+    // 3. Implanta os arquivos utilizando os binários embutidos no próprio EXE!
     let mut deployed_files = Vec::new();
 
-    let target_dll = steam_dir.join(&dll_name);
-    if deploy_component(&target_dll, &dll_name, EMBEDDED_CHRONOKEEP_DLL) {
-        deployed_files.push(dll_name.clone());
+    // Sempre implanta chronokeep.dll
+    let target_dll = steam_dir.join("chronokeep.dll");
+    if deploy_component(&target_dll, "chronokeep.dll", EMBEDDED_CHRONOKEEP_DLL) {
+        deployed_files.push("chronokeep.dll".to_string());
     }
 
-    // Instala cloud_redirect.dll para compatibilidade total com loaders de terceiros (OST / Hubcap)
+    // Sempre implanta cloud_redirect.dll para compatibilidade com OpenSteamTool e HubcapTools
     let target_compat = steam_dir.join("cloud_redirect.dll");
     if deploy_component(&target_compat, "cloud_redirect.dll", EMBEDDED_CHRONOKEEP_DLL) {
-        if !dll_name.eq_ignore_ascii_case("cloud_redirect.dll") {
-            deployed_files.push("cloud_redirect.dll (ponte para loader)".to_string());
-        }
+        deployed_files.push("cloud_redirect.dll (compatibilidade OpenSteamTool/Hubcap)".to_string());
     }
 
     let target_svc = steam_dir.join("chrono-daemon.exe");
@@ -978,24 +999,34 @@ unsafe fn on_install_and_save(hwnd: HWND) {
         deployed_files.push("chrono-daemon.exe".to_string());
     }
 
-    // 3. Verifica se opensteamtool.toml esta presente e pergunta se deseja ativar o [cloud]
+    // 4. Verifica se opensteamtool.toml esta presente e pergunta se deseja ativar o [cloud]
     prompt_enable_cloud_if_needed(hwnd, steam_dir);
 
-    // 4. Inicia chrono-daemon.exe
+    // 5. Inicia chrono-daemon.exe
     start_service_from_gui(steam_dir, port);
     refresh_status_label(hwnd);
+
+    // 6. Se a Steam estava aberta antes, reabre-a automaticamente
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        launch_steam(steam_dir);
+    }
+
+    let restart_notice = if steam_was_running {
+        "\r\n\r\n[OK] A Steam estava aberta e foi reaberta automaticamente com o ChronoKeep carregado!"
+    } else {
+        "\r\n\r\nAgora voce ja pode abrir a sua Steam normalmente para jogar!"
+    };
 
     let summary = format!(
         "Instalacao do ChronoKeep concluida com sucesso!\r\n\r\n\
          Pasta da Steam: {}\r\n\
          Pasta de Saves (Vault): {}\r\n\
-         Porta Local: 127.0.0.1:{}\r\n\
-         Arquivos instalados: {}\r\n\r\n\
-         O ChronoKeep esta totalmente operacional!",
+         Arquivos implantados: {}{}",
         steam_dir_str,
         vault_dir_str,
-        port,
-        deployed_files.join(", ")
+        deployed_files.join(", "),
+        restart_notice
     );
     let msg = to_wide(&summary);
     let cap = to_wide("ChronoKeep — Instalacao Concluida");
@@ -1070,7 +1101,7 @@ unsafe extern "system" fn wnd_proc(
                 "2. Pasta Local do Cofre de Saves (Cache Local / Vault):",
                 0,
                 20,
-                74,
+                72,
                 560,
                 20,
                 0,
@@ -1082,7 +1113,7 @@ unsafe extern "system" fn wnd_proc(
                 "",
                 WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
                 20,
-                96,
+                94,
                 560,
                 24,
                 ID_EDIT_VAULT,
@@ -1092,73 +1123,10 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "STATIC",
-                "3. Nome da DLL Principal:",
+                "3. Conta Google Drive: [Verificando...]",
                 0,
                 20,
-                134,
-                260,
-                20,
-                0,
-                font,
-            );
-            create_child(
-                hwnd,
-                "EDIT",
-                "chronokeep.dll",
-                WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
-                20,
-                156,
-                260,
-                24,
-                ID_EDIT_DLL_NAME,
-                font,
-            );
-
-            create_child(
-                hwnd,
-                "STATIC",
-                "Porta Local HTTP (127.0.0.1):",
-                0,
-                310,
-                134,
-                270,
-                20,
-                0,
-                font,
-            );
-            create_child(
-                hwnd,
-                "EDIT",
-                "39771",
-                WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
-                310,
-                156,
-                140,
-                24,
-                ID_EDIT_PORT,
-                font,
-            );
-
-            create_child(
-                hwnd,
-                "BUTTON",
-                "Criar tambem ponte de compatibilidade para OpenSteamTool / HubcapTools",
-                BS_AUTOCHECKBOX | WS_TABSTOP,
-                20,
-                192,
-                560,
-                22,
-                ID_CHK_LOADER_COMPAT,
-                font,
-            );
-
-            create_child(
-                hwnd,
-                "STATIC",
-                "4. Conta Google Drive: [Verificando...]",
-                0,
-                20,
-                230,
+                130,
                 560,
                 20,
                 ID_LBL_GDRIVE_STATUS,
@@ -1170,7 +1138,7 @@ unsafe extern "system" fn wnd_proc(
                 "Conectar Conta Google Drive (Login de 1 Clique no Navegador)",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 20,
-                254,
+                152,
                 560,
                 34,
                 ID_BTN_GOOGLE_LOGIN,
@@ -1183,8 +1151,8 @@ unsafe extern "system" fn wnd_proc(
                 "Instalar na Steam (1-Clique)",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 20,
-                308,
-                195,
+                200,
+                240,
                 34,
                 ID_BTN_INSTALL,
                 font,
@@ -1192,23 +1160,11 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "BUTTON",
-                "Instalar Silencioso",
+                "Iniciar Servico",
                 BS_PUSHBUTTON | WS_TABSTOP,
-                222,
-                308,
-                140,
-                34,
-                ID_BTN_SILENT_INSTALL,
-                font,
-            );
-            create_child(
-                hwnd,
-                "BUTTON",
-                "Iniciar",
-                BS_PUSHBUTTON | WS_TABSTOP,
-                368,
-                308,
-                70,
+                270,
+                200,
+                115,
                 34,
                 ID_BTN_START_SVC,
                 font,
@@ -1216,11 +1172,11 @@ unsafe extern "system" fn wnd_proc(
             create_child(
                 hwnd,
                 "BUTTON",
-                "Vault",
+                "Abrir Vault",
                 BS_PUSHBUTTON | WS_TABSTOP,
-                444,
-                308,
-                68,
+                395,
+                200,
+                95,
                 34,
                 ID_BTN_OPEN_VAULT,
                 font,
@@ -1230,9 +1186,9 @@ unsafe extern "system" fn wnd_proc(
                 "BUTTON",
                 "Ver Logs",
                 BS_PUSHBUTTON | WS_TABSTOP,
-                518,
-                308,
-                82,
+                500,
+                200,
+                80,
                 34,
                 ID_BTN_OPEN_LOGS,
                 font,
@@ -1244,7 +1200,7 @@ unsafe extern "system" fn wnd_proc(
                 "Status: Verificando...",
                 0,
                 20,
-                358,
+                248,
                 560,
                 22,
                 ID_LBL_STATUS,
@@ -1268,27 +1224,14 @@ unsafe extern "system" fn wnd_proc(
                 ID_BTN_INSTALL => {
                     on_install_and_save(hwnd);
                 }
-                ID_BTN_SILENT_INSTALL => {
-                    let code = run_silent_install();
-                    refresh_status_label(hwnd);
-                    let txt = if code == 0 {
-                        "Instalacao silenciosa concluida com sucesso!\r\nTodos os arquivos necessarios foram implantados e o servico esta ativo."
-                    } else {
-                        "Nao foi possivel concluir a instalacao silenciosa. Verifique a pasta da Steam."
-                    };
-                    let msg_w = to_wide(txt);
-                    let cap_w = to_wide("Instalacao Silenciosa");
-                    MessageBoxW(hwnd, msg_w.as_ptr(), cap_w.as_ptr(), MB_OK | MB_ICONINFORMATION);
-                }
                 ID_BTN_START_SVC => {
                     let steam_dir = get_control_text(hwnd, ID_EDIT_STEAM);
-                    let port: u16 = get_control_text(hwnd, ID_EDIT_PORT)
-                        .parse()
-                        .unwrap_or(DEFAULT_SERVICE_PORT);
+                    let port = resolve_service_port_for_gui(&steam_dir);
                     let ok = start_service_from_gui(Path::new(&steam_dir), port);
                     refresh_status_label(hwnd);
+                    let actual_port = resolve_service_port_for_gui(&steam_dir);
                     let txt = if ok {
-                        format!("Servico chrono-daemon.exe esta ONLINE em 127.0.0.1:{}!", port)
+                        format!("Servico chrono-daemon.exe esta ONLINE em 127.0.0.1:{}!", actual_port)
                     } else {
                         "Nao foi possivel iniciar o chrono-daemon.exe. Verifique se ele esta na pasta.".to_string()
                     };
@@ -1363,6 +1306,8 @@ fn main() {
         let class_name = to_wide("ChronoKeepSetupWnd");
         let window_title = to_wide("ChronoKeep — Instalador e Configurador Cloud Save");
 
+        let h_app_icon = LoadIconW(h_instance, 1 as *const u16);
+
         let wc = WNDCLASSEXW {
             cb_size: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0,
@@ -1370,12 +1315,12 @@ fn main() {
             cb_cls_extra: 0,
             cb_wnd_extra: 0,
             h_instance,
-            h_icon: 0,
+            h_icon: h_app_icon,
             h_cursor: LoadCursorW(0, 32512 as *const u16), // IDC_ARROW
             hbr_background: (COLOR_WINDOW + 1) as HBRUSH,
             lpsz_menu_name: null(),
             lpsz_class_name: class_name.as_ptr(),
-            h_icon_sm: 0,
+            h_icon_sm: h_app_icon,
         };
 
         RegisterClassExW(&wc);
@@ -1388,7 +1333,7 @@ fn main() {
             200,
             160,
             615,
-            430,
+            320,
             0,
             0,
             h_instance,
@@ -1397,6 +1342,11 @@ fn main() {
 
         if hwnd == 0 {
             return;
+        }
+
+        if h_app_icon != 0 {
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_app_icon as LPARAM);
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_app_icon as LPARAM);
         }
 
         ShowWindow(hwnd, SW_SHOWNORMAL);

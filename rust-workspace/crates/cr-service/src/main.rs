@@ -124,12 +124,53 @@ fn default_vault_dir(exe_dir: &PathBuf) -> PathBuf {
     exe_dir.join("ChronoKeepVault")
 }
 
-fn log_msg(log_path: &PathBuf, msg: &str) {
+pub fn log_msg(log_path: &PathBuf, msg: &str) {
     let line = format!("[{}][chrono-daemon] {}\r\n", get_local_timestamp_str(), msg);
     print!("{}", line);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = f.write_all(line.as_bytes());
         let _ = f.flush();
+    }
+}
+
+fn bind_first_available_port(start_port: u16) -> Option<(u16, TcpListener)> {
+    let addr = format!("127.0.0.1:{}", start_port);
+    if let Ok(l) = TcpListener::bind(&addr) {
+        return Some((start_port, l));
+    }
+    for offset in 1..=50 {
+        let p = start_port.saturating_add(offset);
+        let a = format!("127.0.0.1:{}", p);
+        if let Ok(l) = TcpListener::bind(&a) {
+            return Some((p, l));
+        }
+    }
+    if let Ok(l) = TcpListener::bind("127.0.0.1:0") {
+        if let Ok(local) = l.local_addr() {
+            return Some((local.port(), l));
+        }
+    }
+    None
+}
+
+fn update_ini_port(dir: &PathBuf, port: u16) {
+    let ini_path = dir.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let mut found = false;
+        for line in &mut lines {
+            if let Some((k, _)) = line.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("port") {
+                    *line = format!("port={}", port);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            lines.push(format!("port={}", port));
+        }
+        let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
     }
 }
 
@@ -150,32 +191,42 @@ fn main() {
         return;
     }
 
-    let addr = format!("127.0.0.1:{}", cfg.port);
-    let listener = match TcpListener::bind(&addr) {
-        Ok(l) => l,
-        Err(e) => {
-            log_msg(
-                &cfg.log_path,
-                &format!("Bind em {} falhou (provavelmente ja em execucao): {}", addr, e),
-            );
-            return;
-        }
+    let Some((actual_port, listener)) = bind_first_available_port(cfg.port) else {
+        log_msg(
+            &cfg.log_path,
+            "Erro: Falha ao abrir socket em qualquer porta local disponivel.",
+        );
+        return;
     };
+
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+    if let Some(ref d) = exe_dir {
+        let _ = fs::write(d.join("chrono_port.dat"), actual_port.to_string());
+        update_ini_port(d, actual_port);
+    }
 
     log_msg(
         &cfg.log_path,
         &format!(
             "Servidor iniciado em 127.0.0.1:{} | Vault={}",
-            cfg.port,
+            actual_port,
             cfg.vault_dir.display()
         ),
     );
 
-    let exe_dir = env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let token_file = exe_dir.as_ref().map(|d| d.join("chronokeep_gdrive.json"));
+    let gdrive_ok = token_file.as_ref().map(|p| p.exists()).unwrap_or(false);
+    if gdrive_ok {
+        log_msg(&cfg.log_path, "Google Drive: ATIVO (chronokeep_gdrive.json encontrado)");
+    } else {
+        log_msg(&cfg.log_path, "Google Drive: INATIVO (chronokeep_gdrive.json nao encontrado)");
+    }
+
     let vault = VaultStorage::new(cfg.vault_dir.clone(), exe_dir);
-    let engine = Arc::new(Mutex::new(RpcEngine::new(vault, cfg.port)));
+    let engine = Arc::new(Mutex::new(RpcEngine::new(vault, actual_port, Some(cfg.log_path.clone()))));
     let log_path = Arc::new(cfg.log_path);
 
     for stream in listener.incoming() {
@@ -572,7 +623,7 @@ fn run_self_test(cfg: &ServiceConfig) {
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()));
         let vault = VaultStorage::new(cfg.vault_dir.clone(), exe_dir.clone());
-        let mut engine = RpcEngine::new(vault, cfg.port);
+        let mut engine = RpcEngine::new(vault, cfg.port, None);
         if let Some(ref d) = exe_dir {
             engine.update_session(Some(d.to_string_lossy().into_owned()), test_acct, vec![test_app]);
         }

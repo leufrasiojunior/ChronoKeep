@@ -14,6 +14,17 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn resolve_service_port(steam_path: &str) -> u16 {
+    // 1. Tenta chrono_port.dat (gravado dinamicamente pelo daemon com a porta real)
+    let port_dat = Path::new(steam_path).join("chrono_port.dat");
+    if let Ok(content) = fs::read_to_string(&port_dat) {
+        if let Ok(p) = content.trim().parse::<u16>() {
+            if p > 0 {
+                return p;
+            }
+        }
+    }
+
+    // 2. Tenta chronokeep.ini
     let candidates = ["chronokeep.ini", "cr_clone_config.ini"];
     for name in candidates {
         let ini_path = Path::new(steam_path).join(name);
@@ -57,7 +68,8 @@ pub fn ensure_service_running(steam_path: &str, port: u16) -> bool {
             if cmd.spawn().is_ok() {
                 for _ in 0..25 {
                     std::thread::sleep(Duration::from_millis(60));
-                    if check_health(port) {
+                    let current_port = resolve_service_port(steam_path);
+                    if check_health(current_port) || check_health(port) {
                         return true;
                     }
                 }
@@ -65,7 +77,8 @@ pub fn ensure_service_running(steam_path: &str, port: u16) -> bool {
         }
     }
 
-    check_health(port)
+    let current_port = resolve_service_port(steam_path);
+    check_health(current_port) || check_health(port)
 }
 
 pub fn check_health(port: u16) -> bool {
