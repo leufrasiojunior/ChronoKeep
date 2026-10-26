@@ -94,4 +94,9 @@ jobs:
         run: |
           $tagName = if ($env:GITHUB_REF -like "refs/tags/*") { $env:GITHUB_REF_NAME } else { "latest" }
           $relTitle = if ($env:GITHUB_REF -like "refs/tags/*") { "ChronoKeep $env:GITHUB_REF_NAME" } else { "ChronoKeep Latest Build" }
-          gh release create $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --title $relTitle --notes "ChronoKeep Release Assets" --clobber
+          $null = gh release view $tagName 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --clobber
+          } else {
+            gh release create $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --title $relTitle --notes "ChronoKeep Release Assets"
+          }
