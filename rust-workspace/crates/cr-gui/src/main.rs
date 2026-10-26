@@ -5,6 +5,9 @@
 //! Google Drive OAuth2 Browser Login using the pre-verified Desktop OAuth client.
 
 use cr_proto::cloud_messages::DEFAULT_SERVICE_PORT;
+use cr_proto::cloud_messages::sanitize_rel_path;
+use cr_proto::sha1::sha1_digest;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::ffi::c_void;
 use std::fs;
@@ -13,6 +16,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
+use std::sync::Mutex;
 use std::time::Duration;
 
 const GDRIVE_CLIENT_ID: &str =
@@ -40,8 +44,20 @@ const WS_VISIBLE: u32 = 0x1000_0000;
 const WS_CHILD: u32 = 0x4000_0000;
 const WS_TABSTOP: u32 = 0x0001_0000;
 const WS_BORDER: u32 = 0x0080_0000;
+const WS_VSCROLL: u32 = 0x0020_0000;
 const ES_AUTOHSCROLL: u32 = 0x0080;
 const BS_PUSHBUTTON: u32 = 0x0000;
+
+const LBS_NOTIFY: u32 = 0x0001;
+const LBS_MULTIPLESEL: u32 = 0x0008;
+const LB_ADDSTRING: u32 = 0x0180;
+const LB_RESETCONTENT: u32 = 0x0184;
+const LB_SETSEL: u32 = 0x0185;
+const LB_GETSELCOUNT: u32 = 0x0190;
+const LB_GETSELITEMS: u32 = 0x0191;
+
+const SW_HIDE: i32 = 0;
+const SW_SHOW: i32 = 5;
 
 const WM_CREATE: u32 = 0x0001;
 const WM_DESTROY: u32 = 0x0002;
@@ -79,6 +95,8 @@ const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x2000_0000;
 
 const ID_EDIT_STEAM: usize = 101;
 const ID_EDIT_VAULT: usize = 102;
+const ID_LBL_STEAM: usize = 103;
+const ID_LBL_VAULT: usize = 104;
 const ID_BTN_INSTALL: usize = 201;
 const ID_BTN_START_SVC: usize = 202;
 const ID_BTN_OPEN_VAULT: usize = 203;
@@ -86,6 +104,19 @@ const ID_BTN_OPEN_LOGS: usize = 204;
 const ID_BTN_GOOGLE_LOGIN: usize = 205;
 const ID_LBL_STATUS: usize = 301;
 const ID_LBL_GDRIVE_STATUS: usize = 302;
+
+// Abas de navegacao
+const ID_TAB_BTN_CONFIG: usize = 401;
+const ID_TAB_BTN_ORPHANS: usize = 402;
+
+// Controles da Aba 2: Saves Orfaos / Nuvem
+const ID_LBL_ORPHANS_TITLE: usize = 501;
+const ID_LIST_ORPHANS: usize = 502;
+const ID_BTN_SCAN_ORPHANS: usize = 503;
+const ID_BTN_SELECT_ALL: usize = 504;
+const ID_BTN_DESELECT_ALL: usize = 505;
+const ID_BTN_UPLOAD_ORPHANS: usize = 506;
+const ID_LBL_ORPHANS_STATUS: usize = 507;
 
 #[repr(C)]
 struct WNDCLASSEXW {
@@ -365,6 +396,765 @@ fn check_service_online(port: u16) -> bool {
         return false;
     };
     String::from_utf8_lossy(&buf[..n]).contains("200 OK")
+}
+
+fn https_request(
+    method: &str,
+    host: &str,
+    path: &str,
+    headers: &[String],
+    body: &[u8],
+) -> Option<(u32, Vec<u8>)> {
+    unsafe {
+        let agent = to_wide("ChronoKeepSetup/1.0");
+        let h_session = WinHttpOpen(
+            agent.as_ptr(),
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            null(),
+            null(),
+            0,
+        );
+        if h_session.is_null() {
+            return None;
+        }
+
+        let host_w = to_wide(host);
+        let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if h_conn.is_null() {
+            WinHttpCloseHandle(h_session);
+            return None;
+        }
+
+        let verb_w = to_wide(method);
+        let path_w = to_wide(path);
+        let h_req = WinHttpOpenRequest(
+            h_conn,
+            verb_w.as_ptr(),
+            path_w.as_ptr(),
+            null(),
+            null(),
+            null(),
+            WINHTTP_FLAG_SECURE | WINHTTP_FLAG_ESCAPE_DISABLE,
+        );
+        if h_req.is_null() {
+            WinHttpCloseHandle(h_conn);
+            WinHttpCloseHandle(h_session);
+            return None;
+        }
+
+        for hdr in headers {
+            let hdr_w = to_wide(hdr);
+            let len = hdr_w.len().saturating_sub(1) as DWORD;
+            WinHttpAddRequestHeaders(h_req, hdr_w.as_ptr(), len, WINHTTP_ADDREQ_FLAG_ADD);
+        }
+
+        let body_ptr = if body.is_empty() {
+            null()
+        } else {
+            body.as_ptr() as *const c_void
+        };
+        let body_len = body.len() as DWORD;
+
+        let ok = WinHttpSendRequest(h_req, null(), 0, body_ptr, body_len, body_len, 0);
+        if ok == 0 || WinHttpReceiveResponse(h_req, null_mut()) == 0 {
+            WinHttpCloseHandle(h_req);
+            WinHttpCloseHandle(h_conn);
+            WinHttpCloseHandle(h_session);
+            return None;
+        }
+
+        let mut status_code: DWORD = 0;
+        let mut status_len: DWORD = std::mem::size_of::<DWORD>() as DWORD;
+        WinHttpQueryHeaders(
+            h_req,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            null(),
+            &mut status_code as *mut _ as *mut c_void,
+            &mut status_len,
+            null_mut(),
+        );
+
+        let mut resp_bytes = Vec::new();
+        loop {
+            let mut avail: DWORD = 0;
+            if WinHttpQueryDataAvailable(h_req, &mut avail) == 0 || avail == 0 {
+                break;
+            }
+            let mut chunk = vec![0u8; avail as usize];
+            let mut read: DWORD = 0;
+            if WinHttpReadData(
+                h_req,
+                chunk.as_mut_ptr() as *mut c_void,
+                avail,
+                &mut read,
+            ) == 0
+                || read == 0
+            {
+                break;
+            }
+            resp_bytes.extend_from_slice(&chunk[..read as usize]);
+        }
+
+        WinHttpCloseHandle(h_req);
+        WinHttpCloseHandle(h_conn);
+        WinHttpCloseHandle(h_session);
+
+        Some((status_code, resp_bytes))
+    }
+}
+
+static GUI_FOLDER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+fn clear_gui_folder_cache() {
+    if let Ok(mut guard) = GUI_FOLDER_CACHE.lock() {
+        *guard = None;
+    }
+}
+
+fn refresh_gdrive_access_token(token_file: &Path) -> Option<String> {
+    let content = fs::read_to_string(token_file).ok()?;
+    let refresh_token = extract_json_str(&content, "refresh_token")?;
+    let body = format!(
+        "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
+        url_encode(GDRIVE_CLIENT_ID),
+        url_encode(GDRIVE_CLIENT_SECRET),
+        url_encode(&refresh_token)
+    );
+    let headers = vec!["Content-Type: application/x-www-form-urlencoded".to_string()];
+    let (status, resp) = https_request("POST", "oauth2.googleapis.com", "/token", &headers, body.as_bytes())?;
+    if status == 200 {
+        let json = String::from_utf8_lossy(&resp);
+        extract_json_str(&json, "access_token")
+    } else {
+        None
+    }
+}
+
+fn find_or_create_drive_folder_gui(
+    access_token: &str,
+    name: &str,
+    parent_id: Option<&str>,
+) -> Option<String> {
+    let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
+    if let Ok(guard) = GUI_FOLDER_CACHE.lock() {
+        if let Some(ref map) = *guard {
+            if let Some(id) = map.get(&cache_key) {
+                return Some(id.clone());
+            }
+        }
+    }
+
+    let parent_clause = match parent_id {
+        Some(pid) => format!("'{}' in parents", pid),
+        None => "'root' in parents".to_string(),
+    };
+    let q = format!(
+        "name='{}' and mimeType='application/vnd.google-apps.folder' and trashed=false and {}",
+        name.replace('\'', "\\'"),
+        parent_clause
+    );
+    let path = format!("/drive/v3/files?q={}&fields=files(id)&pageSize=1", url_encode(&q));
+    let auth_hdr = vec![format!("Authorization: Bearer {}", access_token)];
+    if let Some((200, body)) = https_request("GET", "www.googleapis.com", &path, &auth_hdr, &[]) {
+        let s = String::from_utf8_lossy(&body);
+        if let Some(id) = extract_json_str(&s, "id") {
+            if !id.is_empty() {
+                if let Ok(mut guard) = GUI_FOLDER_CACHE.lock() {
+                    let map = guard.get_or_insert_with(HashMap::new);
+                    map.insert(cache_key.clone(), id.clone());
+                }
+                return Some(id);
+            }
+        }
+    }
+
+    // Criar pasta no Drive
+    let meta = match parent_id {
+        Some(pid) => format!(
+            "{{\"name\":\"{}\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"{}\"]}}",
+            name, pid
+        ),
+        None => format!(
+            "{{\"name\":\"{}\",\"mimeType\":\"application/vnd.google-apps.folder\"}}",
+            name
+        ),
+    };
+    let headers = vec![
+        format!("Authorization: Bearer {}", access_token),
+        "Content-Type: application/json; charset=UTF-8".to_string(),
+    ];
+    let (status, body) = https_request(
+        "POST",
+        "www.googleapis.com",
+        "/drive/v3/files?fields=id",
+        &headers,
+        meta.as_bytes(),
+    )?;
+    if (200..300).contains(&status) {
+        let s = String::from_utf8_lossy(&body);
+        if let Some(id) = extract_json_str(&s, "id") {
+            if !id.is_empty() {
+                if let Ok(mut guard) = GUI_FOLDER_CACHE.lock() {
+                    let map = guard.get_or_insert_with(HashMap::new);
+                    map.insert(cache_key, id.clone());
+                }
+                return Some(id);
+            }
+        }
+    } else if status == 404 || status == 400 {
+        clear_gui_folder_cache();
+    }
+    None
+}
+
+fn upload_file_attempt_gui(
+    token: &str,
+    account_id: u32,
+    app_id: u32,
+    rel_filename: &str,
+    data: &[u8],
+) -> bool {
+    let Some(root_id) = find_or_create_drive_folder_gui(token, "ChronoKeep", None) else {
+        return false;
+    };
+    let Some(acct_id) = find_or_create_drive_folder_gui(token, &account_id.to_string(), Some(&root_id)) else {
+        return false;
+    };
+    let Some(mut parent_id) = find_or_create_drive_folder_gui(token, &app_id.to_string(), Some(&acct_id)) else {
+        return false;
+    };
+
+    let normalized = rel_filename.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return false;
+    }
+    for sub in &parts[..parts.len() - 1] {
+        let Some(next_id) = find_or_create_drive_folder_gui(token, sub, Some(&parent_id)) else {
+            return false;
+        };
+        parent_id = next_id;
+    }
+    let leaf_name = parts[parts.len() - 1];
+
+    let q = format!(
+        "name='{}' and '{}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false",
+        leaf_name.replace('\'', "\\'"),
+        parent_id
+    );
+    let search_path = format!("/drive/v3/files?q={}&fields=files(id)&pageSize=1", url_encode(&q));
+    let auth_hdr = vec![format!("Authorization: Bearer {}", token)];
+    let existing_id = https_request("GET", "www.googleapis.com", &search_path, &auth_hdr, &[])
+        .and_then(|(st, b)| {
+            if st == 200 {
+                extract_json_str(&String::from_utf8_lossy(&b), "id")
+            } else {
+                None
+            }
+        });
+
+    let boundary = "chronokeep_gui_multipart_boundary_55123";
+    let meta_json = if existing_id.is_some() {
+        format!("{{\"name\":\"{}\"}}", leaf_name)
+    } else {
+        format!(
+            "{{\"name\":\"{}\",\"parents\":[\"{}\"]}}",
+            leaf_name, parent_id
+        )
+    };
+
+    let mut body = Vec::with_capacity(meta_json.len() + data.len() + 256);
+    body.extend_from_slice(format!("--{}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{}\r\nContent-Type: application/octet-stream\r\n\r\n", boundary, meta_json, boundary).as_bytes());
+    body.extend_from_slice(data);
+    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    let (method, upload_path) = match existing_id {
+        Some(ref id) => (
+            "PATCH",
+            format!("/upload/drive/v3/files/{}?uploadType=multipart&fields=id", id),
+        ),
+        None => (
+            "POST",
+            "/upload/drive/v3/files?uploadType=multipart&fields=id".to_string(),
+        ),
+    };
+
+    let headers = vec![
+        format!("Authorization: Bearer {}", token),
+        format!("Content-Type: multipart/related; boundary={}", boundary),
+    ];
+    if let Some((status, _)) = https_request(method, "www.googleapis.com", &upload_path, &headers, &body) {
+        return (200..300).contains(&status);
+    }
+    false
+}
+
+fn sync_orphan_file_to_drive_with_retry(
+    token: &str,
+    account_id: u32,
+    app_id: u32,
+    rel_filename: &str,
+    data: &[u8],
+) -> bool {
+    if upload_file_attempt_gui(token, account_id, app_id, rel_filename, data) {
+        return true;
+    }
+    // Auto-recuperacao: invalida cache caso a pasta tenha sido renomeada/apagada no Drive
+    clear_gui_folder_cache();
+    upload_file_attempt_gui(token, account_id, app_id, rel_filename, data)
+}
+
+#[derive(Clone, Debug)]
+struct OrphanGameItem {
+    account_id: u32,
+    app_id: u32,
+    file_count: usize,
+    total_bytes: u64,
+    source: String,
+    files: Vec<(String, PathBuf)>,
+}
+
+static SCANNED_ORPHANS: Mutex<Vec<OrphanGameItem>> = Mutex::new(Vec::new());
+
+fn collect_files_recursive(dir: &Path, root: &Path, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, root, out);
+        } else if path.is_file() {
+            if let Ok(rel) = path.strip_prefix(root) {
+                let clean = sanitize_rel_path(&rel.to_string_lossy());
+                if !clean.is_empty() {
+                    out.push((clean, path));
+                }
+            }
+        }
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+const TAB_1_CONTROLS: &[usize] = &[
+    ID_LBL_STEAM,
+    ID_EDIT_STEAM,
+    ID_LBL_VAULT,
+    ID_EDIT_VAULT,
+    ID_LBL_GDRIVE_STATUS,
+    ID_BTN_GOOGLE_LOGIN,
+    ID_BTN_INSTALL,
+    ID_BTN_START_SVC,
+    ID_BTN_OPEN_VAULT,
+    ID_BTN_OPEN_LOGS,
+    ID_LBL_STATUS,
+];
+
+const TAB_2_CONTROLS: &[usize] = &[
+    ID_LBL_ORPHANS_TITLE,
+    ID_LIST_ORPHANS,
+    ID_BTN_SCAN_ORPHANS,
+    ID_BTN_SELECT_ALL,
+    ID_BTN_DESELECT_ALL,
+    ID_BTN_UPLOAD_ORPHANS,
+    ID_LBL_ORPHANS_STATUS,
+];
+
+unsafe fn switch_tab(hwnd: HWND, tab_idx: usize) {
+    let show_tab1 = if tab_idx == 0 { SW_SHOW } else { SW_HIDE };
+    let show_tab2 = if tab_idx == 1 { SW_SHOW } else { SW_HIDE };
+
+    for &id in TAB_1_CONTROLS {
+        let h = GetDlgItem(hwnd, id as i32);
+        if h != 0 {
+            ShowWindow(h, show_tab1);
+        }
+    }
+    for &id in TAB_2_CONTROLS {
+        let h = GetDlgItem(hwnd, id as i32);
+        if h != 0 {
+            ShowWindow(h, show_tab2);
+        }
+    }
+}
+
+unsafe fn on_scan_orphans(hwnd: HWND) {
+    let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);
+    let vault_dir_str = get_control_text(hwnd, ID_EDIT_VAULT);
+    let steam_dir = Path::new(&steam_dir_str);
+    let vault_dir = Path::new(&vault_dir_str);
+
+    let h_status = GetDlgItem(hwnd, ID_LBL_ORPHANS_STATUS as i32);
+    if h_status != 0 {
+        SetWindowTextW(h_status, to_wide("Escaneando pastas de saves locais no PC...").as_ptr());
+    }
+
+    let mut map: BTreeMap<(u32, u32), OrphanGameItem> = BTreeMap::new();
+
+    // 1. Escanear Steam userdata
+    let userdata_dir = steam_dir.join("userdata");
+    if userdata_dir.exists() {
+        if let Ok(acct_entries) = fs::read_dir(&userdata_dir) {
+            for acct_entry in acct_entries.flatten() {
+                let acct_path = acct_entry.path();
+                if !acct_path.is_dir() {
+                    continue;
+                }
+                let Some(acct_name) = acct_path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                let Ok(acct_id) = acct_name.parse::<u32>() else {
+                    continue;
+                };
+                if acct_id == 0 {
+                    continue;
+                }
+
+                if let Ok(app_entries) = fs::read_dir(&acct_path) {
+                    for app_entry in app_entries.flatten() {
+                        let app_path = app_entry.path();
+                        if !app_path.is_dir() {
+                            continue;
+                        }
+                        let Some(app_name) = app_path.file_name().and_then(|n| n.to_str()) else {
+                            continue;
+                        };
+                        let Ok(app_id) = app_name.parse::<u32>() else {
+                            continue;
+                        };
+                        if app_id == 0 || app_id == 7 || app_id == 760 || app_id == 241100 {
+                            continue;
+                        }
+
+                        let remote_dir = app_path.join("remote");
+                        if !remote_dir.exists() {
+                            continue;
+                        }
+
+                        let mut found = Vec::new();
+                        collect_files_recursive(&remote_dir, &remote_dir, &mut found);
+                        let valid_files: Vec<(String, PathBuf)> = found
+                            .into_iter()
+                            .filter(|(rel, _)| {
+                                let l = rel.to_lowercase();
+                                !l.starts_with('.') && !l.ends_with(".tmp") && !l.contains(".cloudredirect")
+                            })
+                            .collect();
+
+                        if !valid_files.is_empty() {
+                            let entry = map.entry((acct_id, app_id)).or_insert_with(|| OrphanGameItem {
+                                account_id: acct_id,
+                                app_id,
+                                file_count: 0,
+                                total_bytes: 0,
+                                source: "userdata".to_string(),
+                                files: Vec::new(),
+                            });
+                            for (rel, path) in valid_files {
+                                if !entry.files.iter().any(|(r, _)| r == &rel) {
+                                    if let Ok(meta) = fs::metadata(&path) {
+                                        entry.total_bytes += meta.len();
+                                    }
+                                    entry.files.push((rel, path));
+                                }
+                            }
+                            entry.file_count = entry.files.len();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Escanear Vault local
+    if vault_dir.exists() {
+        if let Ok(acct_entries) = fs::read_dir(vault_dir) {
+            for acct_entry in acct_entries.flatten() {
+                let acct_path = acct_entry.path();
+                if !acct_path.is_dir() {
+                    continue;
+                }
+                let Some(acct_name) = acct_path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                let Ok(acct_id) = acct_name.parse::<u32>() else {
+                    continue;
+                };
+
+                if let Ok(app_entries) = fs::read_dir(&acct_path) {
+                    for app_entry in app_entries.flatten() {
+                        let app_path = app_entry.path();
+                        if !app_path.is_dir() {
+                            continue;
+                        }
+                        let Some(app_name) = app_path.file_name().and_then(|n| n.to_str()) else {
+                            continue;
+                        };
+                        let Ok(app_id) = app_name.parse::<u32>() else {
+                            continue;
+                        };
+                        if app_id == 0 || app_id == 7 || app_id == 760 || app_id == 241100 {
+                            continue;
+                        }
+
+                        let files_dir = app_path.join("files");
+                        if !files_dir.exists() {
+                            continue;
+                        }
+
+                        let mut found = Vec::new();
+                        collect_files_recursive(&files_dir, &files_dir, &mut found);
+                        let valid_files: Vec<(String, PathBuf)> = found
+                            .into_iter()
+                            .filter(|(rel, _)| {
+                                let l = rel.to_lowercase();
+                                !l.starts_with('.') && !l.ends_with(".tmp") && !l.contains(".cloudredirect") && l != "manifest.tsv"
+                            })
+                            .collect();
+
+                        if !valid_files.is_empty() {
+                            let entry = map.entry((acct_id, app_id)).or_insert_with(|| OrphanGameItem {
+                                account_id: acct_id,
+                                app_id,
+                                file_count: 0,
+                                total_bytes: 0,
+                                source: "Vault".to_string(),
+                                files: Vec::new(),
+                            });
+                            for (rel, path) in valid_files {
+                                if !entry.files.iter().any(|(r, _)| r == &rel) {
+                                    if let Ok(meta) = fs::metadata(&path) {
+                                        entry.total_bytes += meta.len();
+                                    }
+                                    entry.files.push((rel, path));
+                                }
+                            }
+                            entry.file_count = entry.files.len();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let items: Vec<OrphanGameItem> = map.into_values().collect();
+    let count = items.len();
+    if let Ok(mut guard) = SCANNED_ORPHANS.lock() {
+        *guard = items.clone();
+    }
+
+    let h_list = GetDlgItem(hwnd, ID_LIST_ORPHANS as i32);
+    if h_list != 0 {
+        SendMessageW(h_list, LB_RESETCONTENT, 0, 0);
+        for item in &items {
+            let line = format!(
+                "AppID: {:<8} | {:>2} arquivo(s) ({:>8}) | Conta: {:<9} | Local: {}",
+                item.app_id,
+                item.file_count,
+                format_size(item.total_bytes),
+                item.account_id,
+                item.source
+            );
+            SendMessageW(h_list, LB_ADDSTRING, 0, to_wide(&line).as_ptr() as LPARAM);
+        }
+        SendMessageW(h_list, LB_SETSEL, 1, -1);
+    }
+
+    if h_status != 0 {
+        let msg = format!(
+            "{} jogos com saves locais encontrados no PC. Todos selecionados para envio.",
+            count
+        );
+        SetWindowTextW(h_status, to_wide(&msg).as_ptr());
+    }
+}
+
+unsafe fn on_select_all(hwnd: HWND, select: bool) {
+    let h_list = GetDlgItem(hwnd, ID_LIST_ORPHANS as i32);
+    if h_list != 0 {
+        SendMessageW(h_list, LB_SETSEL, if select { 1 } else { 0 }, -1);
+    }
+    let h_status = GetDlgItem(hwnd, ID_LBL_ORPHANS_STATUS as i32);
+    if h_status != 0 {
+        let count = SCANNED_ORPHANS.lock().map(|g| g.len()).unwrap_or(0);
+        let msg = if select {
+            format!("Todos os {} jogos foram marcados.", count)
+        } else {
+            "Nenhum jogo selecionado. Clique na lista para selecionar ou em 'Marcar Todos'.".to_string()
+        };
+        SetWindowTextW(h_status, to_wide(&msg).as_ptr());
+    }
+}
+
+unsafe fn on_upload_orphans(hwnd: HWND) {
+    let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);
+    let vault_dir_str = get_control_text(hwnd, ID_EDIT_VAULT);
+    let steam_dir = PathBuf::from(&steam_dir_str);
+    let vault_dir = PathBuf::from(&vault_dir_str);
+
+    let mut token_path = steam_dir.join("chronokeep_gdrive.json");
+    if !token_path.exists() {
+        if let Ok(cur) = env::current_exe() {
+            if let Some(parent) = cur.parent() {
+                let cand = parent.join("chronokeep_gdrive.json");
+                if cand.exists() {
+                    token_path = cand;
+                }
+            }
+        }
+    }
+
+    if !token_path.exists() {
+        let msg = to_wide(
+            "Conta Google Drive nao conectada!\r\n\r\n\
+             Por favor, volte para a aba '1. Configuracao & Instalacao' e conecte a sua conta Google antes de enviar os saves.",
+        );
+        let cap = to_wide("Google Drive Desconectado");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    let h_list = GetDlgItem(hwnd, ID_LIST_ORPHANS as i32);
+    if h_list == 0 {
+        return;
+    }
+    let sel_count = SendMessageW(h_list, LB_GETSELCOUNT, 0, 0);
+    if sel_count <= 0 {
+        let msg = to_wide("Nenhum jogo selecionado na lista para envio.");
+        let cap = to_wide("Aviso");
+        MessageBoxW(hwnd, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    let mut indices: Vec<i32> = vec![0; sel_count as usize];
+    SendMessageW(h_list, LB_GETSELITEMS, sel_count as WPARAM, indices.as_mut_ptr() as LPARAM);
+
+    let all_scanned = match SCANNED_ORPHANS.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => return,
+    };
+
+    let mut selected_games = Vec::new();
+    for &idx in &indices {
+        if let Some(item) = all_scanned.get(idx as usize) {
+            selected_games.push(item.clone());
+        }
+    }
+
+    let h_status = GetDlgItem(hwnd, ID_LBL_ORPHANS_STATUS as i32);
+    if h_status != 0 {
+        SetWindowTextW(h_status, to_wide("Iniciando sincronizacao com o Google Drive...").as_ptr());
+    }
+
+    let hwnd_val = hwnd;
+    std::thread::spawn(move || {
+        let Some(token) = refresh_gdrive_access_token(&token_path) else {
+            unsafe {
+                if h_status != 0 {
+                    SetWindowTextW(h_status, to_wide("Erro ao renovar token de acesso do Google Drive.").as_ptr());
+                }
+                let msg = to_wide("Falha ao autenticar com o Google Drive. Refaca o login na Aba 1.");
+                let cap = to_wide("Erro Google Drive");
+                MessageBoxW(hwnd_val, msg.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR);
+            }
+            return;
+        };
+
+        let total_games = selected_games.len();
+        let mut total_files_uploaded = 0;
+        let mut success_games = 0;
+
+        for (i, game) in selected_games.iter().enumerate() {
+            unsafe {
+                if h_status != 0 {
+                    let msg = format!("Enviando AppID {} ({}/{})...", game.app_id, i + 1, total_games);
+                    SetWindowTextW(h_status, to_wide(&msg).as_ptr());
+                }
+            }
+
+            let mut manifest_lines = Vec::new();
+            manifest_lines.push(format!("cn\t{}", 1));
+            manifest_lines.push(format!("build\t{}", 0));
+            manifest_lines.push(format!("default_token\t"));
+
+            for (rel_name, full_path) in &game.files {
+                if let Ok(bytes) = fs::read(full_path) {
+                    let ok = sync_orphan_file_to_drive_with_retry(
+                        &token,
+                        game.account_id,
+                        game.app_id,
+                        rel_name,
+                        &bytes,
+                    );
+                    if ok {
+                        total_files_uploaded += 1;
+                    }
+
+                    // Salva copia local no Vault
+                    let vault_file = vault_dir
+                        .join(game.account_id.to_string())
+                        .join(game.app_id.to_string())
+                        .join("files")
+                        .join(rel_name);
+                    if let Some(parent) = vault_file.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let _ = fs::write(&vault_file, &bytes);
+
+                    let sha = cr_proto::sha1::to_hex(&sha1_digest(&bytes));
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    manifest_lines.push(format!(
+                        "file\t{}\t{}\t{}\t{}\t{}\t0\t4294967295",
+                        rel_name, "", sha, now, bytes.len()
+                    ));
+                }
+            }
+
+            let manifest_content = manifest_lines.join("\n") + "\n";
+            let manifest_file = vault_dir
+                .join(game.account_id.to_string())
+                .join(game.app_id.to_string())
+                .join("manifest.tsv");
+            if let Some(parent) = manifest_file.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(&manifest_file, manifest_content.as_bytes());
+
+            let _ = sync_orphan_file_to_drive_with_retry(
+                &token,
+                game.account_id,
+                game.app_id,
+                "manifest.tsv",
+                manifest_content.as_bytes(),
+            );
+
+            success_games += 1;
+        }
+
+        unsafe {
+            let done_text = format!(
+                "Concluido com sucesso! {} jogos ({} arquivos) enviados ao Google Drive.",
+                success_games, total_files_uploaded
+            );
+            if h_status != 0 {
+                SetWindowTextW(h_status, to_wide(&done_text).as_ptr());
+            }
+            let cap = to_wide("Sincronizacao Concluida");
+            MessageBoxW(hwnd_val, to_wide(&done_text).as_ptr(), cap.as_ptr(), MB_OK | MB_ICONINFORMATION);
+        }
+    });
 }
 
 unsafe fn create_child(
@@ -1070,16 +1860,43 @@ unsafe extern "system" fn wnd_proc(
         WM_CREATE => {
             let font = GetStockObject(DEFAULT_GUI_FONT);
 
+            // Abas de navegacao no topo
+            create_child(
+                hwnd,
+                "BUTTON",
+                "1. Configuracao & Instalacao",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                20,
+                10,
+                285,
+                30,
+                ID_TAB_BTN_CONFIG,
+                font,
+            );
+            create_child(
+                hwnd,
+                "BUTTON",
+                "2. Saves Orfaos & Nuvem",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                315,
+                10,
+                285,
+                30,
+                ID_TAB_BTN_ORPHANS,
+                font,
+            );
+
+            // --- CONTROLES DA ABA 1 (Instalacao & Status) ---
             create_child(
                 hwnd,
                 "STATIC",
                 "1. Pasta da Steam (onde a DLL e o servico serao instalados):",
                 0,
                 20,
-                16,
-                560,
-                20,
-                0,
+                48,
+                580,
+                18,
+                ID_LBL_STEAM,
                 font,
             );
             create_child(
@@ -1088,8 +1905,8 @@ unsafe extern "system" fn wnd_proc(
                 "",
                 WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
                 20,
-                38,
-                560,
+                68,
+                580,
                 24,
                 ID_EDIT_STEAM,
                 font,
@@ -1101,10 +1918,10 @@ unsafe extern "system" fn wnd_proc(
                 "2. Pasta Local do Cofre de Saves (Cache Local / Vault):",
                 0,
                 20,
-                72,
-                560,
-                20,
-                0,
+                98,
+                580,
+                18,
+                ID_LBL_VAULT,
                 font,
             );
             create_child(
@@ -1113,8 +1930,8 @@ unsafe extern "system" fn wnd_proc(
                 "",
                 WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
                 20,
-                94,
-                560,
+                118,
+                580,
                 24,
                 ID_EDIT_VAULT,
                 font,
@@ -1126,9 +1943,9 @@ unsafe extern "system" fn wnd_proc(
                 "3. Conta Google Drive: [Verificando...]",
                 0,
                 20,
-                130,
-                560,
-                20,
+                150,
+                580,
+                18,
                 ID_LBL_GDRIVE_STATUS,
                 font,
             );
@@ -1138,8 +1955,8 @@ unsafe extern "system" fn wnd_proc(
                 "Conectar Conta Google Drive (Login de 1 Clique no Navegador)",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 20,
-                152,
-                560,
+                170,
+                580,
                 34,
                 ID_BTN_GOOGLE_LOGIN,
                 font,
@@ -1151,7 +1968,7 @@ unsafe extern "system" fn wnd_proc(
                 "Instalar na Steam (1-Clique)",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 20,
-                200,
+                216,
                 240,
                 34,
                 ID_BTN_INSTALL,
@@ -1163,7 +1980,7 @@ unsafe extern "system" fn wnd_proc(
                 "Iniciar Servico",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 270,
-                200,
+                216,
                 115,
                 34,
                 ID_BTN_START_SVC,
@@ -1175,7 +1992,7 @@ unsafe extern "system" fn wnd_proc(
                 "Abrir Vault",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 395,
-                200,
+                216,
                 95,
                 34,
                 ID_BTN_OPEN_VAULT,
@@ -1187,8 +2004,8 @@ unsafe extern "system" fn wnd_proc(
                 "Ver Logs",
                 BS_PUSHBUTTON | WS_TABSTOP,
                 500,
-                200,
-                80,
+                216,
+                100,
                 34,
                 ID_BTN_OPEN_LOGS,
                 font,
@@ -1200,14 +2017,101 @@ unsafe extern "system" fn wnd_proc(
                 "Status: Verificando...",
                 0,
                 20,
-                248,
-                560,
+                262,
+                580,
                 22,
                 ID_LBL_STATUS,
                 font,
             );
 
+            // --- CONTROLES DA ABA 2 (Saves Orfaos & Nuvem) ---
+            create_child(
+                hwnd,
+                "STATIC",
+                "Saves locais no computador (Steam / Vault). Selecione para enviar ao Google Drive:",
+                0,
+                20,
+                48,
+                580,
+                18,
+                ID_LBL_ORPHANS_TITLE,
+                font,
+            );
+            create_child(
+                hwnd,
+                "LISTBOX",
+                "",
+                WS_BORDER | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_MULTIPLESEL,
+                20,
+                70,
+                580,
+                230,
+                ID_LIST_ORPHANS,
+                font,
+            );
+            create_child(
+                hwnd,
+                "BUTTON",
+                "🔍 Escanear Saves",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                20,
+                310,
+                150,
+                34,
+                ID_BTN_SCAN_ORPHANS,
+                font,
+            );
+            create_child(
+                hwnd,
+                "BUTTON",
+                "Marcar Todos",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                180,
+                310,
+                105,
+                34,
+                ID_BTN_SELECT_ALL,
+                font,
+            );
+            create_child(
+                hwnd,
+                "BUTTON",
+                "Limpar",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                295,
+                310,
+                75,
+                34,
+                ID_BTN_DESELECT_ALL,
+                font,
+            );
+            create_child(
+                hwnd,
+                "BUTTON",
+                "☁️ Enviar para o Google Drive",
+                BS_PUSHBUTTON | WS_TABSTOP,
+                380,
+                310,
+                220,
+                34,
+                ID_BTN_UPLOAD_ORPHANS,
+                font,
+            );
+            create_child(
+                hwnd,
+                "STATIC",
+                "Pronto. Clique em 'Escanear Saves' ou selecione os jogos e clique em 'Enviar para o Google Drive'.",
+                0,
+                20,
+                354,
+                580,
+                32,
+                ID_LBL_ORPHANS_STATUS,
+                font,
+            );
+
             populate_existing_config(hwnd);
+            switch_tab(hwnd, 0);
             0
         }
         WM_CTLCOLORSTATIC => {
@@ -1218,6 +2122,28 @@ unsafe extern "system" fn wnd_proc(
         WM_COMMAND => {
             let id = w_param & 0xFFFF;
             match id {
+                ID_TAB_BTN_CONFIG => {
+                    switch_tab(hwnd, 0);
+                }
+                ID_TAB_BTN_ORPHANS => {
+                    switch_tab(hwnd, 1);
+                    let is_empty = SCANNED_ORPHANS.lock().map(|g| g.is_empty()).unwrap_or(true);
+                    if is_empty {
+                        on_scan_orphans(hwnd);
+                    }
+                }
+                ID_BTN_SCAN_ORPHANS => {
+                    on_scan_orphans(hwnd);
+                }
+                ID_BTN_SELECT_ALL => {
+                    on_select_all(hwnd, true);
+                }
+                ID_BTN_DESELECT_ALL => {
+                    on_select_all(hwnd, false);
+                }
+                ID_BTN_UPLOAD_ORPHANS => {
+                    on_upload_orphans(hwnd);
+                }
                 ID_BTN_GOOGLE_LOGIN => {
                     on_google_browser_login(hwnd);
                 }
@@ -1331,9 +2257,9 @@ fn main() {
             window_title.as_ptr(),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
             200,
-            160,
-            615,
-            320,
+            120,
+            635,
+            445,
             0,
             0,
             h_instance,

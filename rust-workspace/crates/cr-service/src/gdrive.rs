@@ -280,6 +280,12 @@ pub fn get_valid_access_token(token_file: &Path) -> Option<String> {
     Some(token)
 }
 
+pub fn clear_folder_cache() {
+    if let Ok(mut guard) = FOLDER_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option<&str>) -> Option<String> {
     let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
     if let Ok(guard) = FOLDER_CACHE.lock() {
@@ -307,7 +313,7 @@ fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option
             if !id.is_empty() {
                 if let Ok(mut guard) = FOLDER_CACHE.lock() {
                     let map = guard.get_or_insert_with(HashMap::new);
-                    map.insert(cache_key, id.clone());
+                    map.insert(cache_key.clone(), id.clone());
                 }
                 return Some(id);
             }
@@ -347,12 +353,40 @@ fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option
                 return Some(id);
             }
         }
+    } else if status == 404 || status == 400 {
+        // Parent folder may have been renamed/deleted externally. Invalidate cache.
+        clear_folder_cache();
     }
     None
 }
 
 /// Asynchronous-safe helper to upload a save file into `ChronoKeep/<account_id>/<app_id>/<rel_path>` on Google Drive.
 pub fn sync_file_to_gdrive(
+    exe_dir: &Path,
+    account_id: u32,
+    app_id: u32,
+    rel_filename: &str,
+    data: &[u8],
+    log_path: Option<&PathBuf>,
+) -> bool {
+    if sync_file_to_gdrive_attempt(exe_dir, account_id, app_id, rel_filename, data, log_path) {
+        return true;
+    }
+    // Auto-recuperação: limpa o cache de pastas e retenta recriando a hierarquia no Drive
+    clear_folder_cache();
+    if let Some(lp) = log_path {
+        crate::log_msg(
+            lp,
+            &format!(
+                "[Google Drive Upload] Falha inicial ao enviar app={} file='{}'. Auto-recuperando hierarquia no Drive...",
+                app_id, rel_filename
+            ),
+        );
+    }
+    sync_file_to_gdrive_attempt(exe_dir, account_id, app_id, rel_filename, data, log_path)
+}
+
+fn sync_file_to_gdrive_attempt(
     exe_dir: &Path,
     account_id: u32,
     app_id: u32,
