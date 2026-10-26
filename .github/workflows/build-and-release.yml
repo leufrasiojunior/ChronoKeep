@@ -20,6 +20,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -91,17 +94,4 @@ jobs:
         run: |
           $tagName = if ($env:GITHUB_REF -like "refs/tags/*") { $env:GITHUB_REF_NAME } else { "latest" }
           $relTitle = if ($env:GITHUB_REF -like "refs/tags/*") { "ChronoKeep $env:GITHUB_REF_NAME" } else { "ChronoKeep Latest Build" }
-          
-          # Cria a release se não existir ou atualiza os arquivos
-          $exists = $true
-          try {
-            gh release view $tagName | Out-Null
-          } catch {
-            $exists = $false
-          }
-          
-          if ($exists) {
-            gh release upload $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --clobber
-          } else {
-            gh release create $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --title $relTitle --notes "ChronoKeep Release Assets"
-          }
+          gh release create $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --title $relTitle --notes "ChronoKeep Release Assets" --clobber
