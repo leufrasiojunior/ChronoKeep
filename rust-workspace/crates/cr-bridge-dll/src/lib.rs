@@ -144,7 +144,9 @@ pub fn get_service_port() -> u16 {
 }
 
 pub fn is_namespace_app(app_id: u32) -> bool {
-    if app_id == 0 {
+    // Aplicativos internos da Steam nunca devem ser interceptados pelo ChronoKeep
+    // (7 = Steam Client, 760 = Screenshots, 241100/241300 = Steam Controller / Entrada Steam)
+    if app_id == 0 || app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
         return false;
     }
 

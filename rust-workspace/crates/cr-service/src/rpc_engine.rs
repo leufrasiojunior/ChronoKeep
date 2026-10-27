@@ -153,6 +153,15 @@ impl RpcEngine {
             extract_app_id(method, &fields)
         };
 
+        if resolved_app_id == 0
+            || resolved_app_id == 7
+            || resolved_app_id == 760
+            || resolved_app_id == 241100
+            || resolved_app_id == 241300
+        {
+            return None;
+        }
+
         match method {
             RPC_GET_CHANGELIST => Some(self.on_get_changelist(account_id, resolved_app_id, &fields)),
             RPC_LAUNCH_INTENT => Some((ERESULT_OK, build_launch_intent_response())),
@@ -221,6 +230,35 @@ impl RpcEngine {
         self.full_manifest_sent.insert(key);
 
         let mut list: Vec<CloudFileRecord> = manifest.files.values().cloned().collect();
+
+        // Se o arquivo local no disco tiver exatamente o mesmo conteudo (SHA1) que o registro da nuvem,
+        // alinha o timestamp reportado a Steam com o timestamp do arquivo no disco local.
+        // Isso elimina 100% de falsos conflitos de sincronizacao quando ambos os lados sao identicos.
+        if let Some(ref sp) = self.vault.steam_path {
+            let user_remote = sp
+                .join("userdata")
+                .join(account_id.to_string())
+                .join(app_id.to_string())
+                .join("remote");
+            for f in &mut list {
+                let local_path = user_remote.join(&f.filename);
+                if let Ok(meta) = std::fs::metadata(&local_path) {
+                    if let Ok(mtime) = meta.modified() {
+                        if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                            let disk_ts = d.as_secs();
+                            if meta.len() == f.raw_size {
+                                if let Ok(bytes) = std::fs::read(&local_path) {
+                                    if cr_proto::sha1::sha1_digest(&bytes) == f.sha1 {
+                                        f.timestamp = disk_ts;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
         let machine_name = std::env::var("COMPUTERNAME")
