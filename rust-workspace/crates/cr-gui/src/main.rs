@@ -1081,8 +1081,25 @@ unsafe fn on_upload_orphans(hwnd: HWND) {
                 }
             }
 
+            let manifest_file = vault_dir
+                .join(game.account_id.to_string())
+                .join(game.app_id.to_string())
+                .join("manifest.tsv");
+            let mut existing_cn = 1u64;
+            if let Ok(prev) = fs::read_to_string(&manifest_file) {
+                for l in prev.lines() {
+                    if let Some((k, v)) = l.split_once('\t') {
+                        if k == "cn" {
+                            if let Ok(cn) = v.parse::<u64>() {
+                                existing_cn = cn.max(1);
+                            }
+                        }
+                    }
+                }
+            }
+
             let mut manifest_lines = Vec::new();
-            manifest_lines.push(format!("cn\t{}", 1));
+            manifest_lines.push(format!("cn\t{}", existing_cn));
             manifest_lines.push(format!("build\t{}", 0));
             manifest_lines.push(format!("default_token\t"));
 
@@ -1111,13 +1128,15 @@ unsafe fn on_upload_orphans(hwnd: HWND) {
                     let _ = fs::write(&vault_file, &bytes);
 
                     let sha = cr_proto::sha1::to_hex(&sha1_digest(&bytes));
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
+                    let file_ts = fs::metadata(full_path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
                     manifest_lines.push(format!(
                         "file\t{}\t{}\t{}\t{}\t{}\t0\t4294967295",
-                        rel_name, "", sha, now, bytes.len()
+                        rel_name, "", sha, file_ts, bytes.len()
                     ));
                 }
             }
