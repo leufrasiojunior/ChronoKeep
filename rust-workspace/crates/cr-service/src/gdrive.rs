@@ -12,6 +12,7 @@ use std::time::Instant;
 
 static TOKEN_CACHE: Mutex<Option<(String, Instant)>> = Mutex::new(None);
 static FOLDER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static FOLDER_CREATE_MUTEX: Mutex<()> = Mutex::new(());
 
 pub const DEFAULT_GDRIVE_CLIENT_ID: &str =
     "1072944905499-vm2v2i5dvn0a0d2o4ca36i1vge8cvbn0.apps.googleusercontent.com";
@@ -288,6 +289,18 @@ pub fn clear_folder_cache() {
 
 fn find_or_create_drive_folder(access_token: &str, name: &str, parent_id: Option<&str>) -> Option<String> {
     let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
+    if let Ok(guard) = FOLDER_CACHE.lock() {
+        if let Some(ref map) = *guard {
+            if let Some(id) = map.get(&cache_key) {
+                return Some(id.clone());
+            }
+        }
+    }
+
+    // Serializa a checagem e criação para evitar que threads de upload simultâneas
+    // criem pastas duplicadas no Drive (ex: 241100, 241100(1), etc.)
+    let _create_guard = FOLDER_CREATE_MUTEX.lock().ok();
+
     if let Ok(guard) = FOLDER_CACHE.lock() {
         if let Some(ref map) = *guard {
             if let Some(id) = map.get(&cache_key) {
