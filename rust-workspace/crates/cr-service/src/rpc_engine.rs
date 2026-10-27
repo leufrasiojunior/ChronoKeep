@@ -227,6 +227,24 @@ impl RpcEngine {
         }
 
         let key = (account_id, app_id);
+        let repeat_call = self.full_manifest_sent.contains(&key);
+
+        // Se o manifesto completo já foi enviado nesta sessão e o CN do cliente coincide com a nuvem,
+        // retorna delta vazio (is_only_delta = true, 0 arquivos).
+        // Isso confirma a Steam que a nuvem está 100% atualizada sem forçar rechecagem de todos os arquivos.
+        if repeat_call && (synced_cn == 0 || synced_cn >= manifest.change_number) {
+            let machine_name = std::env::var("COMPUTERNAME")
+                .unwrap_or_else(|_| "CHRONOKEEP-PC".to_string());
+            let resp = build_changelist_response(
+                manifest.change_number,
+                true,
+                &[],
+                &machine_name,
+                manifest.app_build_id,
+            );
+            return (ERESULT_OK, resp);
+        }
+
         self.full_manifest_sent.insert(key);
 
         let mut list: Vec<CloudFileRecord> = manifest.files.values().cloned().collect();
@@ -444,7 +462,7 @@ impl RpcEngine {
         }
 
         let _ = self.vault.save_manifest(account_id, app_id, &manifest);
-        self.full_manifest_sent.remove(&(account_id, app_id));
+        self.full_manifest_sent.insert((account_id, app_id));
 
         let sp_opt = self.vault.steam_path.clone().or_else(|| {
             std::env::current_exe()
@@ -573,7 +591,7 @@ impl RpcEngine {
                 manifest.app_build_id = batch.app_build_id;
             }
             let _ = self.vault.save_manifest(account_id, app_id, &manifest);
-            self.full_manifest_sent.remove(&(account_id, app_id));
+            self.full_manifest_sent.insert((account_id, app_id));
         }
         (ERESULT_OK, Vec::new())
     }
@@ -654,7 +672,7 @@ impl RpcEngine {
                 manifest.change_number = manifest.change_number.saturating_add(1);
             }
             let _ = self.vault.save_manifest(account_id, app_id, &manifest);
-            self.full_manifest_sent.remove(&(account_id, app_id));
+            self.full_manifest_sent.insert((account_id, app_id));
         }
 
         (ERESULT_OK, Vec::new())

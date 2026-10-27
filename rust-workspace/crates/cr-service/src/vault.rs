@@ -180,9 +180,9 @@ impl VaultStorage {
                 manifest.change_number = vdf_cn;
             } else if manifest.change_number == 0 {
                 manifest.change_number = 1;
-            } else {
-                manifest.change_number = manifest.change_number.saturating_add(1);
             }
+            // CN nunca deve ser incrementado aqui por mudanças locais no disco.
+            // O CN só avança através de upload de batch da Steam ou download do Google Drive.
             let _ = self.save_manifest(account_id, app_id, &manifest);
         }
 
