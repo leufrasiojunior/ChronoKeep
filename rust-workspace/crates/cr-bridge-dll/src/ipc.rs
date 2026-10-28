@@ -11,6 +11,16 @@ use std::time::Duration;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn GetCurrentProcessId() -> u32;
+}
+
+#[cfg(not(target_os = "windows"))]
+unsafe fn GetCurrentProcessId() -> u32 {
+    0
+}
+
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn resolve_service_port(steam_path: &str) -> u16 {
@@ -61,6 +71,10 @@ pub fn ensure_service_running(steam_path: &str, port: u16) -> bool {
         if exe_path.exists() {
             let mut cmd = std::process::Command::new(&exe_path);
             cmd.current_dir(steam_path);
+            let my_pid = unsafe { GetCurrentProcessId() };
+            if my_pid != 0 {
+                cmd.arg("--parent-pid").arg(my_pid.to_string());
+            }
             #[cfg(target_os = "windows")]
             {
                 cmd.creation_flags(CREATE_NO_WINDOW);
@@ -109,13 +123,27 @@ pub fn push_session_update(
     account_id: u32,
     apps: &[u32],
 ) -> bool {
+    let my_pid = unsafe { GetCurrentProcessId() };
     let apps_csv = apps
         .iter()
         .map(|id| id.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    let payload = format!("{}\n{}\n{}\n", steam_path, account_id, apps_csv);
+    let payload = format!("{}\n{}\n{}\n{}\n", steam_path, account_id, apps_csv, my_pid);
     http_post(port, "/v1/session", payload.as_bytes(), Duration::from_secs(2)).is_some()
+}
+
+pub fn notify_shutdown(port: u16) {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+        let req = format!(
+            "POST /v1/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            port
+        );
+        let _ = stream.write_all(req.as_bytes());
+        let _ = stream.flush();
+    }
 }
 
 pub fn push_game_state(port: u16, app_id: u32, account_id: u32, running: bool) -> bool {

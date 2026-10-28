@@ -55,6 +55,81 @@ pub fn get_local_timestamp_str() -> String {
     )
 }
 
+static WATCHING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn ensure_parent_watcher(pid: u32, log_path: Arc<PathBuf>) {
+    if pid == 0 {
+        return;
+    }
+    if WATCHING_PID
+        .compare_exchange(
+            0,
+            pid,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::thread::spawn(move || {
+            type HANDLE = *mut std::ffi::c_void;
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> HANDLE;
+                fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: u32) -> u32;
+                fn CloseHandle(hObject: HANDLE) -> i32;
+            }
+            const SYNCHRONIZE: u32 = 0x0010_0000;
+            const INFINITE: u32 = 0xFFFF_FFFF;
+
+            let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+            if handle.is_null() {
+                log_msg(
+                    &log_path,
+                    &format!(
+                        "[Lifecycle] Nao foi possivel abrir handle de sincronizacao para Steam PID={}",
+                        pid
+                    ),
+                );
+                return;
+            }
+
+            log_msg(
+                &log_path,
+                &format!(
+                    "[Lifecycle] Monitorando encerramento do processo Steam (PID={})...",
+                    pid
+                ),
+            );
+
+            unsafe {
+                WaitForSingleObject(handle, INFINITE);
+                CloseHandle(handle);
+            }
+
+            log_msg(
+                &log_path,
+                &format!(
+                    "[Lifecycle] Processo Steam (PID={}) encerrou. Finalizando chrono-daemon.exe...",
+                    pid
+                ),
+            );
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::process::exit(0);
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = log_path;
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ServiceConfig {
     port: u16,
@@ -178,6 +253,19 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let cfg = ServiceConfig::load();
 
+    let mut parent_pid = 0u32;
+    let mut idx = 1;
+    while idx < args.len() {
+        if args[idx] == "--parent-pid" && idx + 1 < args.len() {
+            if let Ok(p) = args[idx + 1].parse::<u32>() {
+                parent_pid = p;
+            }
+            idx += 2;
+            continue;
+        }
+        idx += 1;
+    }
+
     if args.len() >= 2 && args[1].eq_ignore_ascii_case("status") {
         println!("=== ChronoKeep Daemon (chrono-daemon) ===");
         println!("Porta configurada : 127.0.0.1:{}", cfg.port);
@@ -229,6 +317,10 @@ fn main() {
     let engine = Arc::new(Mutex::new(RpcEngine::new(vault, actual_port, Some(cfg.log_path.clone()))));
     let log_path = Arc::new(cfg.log_path);
 
+    if parent_pid > 0 {
+        ensure_parent_watcher(parent_pid, Arc::clone(&log_path));
+    }
+
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
@@ -258,8 +350,22 @@ fn handle_connection(
         return;
     }
 
+    if method == "POST" && path == "/v1/shutdown" {
+        log_msg(
+            &log_path,
+            "[Lifecycle] Requisicao de encerramento (/v1/shutdown) recebida da Steam. Finalizando chrono-daemon...",
+        );
+        let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"OK");
+        let _ = stream.flush();
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            std::process::exit(0);
+        });
+        return;
+    }
+
     if method == "POST" && path == "/v1/session" {
-        // Text lines: line 0 = steam_path, line 1 = account_id, line 2 = comma-separated app_ids
+        // Text lines: line 0 = steam_path, line 1 = account_id, line 2 = comma-separated app_ids, line 3 = steam_pid
         let text = String::from_utf8_lossy(&body);
         let mut lines = text.lines();
         let steam_path = lines.next().map(|s| s.trim().to_string());
@@ -273,6 +379,14 @@ fn handle_connection(
             .split(',')
             .filter_map(|s| s.trim().parse::<u32>().ok())
             .collect();
+        let steam_pid = lines
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        if steam_pid > 0 {
+            ensure_parent_watcher(steam_pid, Arc::clone(&log_path));
+        }
 
         log_msg(
             &log_path,
