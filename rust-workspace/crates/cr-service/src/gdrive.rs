@@ -2,7 +2,7 @@
 //! Uses the built-in verified Desktop OAuth2 client by default (or custom credentials if set)
 //! and automatically refreshes the `access_token` from `chronokeep_gdrive.json`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,8 @@ use std::time::Instant;
 static TOKEN_CACHE: Mutex<Option<(String, Instant)>> = Mutex::new(None);
 static FOLDER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static FOLDER_CREATE_MUTEX: Mutex<()> = Mutex::new(());
+static ACTIVE_PULLS: Mutex<Option<HashSet<(u32, u32)>>> = Mutex::new(None);
+static PULL_ALL_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub const DEFAULT_GDRIVE_CLIENT_ID: &str =
     "1072944905499-vm2v2i5dvn0a0d2o4ca36i1vge8cvbn0.apps.googleusercontent.com";
@@ -721,24 +723,59 @@ fn pull_drive_folder_recursive(
                 format!("{}/{}", rel_prefix, item.name)
             };
 
-            // Se for manifest.tsv, baixa e salva no local do manifest
+            // Se for manifest.tsv, só adota se a nuvem tiver um CN superior ao local
             if rel_file == "manifest.tsv" {
                 if let Some(bytes) = download_drive_file(access_token, &item.id) {
-                    let m_path = vault.manifest_path(account_id, app_id);
-                    if let Some(parent) = m_path.parent() {
-                        let _ = fs::create_dir_all(parent);
+                    let cloud_str = String::from_utf8_lossy(&bytes);
+                    let mut cloud_cn = 0u64;
+                    for l in cloud_str.lines() {
+                        if let Some((k, v)) = l.split_once('\t') {
+                            if k == "cn" || k == "META" {
+                                let val_str = if k == "META" {
+                                    v.split('\t').next().unwrap_or("0")
+                                } else {
+                                    v
+                                };
+                                if let Ok(cn) = val_str.parse::<u64>() {
+                                    cloud_cn = cn;
+                                    break;
+                                }
+                            }
+                        }
                     }
-                    let _ = fs::write(&m_path, bytes);
+                    let current_manifest = vault.load_and_reconcile_manifest(account_id, app_id);
+                    if cloud_cn > current_manifest.change_number {
+                        let m_path = vault.manifest_path(account_id, app_id);
+                        if let Some(parent) = m_path.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        let _ = fs::write(&m_path, bytes);
+                    }
                 }
                 continue;
             }
 
-            // Verifica se o arquivo local já existe com o mesmo tamanho
-            let local_exists_and_matches = vault
-                .resolve_file_disk_path(account_id, app_id, &rel_file)
+            // Verifica se o arquivo local já existe com o mesmo tamanho (no Vault ou em userdata)
+            let user_dest_matches = vault
+                .steam_path
+                .as_ref()
+                .map(|sp| {
+                    sp.join("userdata")
+                        .join(account_id.to_string())
+                        .join(app_id.to_string())
+                        .join("remote")
+                        .join(&rel_file)
+                })
                 .and_then(|p| fs::metadata(&p).ok())
                 .map(|m| m.len() == item.size && item.size > 0)
                 .unwrap_or(false);
+
+            let local_exists_and_matches = user_dest_matches
+                || vault
+                    .resolve_file_disk_path(account_id, app_id, &rel_file)
+                    .and_then(|p| fs::metadata(&p).ok())
+                    .map(|m| m.len() == item.size && item.size > 0)
+                    .unwrap_or(false);
 
             if !local_exists_and_matches {
                 if let Some(bytes) = download_drive_file(access_token, &item.id) {
@@ -754,10 +791,16 @@ fn pull_drive_folder_recursive(
                                 .join(app_id.to_string())
                                 .join("remote")
                                 .join(&rel_file);
-                            if let Some(p) = user_dest.parent() {
-                                let _ = fs::create_dir_all(p);
+                            let needs_write = match fs::metadata(&user_dest) {
+                                Ok(m) => m.len() != bytes.len() as u64,
+                                Err(_) => true,
+                            };
+                            if needs_write {
+                                if let Some(p) = user_dest.parent() {
+                                    let _ = fs::create_dir_all(p);
+                                }
+                                let _ = fs::write(user_dest, &bytes);
                             }
-                            let _ = fs::write(user_dest, &bytes);
                         }
                         if let Some(lp) = log_path {
                             crate::log_msg(
@@ -786,6 +829,30 @@ pub fn pull_app_from_gdrive(
     vault: &crate::vault::VaultStorage,
     log_path: Option<&PathBuf>,
 ) -> bool {
+    let key = (account_id, app_id);
+    {
+        let mut guard = match ACTIVE_PULLS.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        let set = guard.get_or_insert_with(HashSet::new);
+        if !set.insert(key) {
+            return false;
+        }
+    }
+
+    struct PullGuard((u32, u32));
+    impl Drop for PullGuard {
+        fn drop(&mut self) {
+            if let Ok(mut guard) = ACTIVE_PULLS.lock() {
+                if let Some(ref mut set) = *guard {
+                    set.remove(&self.0);
+                }
+            }
+        }
+    }
+    let _guard = PullGuard(key);
+
     let token_path = steam_dir.join("chronokeep_gdrive.json");
     if !token_path.exists() {
         return false;
@@ -854,7 +921,17 @@ pub fn start_background_pull_all(
     vault: crate::vault::VaultStorage,
     log_path: Option<PathBuf>,
 ) {
+    if PULL_ALL_ACTIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     std::thread::spawn(move || {
+        struct PullAllGuard;
+        impl Drop for PullAllGuard {
+            fn drop(&mut self) {
+                PULL_ALL_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _all_guard = PullAllGuard;
         let mut token_path = steam_dir.join("chronokeep_gdrive.json");
         if !token_path.exists() {
             if let Ok(cur) = std::env::current_exe() {

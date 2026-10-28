@@ -354,9 +354,14 @@ impl VaultStorage {
             let trimmed = line.trim();
             if trimmed == "}" {
                 if let Some(fname) = current_file.take() {
-                    let clean = sanitize_rel_path(&fname);
+                    let (tok, clean) = cr_proto::cloud_messages::split_root_token(&fname);
                     if !clean.is_empty() {
-                        files_meta.insert(clean, (root_id_to_token(cur_root_id), cur_time));
+                        let effective_tok = if !tok.is_empty() {
+                            tok
+                        } else {
+                            root_id_to_token(cur_root_id)
+                        };
+                        files_meta.insert(clean, (effective_tok, cur_time));
                     }
                 }
                 continue;
@@ -409,11 +414,16 @@ impl VaultStorage {
                     manifest.default_root_token = parts[3].to_string();
                 }
             } else if parts[0] == "FILE" && parts.len() >= 7 {
-                let filename = sanitize_rel_path(parts[1]);
+                let (tok, clean) = cr_proto::cloud_messages::split_root_token(parts[1]);
+                let filename = clean;
                 if filename.is_empty() {
                     continue;
                 }
-                let root_token = parts[2].to_string();
+                let root_token = if !parts[2].is_empty() {
+                    parts[2].to_string()
+                } else {
+                    tok
+                };
                 let Some(sha_vec) = from_hex(parts[3]) else {
                     continue;
                 };
