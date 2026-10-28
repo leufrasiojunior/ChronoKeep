@@ -586,6 +586,7 @@ pub struct DriveFileItem {
     pub name: String,
     pub mime_type: String,
     pub size: u64,
+    pub md5_checksum: Option<String>,
 }
 
 pub fn parse_drive_file_list(json: &str) -> Vec<DriveFileItem> {
@@ -613,11 +614,13 @@ pub fn parse_drive_file_list(json: &str) -> Vec<DriveFileItem> {
             let size: u64 = extract_json_str(obj_str, "size")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
+            let md5_checksum = extract_json_str(obj_str, "md5Checksum");
             items.push(DriveFileItem {
                 id,
                 name,
                 mime_type,
                 size,
+                md5_checksum,
             });
         }
         slice = &after_start[obj_end + 1..];
@@ -668,7 +671,7 @@ pub fn find_drive_folder(
 pub fn list_drive_files(access_token: &str, parent_id: &str) -> Vec<DriveFileItem> {
     let q = format!("'{}' in parents and trashed=false", parent_id);
     let path = format!(
-        "/drive/v3/files?q={}&fields=files(id,name,mimeType,size)&pageSize=1000",
+        "/drive/v3/files?q={}&fields=files(id,name,mimeType,size,md5Checksum)&pageSize=1000",
         url_encode(&q)
     );
     let auth_hdr = vec![format!("Authorization: Bearer {}", access_token)];
@@ -688,6 +691,26 @@ pub fn download_drive_file(access_token: &str, file_id: &str) -> Option<Vec<u8>>
     None
 }
 
+fn file_matches_remote(path: &Path, expected_size: u64, expected_md5: Option<&str>) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() != expected_size {
+        return false;
+    }
+    if let Some(remote_md5) = expected_md5 {
+        if remote_md5.is_empty() {
+            return true;
+        }
+        let Ok(local_md5) = cr_proto::md5::md5_file(path) else {
+            return false;
+        };
+        local_md5.eq_ignore_ascii_case(remote_md5)
+    } else {
+        true
+    }
+}
+
 fn pull_drive_folder_recursive(
     access_token: &str,
     folder_id: &str,
@@ -698,7 +721,7 @@ fn pull_drive_folder_recursive(
     log_path: Option<&PathBuf>,
 ) -> usize {
     let items = list_drive_files(access_token, folder_id);
-    let mut downloaded_count = 0;
+    let mut synced_count = 0;
 
     for item in items {
         if item.mime_type == "application/vnd.google-apps.folder" {
@@ -707,7 +730,7 @@ fn pull_drive_folder_recursive(
             } else {
                 format!("{}/{}", rel_prefix, item.name)
             };
-            downloaded_count += pull_drive_folder_recursive(
+            synced_count += pull_drive_folder_recursive(
                 access_token,
                 &item.id,
                 &next_prefix,
@@ -755,71 +778,115 @@ fn pull_drive_folder_recursive(
                 continue;
             }
 
-            // Verifica se o arquivo local já existe com o mesmo tamanho (no Vault ou em userdata)
-            let user_dest_matches = vault
-                .steam_path
+            // Verifica integridade com o Vault e com userdata
+            let vault_file_path = vault.resolve_file_disk_path(account_id, app_id, &rel_file);
+            let user_dest_path = vault.steam_path.as_ref().map(|sp| {
+                sp.join("userdata")
+                    .join(account_id.to_string())
+                    .join(app_id.to_string())
+                    .join("remote")
+                    .join(&rel_file)
+            });
+
+            let vault_matches = vault_file_path
                 .as_ref()
-                .map(|sp| {
-                    sp.join("userdata")
-                        .join(account_id.to_string())
-                        .join(app_id.to_string())
-                        .join("remote")
-                        .join(&rel_file)
-                })
-                .and_then(|p| fs::metadata(&p).ok())
-                .map(|m| m.len() == item.size && item.size > 0)
+                .map(|p| file_matches_remote(p, item.size, item.md5_checksum.as_deref()))
                 .unwrap_or(false);
 
-            let local_exists_and_matches = user_dest_matches
-                || vault
-                    .resolve_file_disk_path(account_id, app_id, &rel_file)
-                    .and_then(|p| fs::metadata(&p).ok())
-                    .map(|m| m.len() == item.size && item.size > 0)
-                    .unwrap_or(false);
+            let user_dest_matches = user_dest_path
+                .as_ref()
+                .map(|p| file_matches_remote(p, item.size, item.md5_checksum.as_deref()))
+                .unwrap_or(false);
 
-            if !local_exists_and_matches {
-                if let Some(bytes) = download_drive_file(access_token, &item.id) {
-                    if vault
-                        .write_save_file(account_id, app_id, &rel_file, &bytes)
-                        .is_ok()
-                    {
-                        downloaded_count += 1;
-                        if let Some(ref sp) = vault.steam_path {
-                            let user_dest = sp
-                                .join("userdata")
-                                .join(account_id.to_string())
-                                .join(app_id.to_string())
-                                .join("remote")
-                                .join(&rel_file);
-                            let needs_write = match fs::metadata(&user_dest) {
-                                Ok(m) => m.len() != bytes.len() as u64,
-                                Err(_) => true,
-                            };
-                            if needs_write {
-                                if let Some(p) = user_dest.parent() {
-                                    let _ = fs::create_dir_all(p);
+            // 1. Se o Vault já possui o arquivo com hash/conteúdo correspondente à nuvem:
+            if vault_matches {
+                // Se o arquivo não existir em userdata (ex: instalação limpa), popula userdata a partir do Vault
+                if let Some(ref user_dest) = user_dest_path {
+                    if !user_dest.exists() {
+                        if let Some(ref vf) = vault_file_path {
+                            if let Some(p) = user_dest.parent() {
+                                let _ = fs::create_dir_all(p);
+                            }
+                            if fs::copy(vf, user_dest).is_ok() {
+                                synced_count += 1;
+                                if let Some(lp) = log_path {
+                                    crate::log_msg(
+                                        lp,
+                                        &format!(
+                                            "[Google Drive] userdata restaurado a partir do Vault: app={} file='{}'",
+                                            app_id,
+                                            rel_file
+                                        ),
+                                    );
                                 }
-                                let _ = fs::write(user_dest, &bytes);
                             }
                         }
-                        if let Some(lp) = log_path {
-                            crate::log_msg(
-                                lp,
-                                &format!(
-                                    "[Google Drive] Download concluido: app={} file='{}' ({}B)",
-                                    app_id,
-                                    rel_file,
-                                    bytes.len()
-                                ),
-                            );
+                    }
+                }
+                continue;
+            }
+
+            // 2. Se o Vault não possui, mas userdata já tem o arquivo com o hash idêntico da nuvem:
+            if user_dest_matches {
+                if let Some(ref user_dest) = user_dest_path {
+                    if let Some(ref vf) = vault_file_path {
+                        if let Some(p) = vf.parent() {
+                            let _ = fs::create_dir_all(p);
                         }
+                        if fs::copy(user_dest, vf).is_ok() {
+                            synced_count += 1;
+                            if let Some(lp) = log_path {
+                                crate::log_msg(
+                                    lp,
+                                    &format!(
+                                        "[Google Drive] Vault semeado a partir de userdata: app={} file='{}'",
+                                        app_id,
+                                        rel_file
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // 3. Nem o Vault nem o userdata coincidem com a nuvem: realiza o download
+            if let Some(bytes) = download_drive_file(access_token, &item.id) {
+                if vault
+                    .write_save_file(account_id, app_id, &rel_file, &bytes)
+                    .is_ok()
+                {
+                    synced_count += 1;
+                    if let Some(ref sp) = vault.steam_path {
+                        let user_dest = sp
+                            .join("userdata")
+                            .join(account_id.to_string())
+                            .join(app_id.to_string())
+                            .join("remote")
+                            .join(&rel_file);
+                        if let Some(p) = user_dest.parent() {
+                            let _ = fs::create_dir_all(p);
+                        }
+                        let _ = fs::write(user_dest, &bytes);
+                    }
+                    if let Some(lp) = log_path {
+                        crate::log_msg(
+                            lp,
+                            &format!(
+                                "[Google Drive] Download concluido: app={} file='{}' ({}B)",
+                                app_id,
+                                rel_file,
+                                bytes.len()
+                            ),
+                        );
                     }
                 }
             }
         }
     }
 
-    downloaded_count
+    synced_count
 }
 
 pub fn pull_app_from_gdrive(
