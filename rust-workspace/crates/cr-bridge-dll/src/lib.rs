@@ -423,7 +423,9 @@ pub unsafe extern "system" fn DllMain(
             std::ptr::null_mut(),
         );
     } else if fdw_reason == DLL_PROCESS_DETACH {
-        log_line("[DllMain] Processo encerrando (DLL_PROCESS_DETACH)");
+        log_line("[DllMain] Processo encerrando (DLL_PROCESS_DETACH) -> notificando chrono-daemon");
+        let port = get_service_port();
+        ipc::notify_shutdown(port);
     }
     1
 }
