@@ -702,10 +702,9 @@ fn file_matches_remote(path: &Path, expected_size: u64, expected_md5: Option<&st
         if remote_md5.is_empty() {
             return true;
         }
-        let Ok(bytes) = fs::read(path) else {
+        let Ok(local_md5) = cr_proto::md5::md5_file(path) else {
             return false;
         };
-        let local_md5 = cr_proto::md5::md5_hex(&bytes);
         local_md5.eq_ignore_ascii_case(remote_md5)
     } else {
         true
@@ -722,7 +721,7 @@ fn pull_drive_folder_recursive(
     log_path: Option<&PathBuf>,
 ) -> usize {
     let items = list_drive_files(access_token, folder_id);
-    let mut downloaded_count = 0;
+    let mut synced_count = 0;
 
     for item in items {
         if item.mime_type == "application/vnd.google-apps.folder" {
@@ -731,7 +730,7 @@ fn pull_drive_folder_recursive(
             } else {
                 format!("{}/{}", rel_prefix, item.name)
             };
-            downloaded_count += pull_drive_folder_recursive(
+            synced_count += pull_drive_folder_recursive(
                 access_token,
                 &item.id,
                 &next_prefix,
@@ -805,11 +804,21 @@ fn pull_drive_folder_recursive(
                 if let Some(ref user_dest) = user_dest_path {
                     if !user_dest.exists() {
                         if let Some(ref vf) = vault_file_path {
-                            if let Ok(bytes) = fs::read(vf) {
-                                if let Some(p) = user_dest.parent() {
-                                    let _ = fs::create_dir_all(p);
+                            if let Some(p) = user_dest.parent() {
+                                let _ = fs::create_dir_all(p);
+                            }
+                            if fs::copy(vf, user_dest).is_ok() {
+                                synced_count += 1;
+                                if let Some(lp) = log_path {
+                                    crate::log_msg(
+                                        lp,
+                                        &format!(
+                                            "[Google Drive] userdata restaurado a partir do Vault: app={} file='{}'",
+                                            app_id,
+                                            rel_file
+                                        ),
+                                    );
                                 }
-                                let _ = fs::write(user_dest, bytes);
                             }
                         }
                     }
@@ -820,8 +829,23 @@ fn pull_drive_folder_recursive(
             // 2. Se o Vault não possui, mas userdata já tem o arquivo com o hash idêntico da nuvem:
             if user_dest_matches {
                 if let Some(ref user_dest) = user_dest_path {
-                    if let Ok(bytes) = fs::read(user_dest) {
-                        let _ = vault.write_save_file(account_id, app_id, &rel_file, &bytes);
+                    if let Some(ref vf) = vault_file_path {
+                        if let Some(p) = vf.parent() {
+                            let _ = fs::create_dir_all(p);
+                        }
+                        if fs::copy(user_dest, vf).is_ok() {
+                            synced_count += 1;
+                            if let Some(lp) = log_path {
+                                crate::log_msg(
+                                    lp,
+                                    &format!(
+                                        "[Google Drive] Vault semeado a partir de userdata: app={} file='{}'",
+                                        app_id,
+                                        rel_file
+                                    ),
+                                );
+                            }
+                        }
                     }
                 }
                 continue;
@@ -833,7 +857,7 @@ fn pull_drive_folder_recursive(
                     .write_save_file(account_id, app_id, &rel_file, &bytes)
                     .is_ok()
                 {
-                    downloaded_count += 1;
+                    synced_count += 1;
                     if let Some(ref sp) = vault.steam_path {
                         let user_dest = sp
                             .join("userdata")
@@ -841,16 +865,10 @@ fn pull_drive_folder_recursive(
                             .join(app_id.to_string())
                             .join("remote")
                             .join(&rel_file);
-                        let needs_write = match fs::read(&user_dest) {
-                            Ok(existing) => existing != bytes,
-                            Err(_) => true,
-                        };
-                        if needs_write {
-                            if let Some(p) = user_dest.parent() {
-                                let _ = fs::create_dir_all(p);
-                            }
-                            let _ = fs::write(user_dest, &bytes);
+                        if let Some(p) = user_dest.parent() {
+                            let _ = fs::create_dir_all(p);
                         }
+                        let _ = fs::write(user_dest, &bytes);
                     }
                     if let Some(lp) = log_path {
                         crate::log_msg(
@@ -868,7 +886,7 @@ fn pull_drive_folder_recursive(
         }
     }
 
-    downloaded_count
+    synced_count
 }
 
 pub fn pull_app_from_gdrive(
