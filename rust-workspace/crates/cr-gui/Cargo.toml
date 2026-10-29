@@ -9,4 +9,5 @@ path = "src/main.rs"
 
 [dependencies]
 cr-proto = { path = "../cr-proto" }
+cr-common = { path = "../cr-common" }
 

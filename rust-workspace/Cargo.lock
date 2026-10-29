@@ -10,9 +10,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cr-common"
+version = "0.1.2"
+dependencies = [
+ "cr-proto",
+]
+
+[[package]]
 name = "cr-gui"
 version = "0.1.2"
 dependencies = [
+ "cr-common",
  "cr-proto",
 ]
 
@@ -24,5 +32,6 @@ version = "0.1.2"
 name = "cr-service"
 version = "0.1.2"
 dependencies = [
+ "cr-common",
  "cr-proto",
 ]
