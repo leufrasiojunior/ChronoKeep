@@ -1,8 +1,6 @@
 //! Lightweight HTTP/TCP client in `cloud_redirect.dll` that communicates with `cr-service.exe`
 //! over `127.0.0.1:<port>` and auto-spawns `cr-service.exe` in the background if not running.
 
-use cr_proto::cloud_messages::DEFAULT_SERVICE_PORT;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -23,41 +21,7 @@ unsafe fn GetCurrentProcessId() -> u32 {
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-pub fn resolve_service_port(steam_path: &str) -> u16 {
-    // 1. Tenta chrono_port.dat (gravado dinamicamente pelo daemon com a porta real)
-    let port_dat = Path::new(steam_path).join("chrono_port.dat");
-    if let Ok(content) = fs::read_to_string(&port_dat) {
-        if let Ok(p) = content.trim().parse::<u16>() {
-            if p > 0 {
-                return p;
-            }
-        }
-    }
-
-    // 2. Tenta chronokeep.ini
-    let candidates = ["chronokeep.ini", "cr_clone_config.ini"];
-    for name in candidates {
-        let ini_path = Path::new(steam_path).join(name);
-        if let Ok(content) = fs::read_to_string(ini_path) {
-            for line in content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-                    continue;
-                }
-                if let Some((k, v)) = line.split_once('=') {
-                    if k.trim().eq_ignore_ascii_case("port") {
-                        if let Ok(p) = v.trim().parse::<u16>() {
-                            if p > 0 {
-                                return p;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    DEFAULT_SERVICE_PORT
-}
+pub use cr_common::config::{check_daemon_health as check_health, resolve_service_port};
 
 pub fn ensure_service_running(steam_path: &str, port: u16) -> bool {
     if check_health(port) {
@@ -93,28 +57,6 @@ pub fn ensure_service_running(steam_path: &str, port: u16) -> bool {
 
     let current_port = resolve_service_port(steam_path);
     check_health(current_port) || check_health(port)
-}
-
-pub fn check_health(port: u16) -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) else {
-        return false;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
-    let req = format!(
-        "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-        port
-    );
-    if stream.write_all(req.as_bytes()).is_err() {
-        return false;
-    }
-    let mut resp = [0u8; 256];
-    let Ok(n) = stream.read(&mut resp) else {
-        return false;
-    };
-    let s = String::from_utf8_lossy(&resp[..n]);
-    s.contains("200 OK")
 }
 
 pub fn push_session_update(

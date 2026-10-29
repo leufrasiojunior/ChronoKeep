@@ -6,6 +6,7 @@ version = 4
 name = "cr-bridge-dll"
 version = "0.1.2"
 dependencies = [
+ "cr-common",
  "cr-proto",
 ]
 
