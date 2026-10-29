@@ -372,9 +372,14 @@ async function scanSaves() {
   tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Varrendo pastas de saves locais no PC...</td></tr>`;
 
   try {
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+    const steamDir = inputSteam || appConfig.steam_dir;
+    const vaultDir = inputVault || appConfig.vault_dir;
+
     const items = await invokeBackend("scan_saves", {
-      steamDir: appConfig.steam_dir,
-      vaultDir: appConfig.vault_dir,
+      steamDir: steamDir || null,
+      vaultDir: vaultDir || null,
     });
 
     if (!items || items.length === 0) {
@@ -417,8 +422,10 @@ async function syncGameSave(appId, accountId, btn) {
   showToast(`Sincronizando AppID ${appId} com o Google Drive...`);
 
   try {
-    const steamDir = document.getElementById("cfg-steam-dir")?.value;
-    const vaultDir = document.getElementById("cfg-vault-dir")?.value;
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+    const steamDir = inputSteam || appConfig.steam_dir;
+    const vaultDir = inputVault || appConfig.vault_dir;
     const res = await invokeBackend("upload_game_save", {
       appId,
       accountId,

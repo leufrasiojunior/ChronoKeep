@@ -181,9 +181,14 @@ pub fn save_config(cfg: ConfigDto) -> OperationResult {
 
     let content = lines.join("\r\n") + "\r\n";
     if fs::write(&ini_path, content).is_ok() {
+        // Se o daemon estiver ativo, reinicia para carregar imediatamente as novas configurações (limite de upload, vault, etc.)
+        if check_daemon_health(cfg.port) {
+            stop_service_from_gui(cfg.port);
+            start_service_from_gui(s_path, cfg.port);
+        }
         OperationResult {
             success: true,
-            message: "Configurações salvas com sucesso!".to_string(),
+            message: "Configurações salvas e aplicadas com sucesso!".to_string(),
         }
     } else {
         OperationResult {
@@ -416,6 +421,13 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
     }
     let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
 
+    // 3. Reiniciar daemon se ativo para reconhecer o novo token imediatamente
+    let port = resolve_service_port(&s_dir);
+    if check_daemon_health(port) {
+        stop_service_from_gui(port);
+        start_service_from_gui(s_path, port);
+    }
+
     Ok(OperationResult {
         success: true,
         message: "Google Drive vinculado com sucesso!".to_string(),
@@ -457,8 +469,16 @@ pub fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
         }
     }
 
-    // 4. Limpar cache em memória de pastas do Google Drive
+    // 4. Limpar cache em memória de pastas e token do Google Drive
     cr_common::gdrive::clear_folder_cache();
+    cr_common::gdrive::clear_token_cache();
+
+    // 5. Reiniciar o daemon se ativo para invalidar qualquer TOKEN_CACHE de processo em memória
+    let port = resolve_service_port(&s_dir);
+    if check_daemon_health(port) {
+        stop_service_from_gui(port);
+        start_service_from_gui(s_path, port);
+    }
 
     OperationResult {
         success: true,
