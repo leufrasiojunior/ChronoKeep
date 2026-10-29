@@ -251,6 +251,10 @@ pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
     }
 }
 
+// TODO: Possibilidade de atualizar individualmente o daemon, a dll e o executavel:
+// - Atualizar somente o daemon (chrono-daemon.exe) sem reiniciar o Steam se a DLL nao mudou.
+// - Atualizar somente a DLL (chronokeep.dll / cloud_redirect.dll).
+// - Auto-atualizacao do proprio executavel do painel (ChronoKeepSetup.exe).
 #[tauri::command]
 pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResult {
     let s_path = Path::new(&steam_dir);
