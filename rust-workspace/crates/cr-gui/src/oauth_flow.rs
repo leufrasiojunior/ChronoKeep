@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Google Drive OAuth2 1-Click browser authentication flow for `ChronoKeepSetup.exe`.
 
 use crate::installer::refresh_status_label;

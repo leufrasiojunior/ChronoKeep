@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Win32 FFI bindings, window message constants, control IDs, and dialog helpers.
 
 use cr_common::http::to_wide;

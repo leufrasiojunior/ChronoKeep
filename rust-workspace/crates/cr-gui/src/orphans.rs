@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Local save scanner and Google Drive batch upload orchestrator.
 
 use crate::win32::*;
