@@ -22,15 +22,15 @@ No entanto, a revisão identificou **uma discrepância crítica entre o Daemon e
 
 ## 2. Matriz de Priorização de Achados
 
-| ID | Severidade | Categoria | Descrição Resumida | Arquivo / Componente |
-| :--- | :--- | :--- | :--- | :--- |
-| **BUG-01** | **Crítica (P0)** | Correção Lógica | Incompatibilidade de sintaxe do `manifest.tsv` entre `cr-gui` e `cr-service` | [`cr-gui/src/main.rs#L1100-L1145`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/main.rs#L1100-L1145) vs [`vault.rs#L409-L450`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/vault.rs#L409-L450) |
-| **SEC-01** | **Alta (P1)** | Confiabilidade / Estabilidade | Desreferenciamento de ponteiros de vtable sem SEH/VEH em processo injetado | [`vtable.rs#L156-L180`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll/src/vtable.rs#L156-L180) |
-| **SEC-02** | **Alta (P1)** | Segurança / Rede | Servidor HTTP local sem autenticação/token de controle | [`main.rs#L344-L450`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/main.rs#L344-L450) |
-| **DUP-01** | **Média (P2)** | Manutenibilidade | Duplicação de clientes WinHTTP, OAuth2 e GDrive entre Service e GUI | [`gdrive.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/gdrive.rs) e [`cr-gui/src/main.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/main.rs) |
-| **PERF-01** | **Média (P2)** | Desempenho / I/O | I/O síncrono e repetido em disco a cada log interceptado na vtable | [`lib.rs#L239-L264`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll/src/lib.rs#L239-L264) |
-| **PERF-02** | **Média (P2)** | Gestão de Recursos | Alocação de memória RAM integral (até 512MB) para uploads de blobs | [`main.rs#L685-L723`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/main.rs#L685-L723) |
-| **BLD-01** | **Baixa (P3)** | Tooling / Build | Falha de checagem do Rust (`cargo check`) em hosts Linux | [`cr-gui/src/main.rs#L16`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/main.rs#L16) |
+| ID | Severidade | Categoria | Descrição Resumida | Arquivo / Componente | Status |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| **BUG-01** | **Crítica (P0)** | Correção Lógica | Incompatibilidade de sintaxe do `manifest.tsv` entre `cr-gui` e `cr-service` | [`cr-gui`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui) vs [`vault.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/vault.rs) | ✅ Corrigido |
+| **SEC-01** | **Alta (P1)** | Confiabilidade / Estabilidade | Desreferenciamento de ponteiros de vtable sem SEH/VEH em processo injetado | [`vtable.rs#L156-L180`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll/src/vtable.rs#L156-L180) | Pendente |
+| **SEC-02** | **Alta (P1)** | Segurança / Rede | Servidor HTTP local sem autenticação/token de controle | [`server.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/server.rs) | Pendente |
+| **DUP-01** | **Média (P2)** | Manutenibilidade | Duplicação de clientes WinHTTP, OAuth2, GDrive, IPC e arquivos monolíticos | [`cr-common`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common), [`cr-service`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service), [`cr-gui`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui), [`cr-bridge-dll`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll) | ✅ **Finalizado (Item 3.4)** |
+| **PERF-01** | **Média (P2)** | Desempenho / I/O | I/O síncrono e repetido em disco a cada log interceptado na vtable | [`lib.rs#L239-L264`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll/src/lib.rs#L239-L264) | Pendente |
+| **PERF-02** | **Média (P2)** | Gestão de Recursos | Alocação de memória RAM integral (até 512MB) para uploads de blobs | [`server.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/server.rs) | Pendente |
+| **BLD-01** | **Baixa (P3)** | Tooling / Build | Falha de checagem do Rust (`cargo check`) em hosts Linux | [`cr-gui`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui) | ✅ Corrigido |
 
 ---
 
@@ -125,6 +125,9 @@ Implementar um token simples gerado dinamicamente:
 
 ### 3.4. DUP-01 (Média - P2): Duplicação Massiva de Código entre Service e GUI
 
+> [!NOTE]
+> **Status:** ✅ **Finalizado e Implementado** (Branch: `refactor/modularization-and-dedup`, Commit: `9fd351b`)
+
 #### Contexto e Causa Raiz
 Existem blocos substanciais de código 100% idênticos copiados entre `cr-service` e `cr-gui`:
 1. **Cliente WinHTTP Seguro:** `https_request` ([`gdrive.rs:100-202`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/gdrive.rs#L100-L202) vs [`cr-gui/src/main.rs:401-506`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/main.rs#L401-L506)).
@@ -139,6 +142,31 @@ Duplica a superfície de manutenção e causa divergências sutis de comportamen
 
 #### Recomendação de Correção
 Mover os utilitários de sistema e integração do Google Drive para `cr-proto` ou criar uma crate compartilhada de utilitários `cr-common` no workspace, tornando `cr-service` e `cr-gui` meros consumidores dessa lógica centralizada.
+
+#### Resolução Implementada (Item 3.4 e Modularização Estrutural)
+A duplicação de código foi 100% eliminada e as crates monolíticas foram modularizadas em componentes especializados:
+1. **Criação da Crate Compartilhada [`cr-common`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common):**
+   - **Módulo [`http.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common/src/http.rs):** Implementação canônica de cliente WinHTTP seguro (`https_request`), parsing JSON manual (`extract_json_str`, `extract_json_num`), renovação OAuth2 (`refresh_access_token`) e upload multipart (`upload_multipart_gdrive`).
+   - **Módulo [`gdrive.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common/src/gdrive.rs):** Busca recursiva e criação de pastas no Google Drive (`find_or_create_drive_folder`).
+   - **Módulo [`manifest.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common/src/manifest.rs):** Serialização e parsing seguro de `manifest.tsv` com suporte às tags `META`/`FILE` e retrocompatibilidade com sintaxe legada.
+   - **Módulo [`config.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common/src/config.rs):** Detecção de diretório Vault (`detect_default_vault_dir`), resolução de porta via INI (`resolve_service_port`), checagem de saúde do daemon (`check_daemon_health`) e localização de binários complementares (`find_companion_binary`).
+2. **Integração na [`cr-bridge-dll`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll):**
+   - [`ipc.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-bridge-dll/src/ipc.rs) agora consome `cr_common::config::resolve_service_port` e `cr_common::config::check_daemon_health`, eliminando a duplicação de sockets e leitura de INI.
+3. **Modularização Completa do [`cr-service`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service):**
+   - Arquivo `main.rs` monolítico (originalmente ~920 linhas) reduzido a um bootstrap enxuto de ~105 linhas.
+   - Dividido em submódulos coesos:
+     - [`config.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/config.rs): Estrutura de configuração, bind na primeira porta disponível e sincronização atômica com INI.
+     - [`lifecycle.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/lifecycle.rs): Supervisão de ciclo de vida atrelado ao Steam PID (`WaitForSingleObject`) e logging formatado com timestamp.
+     - [`server.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/server.rs): Dispatcher de rotas HTTP, parser de requisições, streaming de resposta em chunks e execução de self-test.
+4. **Modularização Completa da [`cr-gui`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui):**
+   - Arquivo `main.rs` monolítico (originalmente ~1.720 linhas) reduzido a ~95 linhas (apenas ponto de entrada WinMain e message loop Win32).
+   - Separado em 6 submódulos funcionais e independentes (nenhum excedendo 460 linhas):
+     - [`win32.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/win32.rs): FFI do Windows, constantes de controles, structs de layout e helpers de UI Win32.
+     - [`service_mgr.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/service_mgr.rs): Monitoramento de status, inicialização automática e supervisão do processo do `chrono-daemon`.
+     - [`installer.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/installer.rs): Lógica de instalação de binários embutidos, verificação de compatibilidade OpenSteamTool e persistência de configuração.
+     - [`oauth_flow.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/oauth_flow.rs): Servidor HTTP local de callback para autenticação OAuth2 com o Google Drive.
+     - [`orphans.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/orphans.rs): Varredura de saves órfãos no disco, cálculo incremental de hash SHA-1 e sincronização via WinHTTP do `cr-common`.
+     - [`window.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/window.rs): Procedimento de janela (`wnd_proc`), alternância de abas e despacho de comandos da GUI.
 
 ---
 
@@ -218,11 +246,18 @@ Avaliamos a conformidade estrita da codebase com as regras arquiteturais estabel
 ## 5. Plano de Ação e Próximos Passos Sugeridos
 
 1. **Correção Imediata (Hotfix no `develop`):**
-   - Corrigir a gravação do `manifest.tsv` em [`cr-gui/src/main.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-gui/src/main.rs#L1100-L1145) para usar as tags `META` e `FILE`, e adicionar fallback parser em [`vault.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/vault.rs).
-   - Proteger os imports de `CommandExt` em `cr-gui` com `#[cfg(target_os = "windows")]`.
-2. **Refatoração Estrutural (Próxima Feature):**
-   - Unificar os módulos `gdrive.rs` e utilitários WinHTTP da GUI e do Service em uma crate compartilhada (`cr-common`).
-   - Otimizar o sistema de log da bridge DLL para manter os file handles abertos.
-3. **Interface Moderna:**
-   - Iniciar o desenvolvimento da branch `feature/win11-modern-ui` seguindo o plano de [`docs/PLANO_MODERNIZACAO_UI_WIN11.md`](file:///home/ubuntu/projetos/cr-clone/docs/PLANO_MODERNIZACAO_UI_WIN11.md).
+   - Corrigir a gravação do `manifest.tsv` para usar as tags `META` e `FILE`, e adicionar fallback parser em [`vault.rs`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-service/src/vault.rs). (✅ Concluído na branch `fix/manifest-and-code-dedup`)
+   - Proteger os imports de `CommandExt` em `cr-gui` com `#[cfg(target_os = "windows")]`. (✅ Concluído na branch `fix/manifest-and-code-dedup`)
+2. **Refatoração Estrutural (Item 3.4 / DUP-01 e Modularização) — ✅ CONCLUÍDO:**
+   - Unificar os módulos `gdrive.rs`, clientes WinHTTP e persistência de manifesto em uma crate compartilhada ([`cr-common`](file:///home/ubuntu/projetos/cr-clone/rust-workspace/crates/cr-common)). (✅ Concluído)
+   - Modularizar `cr-service` separando em módulos coesos (`config.rs`, `lifecycle.rs`, `server.rs`, `main.rs`). (✅ Concluído)
+   - Modularizar `cr-gui` separando em módulos independentes (`win32.rs`, `service_mgr.rs`, `installer.rs`, `oauth_flow.rs`, `orphans.rs`, `window.rs`, `main.rs`). (✅ Concluído)
+   - Conectar `cr-bridge-dll` ao `cr-common` para compartilhamento de resolução de portas e healthcheck. (✅ Concluído)
+3. **Otimizações e Segurança Adicionais (Próximos Passos):**
+   - Otimizar o sistema de log da bridge DLL para manter os file handles abertos (Item PERF-01).
+   - Adicionar SEH/VEH em hooks de vtable da bridge (Item SEC-01).
+   - Implementar streaming de saves grandes (> 16MB) para upload/download (Item PERF-02).
+   - Adicionar token de autenticação local no daemon (Item SEC-02).
+4. **Interface Moderna:**
+   - Retomar o desenvolvimento da branch `feature/win11-modern-ui` seguindo o plano de [`docs/PLANO_MODERNIZACAO_UI_WIN11.md`](file:///home/ubuntu/projetos/cr-clone/docs/PLANO_MODERNIZACAO_UI_WIN11.md).
 

@@ -9,4 +9,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 cr-proto = { path = "../cr-proto" }
+cr-common = { path = "../cr-common" }
 

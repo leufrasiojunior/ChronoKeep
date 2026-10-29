@@ -82,3 +82,52 @@ pub fn is_gdrive_connected(steam_dir: &Path) -> bool {
     }
     false
 }
+
+pub fn check_daemon_health(port: u16) -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(200)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
+    let req = format!(
+        "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        port
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut resp = [0u8; 256];
+    let Ok(n) = stream.read(&mut resp) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&resp[..n]);
+    text.contains("200 OK") || text.starts_with("HTTP/1.1 200")
+}
+
+pub fn find_companion_binary(bin_name: &str) -> Option<PathBuf> {
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            let candidate = parent.join(bin_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let candidate = cwd.join(bin_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    let default_steam = PathBuf::from(detect_default_steam_dir());
+    let candidate = default_steam.join(bin_name);
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    None
+}
