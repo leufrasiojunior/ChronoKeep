@@ -4,25 +4,28 @@
 //! deploys `chrono-daemon.exe`, configures the Vault path, and provides 1-Click
 //! Google Drive OAuth2 Browser Login using the pre-verified Desktop OAuth client.
 
-use cr_proto::cloud_messages::DEFAULT_SERVICE_PORT;
-use cr_proto::cloud_messages::sanitize_rel_path;
+use cr_common::config::{detect_default_steam_dir, DEFAULT_SERVICE_PORT};
+use cr_common::fs_utils::{collect_files_recursive, format_size};
+use cr_common::gdrive::{
+    clear_folder_cache, exchange_code_for_tokens, find_or_create_drive_folder,
+    refresh_access_token, upload_file_multipart, DEFAULT_GDRIVE_CLIENT_ID as GDRIVE_CLIENT_ID,
+    DEFAULT_GDRIVE_SCOPE as GDRIVE_SCOPE,
+};
+use cr_common::http::{to_wide, url_decode, url_encode};
+use cr_common::manifest::{parse_manifest, serialize_manifest, ManifestData, ManifestFileRecord};
+use cr_proto::cloud_messages::split_root_token;
 use cr_proto::sha1::sha1_digest;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::env;
-use std::ffi::c_void;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 use std::time::Duration;
-
-const GDRIVE_CLIENT_ID: &str =
-    "1072944905499-vm2v2i5dvn0a0d2o4ca36i1vge8cvbn0.apps.googleusercontent.com";
-const GDRIVE_CLIENT_SECRET: &str = "v6V3fKV_zWU7iw1DrpO1rknX";
-const GDRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 
 type HWND = usize;
 type HINSTANCE = usize;
@@ -32,9 +35,6 @@ type HBRUSH = usize;
 type WPARAM = usize;
 type LPARAM = isize;
 type LRESULT = isize;
-type HINTERNET = *mut c_void;
-type DWORD = u32;
-type BOOL = i32;
 
 const WS_OVERLAPPED: u32 = 0x0000_0000;
 const WS_CAPTION: u32 = 0x00C0_0000;
@@ -84,14 +84,6 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const EMBEDDED_CHRONOKEEP_DLL: &[u8] = include_bytes!("../embedded/chronokeep.dll");
 const EMBEDDED_CHRONO_DAEMON: &[u8] = include_bytes!("../embedded/chrono-daemon.exe");
-
-const WINHTTP_ACCESS_TYPE_DEFAULT_PROXY: DWORD = 0;
-const INTERNET_DEFAULT_HTTPS_PORT: u16 = 443;
-const WINHTTP_FLAG_SECURE: DWORD = 0x0080_0000;
-const WINHTTP_FLAG_ESCAPE_DISABLE: DWORD = 0x0000_0040;
-const WINHTTP_ADDREQ_FLAG_ADD: DWORD = 0x2000_0000;
-const WINHTTP_QUERY_STATUS_CODE: DWORD = 19;
-const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x2000_0000;
 
 const ID_EDIT_STEAM: usize = 101;
 const ID_EDIT_VAULT: usize = 102;
@@ -207,130 +199,6 @@ extern "system" {
     ) -> usize;
 }
 
-#[link(name = "winhttp")]
-extern "system" {
-    fn WinHttpOpen(
-        psz_agent_w: *const u16,
-        dw_access_type: DWORD,
-        psz_proxy_w: *const u16,
-        psz_proxy_bypass_w: *const u16,
-        dw_flags: DWORD,
-    ) -> HINTERNET;
-    fn WinHttpConnect(
-        h_session: HINTERNET,
-        pswz_server_name: *const u16,
-        n_server_port: u16,
-        dw_reserved: DWORD,
-    ) -> HINTERNET;
-    fn WinHttpOpenRequest(
-        h_connect: HINTERNET,
-        pwsz_verb: *const u16,
-        pwsz_object_name: *const u16,
-        pwsz_version: *const u16,
-        pwsz_referrer: *const u16,
-        ppwsz_accept_types: *const *const u16,
-        dw_flags: DWORD,
-    ) -> HINTERNET;
-    fn WinHttpAddRequestHeaders(
-        h_request: HINTERNET,
-        lpsz_headers: *const u16,
-        dw_headers_length: DWORD,
-        dw_modifiers: DWORD,
-    ) -> BOOL;
-    fn WinHttpSendRequest(
-        h_request: HINTERNET,
-        lpsz_headers: *const u16,
-        dw_headers_length: DWORD,
-        lp_optional: *const c_void,
-        dw_optional_length: DWORD,
-        dw_total_length: DWORD,
-        dw_context: usize,
-    ) -> BOOL;
-    fn WinHttpReceiveResponse(h_request: HINTERNET, lp_reserved: *mut c_void) -> BOOL;
-    fn WinHttpQueryHeaders(
-        h_request: HINTERNET,
-        dw_info_level: DWORD,
-        pwsz_name: *const u16,
-        lp_buffer: *mut c_void,
-        lpdw_buffer_length: *mut DWORD,
-        lpdw_index: *mut DWORD,
-    ) -> BOOL;
-    fn WinHttpQueryDataAvailable(h_request: HINTERNET, lpdw_number_of_bytes_available: *mut DWORD)
-        -> BOOL;
-    fn WinHttpReadData(
-        h_request: HINTERNET,
-        lp_buffer: *mut c_void,
-        dw_number_of_bytes_to_read: DWORD,
-        lpdw_number_of_bytes_read: *mut DWORD,
-    ) -> BOOL;
-    fn WinHttpCloseHandle(h_internet: HINTERNET) -> BOOL;
-}
-
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-fn url_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{:02X}", b));
-        }
-    }
-    out
-}
-
-fn url_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
-                if let Ok(v) = u8::from_str_radix(hex_str, 16) {
-                    out.push(v);
-                    i += 3;
-                    continue;
-                }
-            }
-        } else if bytes[i] == b'+' {
-            out.push(b' ');
-            i += 1;
-            continue;
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn extract_json_str(json: &str, key: &str) -> Option<String> {
-    let pattern = format!("\"{}\"", key);
-    let idx = json.find(&pattern)?;
-    let after_key = &json[idx + pattern.len()..];
-    let colon = after_key.find(':')?;
-    let after_colon = after_key[colon + 1..].trim_start();
-    if !after_colon.starts_with('"') {
-        return None;
-    }
-    let content = &after_colon[1..];
-    let mut out = String::new();
-    let mut chars = content.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(esc) = chars.next() {
-                out.push(esc);
-            }
-        } else if c == '"' {
-            return Some(out);
-        } else {
-            out.push(c);
-        }
-    }
-    None
-}
 
 unsafe fn get_control_text(hwnd_parent: HWND, id: usize) -> String {
     let h_ctrl = GetDlgItem(hwnd_parent, id as i32);
@@ -355,26 +223,10 @@ unsafe fn set_control_text(hwnd_parent: HWND, id: usize, text: &str) {
     }
 }
 
-fn detect_default_steam_dir() -> String {
-    let candidates = [
-        r"C:\Program Files (x86)\Steam",
-        r"C:\Program Files\Steam",
-        r"D:\Steam",
-        r"E:\Steam",
-    ];
-    for c in candidates {
-        if Path::new(c).join("steam.exe").exists() {
-            return c.to_string();
-        }
-    }
-    r"C:\Program Files (x86)\Steam".to_string()
-}
-
 fn detect_default_vault_dir() -> String {
-    if let Ok(profile) = env::var("USERPROFILE") {
-        return format!(r"{}\Saved Games\ChronoKeepVault", profile);
-    }
-    r"C:\ChronoKeepVault".to_string()
+    cr_common::config::detect_default_vault_dir(None)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn check_service_online(port: u16) -> bool {
@@ -398,215 +250,6 @@ fn check_service_online(port: u16) -> bool {
     String::from_utf8_lossy(&buf[..n]).contains("200 OK")
 }
 
-fn https_request(
-    method: &str,
-    host: &str,
-    path: &str,
-    headers: &[String],
-    body: &[u8],
-) -> Option<(u32, Vec<u8>)> {
-    unsafe {
-        let agent = to_wide("ChronoKeepSetup/1.0");
-        let h_session = WinHttpOpen(
-            agent.as_ptr(),
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            null(),
-            null(),
-            0,
-        );
-        if h_session.is_null() {
-            return None;
-        }
-
-        let host_w = to_wide(host);
-        let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);
-        if h_conn.is_null() {
-            WinHttpCloseHandle(h_session);
-            return None;
-        }
-
-        let verb_w = to_wide(method);
-        let path_w = to_wide(path);
-        let h_req = WinHttpOpenRequest(
-            h_conn,
-            verb_w.as_ptr(),
-            path_w.as_ptr(),
-            null(),
-            null(),
-            null(),
-            WINHTTP_FLAG_SECURE | WINHTTP_FLAG_ESCAPE_DISABLE,
-        );
-        if h_req.is_null() {
-            WinHttpCloseHandle(h_conn);
-            WinHttpCloseHandle(h_session);
-            return None;
-        }
-
-        for hdr in headers {
-            let hdr_w = to_wide(hdr);
-            let len = hdr_w.len().saturating_sub(1) as DWORD;
-            WinHttpAddRequestHeaders(h_req, hdr_w.as_ptr(), len, WINHTTP_ADDREQ_FLAG_ADD);
-        }
-
-        let body_ptr = if body.is_empty() {
-            null()
-        } else {
-            body.as_ptr() as *const c_void
-        };
-        let body_len = body.len() as DWORD;
-
-        let ok = WinHttpSendRequest(h_req, null(), 0, body_ptr, body_len, body_len, 0);
-        if ok == 0 || WinHttpReceiveResponse(h_req, null_mut()) == 0 {
-            WinHttpCloseHandle(h_req);
-            WinHttpCloseHandle(h_conn);
-            WinHttpCloseHandle(h_session);
-            return None;
-        }
-
-        let mut status_code: DWORD = 0;
-        let mut status_len: DWORD = std::mem::size_of::<DWORD>() as DWORD;
-        WinHttpQueryHeaders(
-            h_req,
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            null(),
-            &mut status_code as *mut _ as *mut c_void,
-            &mut status_len,
-            null_mut(),
-        );
-
-        let mut resp_bytes = Vec::new();
-        loop {
-            let mut avail: DWORD = 0;
-            if WinHttpQueryDataAvailable(h_req, &mut avail) == 0 || avail == 0 {
-                break;
-            }
-            let mut chunk = vec![0u8; avail as usize];
-            let mut read: DWORD = 0;
-            if WinHttpReadData(
-                h_req,
-                chunk.as_mut_ptr() as *mut c_void,
-                avail,
-                &mut read,
-            ) == 0
-                || read == 0
-            {
-                break;
-            }
-            resp_bytes.extend_from_slice(&chunk[..read as usize]);
-        }
-
-        WinHttpCloseHandle(h_req);
-        WinHttpCloseHandle(h_conn);
-        WinHttpCloseHandle(h_session);
-
-        Some((status_code, resp_bytes))
-    }
-}
-
-static GUI_FOLDER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
-
-fn clear_gui_folder_cache() {
-    if let Ok(mut guard) = GUI_FOLDER_CACHE.lock() {
-        *guard = None;
-    }
-}
-
-fn refresh_gdrive_access_token(token_file: &Path) -> Option<String> {
-    let content = fs::read_to_string(token_file).ok()?;
-    let refresh_token = extract_json_str(&content, "refresh_token")?;
-    let body = format!(
-        "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
-        url_encode(GDRIVE_CLIENT_ID),
-        url_encode(GDRIVE_CLIENT_SECRET),
-        url_encode(&refresh_token)
-    );
-    let headers = vec!["Content-Type: application/x-www-form-urlencoded".to_string()];
-    let (status, resp) = https_request("POST", "oauth2.googleapis.com", "/token", &headers, body.as_bytes())?;
-    if status == 200 {
-        let json = String::from_utf8_lossy(&resp);
-        extract_json_str(&json, "access_token")
-    } else {
-        None
-    }
-}
-
-fn find_or_create_drive_folder_gui(
-    access_token: &str,
-    name: &str,
-    parent_id: Option<&str>,
-) -> Option<String> {
-    let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
-    if let Ok(guard) = GUI_FOLDER_CACHE.lock() {
-        if let Some(ref map) = *guard {
-            if let Some(id) = map.get(&cache_key) {
-                return Some(id.clone());
-            }
-        }
-    }
-
-    let parent_clause = match parent_id {
-        Some(pid) => format!("'{}' in parents", pid),
-        None => "'root' in parents".to_string(),
-    };
-    let q = format!(
-        "name='{}' and mimeType='application/vnd.google-apps.folder' and trashed=false and {}",
-        name.replace('\'', "\\'"),
-        parent_clause
-    );
-    let path = format!("/drive/v3/files?q={}&fields=files(id)&pageSize=1", url_encode(&q));
-    let auth_hdr = vec![format!("Authorization: Bearer {}", access_token)];
-    if let Some((200, body)) = https_request("GET", "www.googleapis.com", &path, &auth_hdr, &[]) {
-        let s = String::from_utf8_lossy(&body);
-        if let Some(id) = extract_json_str(&s, "id") {
-            if !id.is_empty() {
-                if let Ok(mut guard) = GUI_FOLDER_CACHE.lock() {
-                    let map = guard.get_or_insert_with(HashMap::new);
-                    map.insert(cache_key.clone(), id.clone());
-                }
-                return Some(id);
-            }
-        }
-    }
-
-    // Criar pasta no Drive
-    let meta = match parent_id {
-        Some(pid) => format!(
-            "{{\"name\":\"{}\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"{}\"]}}",
-            name, pid
-        ),
-        None => format!(
-            "{{\"name\":\"{}\",\"mimeType\":\"application/vnd.google-apps.folder\"}}",
-            name
-        ),
-    };
-    let headers = vec![
-        format!("Authorization: Bearer {}", access_token),
-        "Content-Type: application/json; charset=UTF-8".to_string(),
-    ];
-    let (status, body) = https_request(
-        "POST",
-        "www.googleapis.com",
-        "/drive/v3/files?fields=id",
-        &headers,
-        meta.as_bytes(),
-    )?;
-    if (200..300).contains(&status) {
-        let s = String::from_utf8_lossy(&body);
-        if let Some(id) = extract_json_str(&s, "id") {
-            if !id.is_empty() {
-                if let Ok(mut guard) = GUI_FOLDER_CACHE.lock() {
-                    let map = guard.get_or_insert_with(HashMap::new);
-                    map.insert(cache_key, id.clone());
-                }
-                return Some(id);
-            }
-        }
-    } else if status == 404 || status == 400 {
-        clear_gui_folder_cache();
-    }
-    None
-}
-
 fn upload_file_attempt_gui(
     token: &str,
     account_id: u32,
@@ -614,13 +257,13 @@ fn upload_file_attempt_gui(
     rel_filename: &str,
     data: &[u8],
 ) -> bool {
-    let Some(root_id) = find_or_create_drive_folder_gui(token, "ChronoKeep", None) else {
+    let Some(root_id) = find_or_create_drive_folder(token, "ChronoKeep", None) else {
         return false;
     };
-    let Some(acct_id) = find_or_create_drive_folder_gui(token, &account_id.to_string(), Some(&root_id)) else {
+    let Some(acct_id) = find_or_create_drive_folder(token, &account_id.to_string(), Some(&root_id)) else {
         return false;
     };
-    let Some(mut parent_id) = find_or_create_drive_folder_gui(token, &app_id.to_string(), Some(&acct_id)) else {
+    let Some(mut parent_id) = find_or_create_drive_folder(token, &app_id.to_string(), Some(&acct_id)) else {
         return false;
     };
 
@@ -630,63 +273,14 @@ fn upload_file_attempt_gui(
         return false;
     }
     for sub in &parts[..parts.len() - 1] {
-        let Some(next_id) = find_or_create_drive_folder_gui(token, sub, Some(&parent_id)) else {
+        let Some(next_id) = find_or_create_drive_folder(token, sub, Some(&parent_id)) else {
             return false;
         };
         parent_id = next_id;
     }
     let leaf_name = parts[parts.len() - 1];
 
-    let q = format!(
-        "name='{}' and '{}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false",
-        leaf_name.replace('\'', "\\'"),
-        parent_id
-    );
-    let search_path = format!("/drive/v3/files?q={}&fields=files(id)&pageSize=1", url_encode(&q));
-    let auth_hdr = vec![format!("Authorization: Bearer {}", token)];
-    let existing_id = https_request("GET", "www.googleapis.com", &search_path, &auth_hdr, &[])
-        .and_then(|(st, b)| {
-            if st == 200 {
-                extract_json_str(&String::from_utf8_lossy(&b), "id")
-            } else {
-                None
-            }
-        });
-
-    let boundary = "chronokeep_gui_multipart_boundary_55123";
-    let meta_json = if existing_id.is_some() {
-        format!("{{\"name\":\"{}\"}}", leaf_name)
-    } else {
-        format!(
-            "{{\"name\":\"{}\",\"parents\":[\"{}\"]}}",
-            leaf_name, parent_id
-        )
-    };
-
-    let mut body = Vec::with_capacity(meta_json.len() + data.len() + 256);
-    body.extend_from_slice(format!("--{}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{}\r\nContent-Type: application/octet-stream\r\n\r\n", boundary, meta_json, boundary).as_bytes());
-    body.extend_from_slice(data);
-    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
-
-    let (method, upload_path) = match existing_id {
-        Some(ref id) => (
-            "PATCH",
-            format!("/upload/drive/v3/files/{}?uploadType=multipart&fields=id", id),
-        ),
-        None => (
-            "POST",
-            "/upload/drive/v3/files?uploadType=multipart&fields=id".to_string(),
-        ),
-    };
-
-    let headers = vec![
-        format!("Authorization: Bearer {}", token),
-        format!("Content-Type: multipart/related; boundary={}", boundary),
-    ];
-    if let Some((status, _)) = https_request(method, "www.googleapis.com", &upload_path, &headers, &body) {
-        return (200..300).contains(&status);
-    }
-    false
+    upload_file_multipart(token, &parent_id, leaf_name, data)
 }
 
 fn sync_orphan_file_to_drive_with_retry(
@@ -699,8 +293,7 @@ fn sync_orphan_file_to_drive_with_retry(
     if upload_file_attempt_gui(token, account_id, app_id, rel_filename, data) {
         return true;
     }
-    // Auto-recuperacao: invalida cache caso a pasta tenha sido renomeada/apagada no Drive
-    clear_gui_folder_cache();
+    clear_folder_cache();
     upload_file_attempt_gui(token, account_id, app_id, rel_filename, data)
 }
 
@@ -715,35 +308,6 @@ struct OrphanGameItem {
 }
 
 static SCANNED_ORPHANS: Mutex<Vec<OrphanGameItem>> = Mutex::new(Vec::new());
-
-fn collect_files_recursive(dir: &Path, root: &Path, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files_recursive(&path, root, out);
-        } else if path.is_file() {
-            if let Ok(rel) = path.strip_prefix(root) {
-                let clean = sanitize_rel_path(&rel.to_string_lossy());
-                if !clean.is_empty() {
-                    out.push((clean, path));
-                }
-            }
-        }
-    }
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
-    }
-}
 
 const TAB_1_CONTROLS: &[usize] = &[
     ID_LBL_STEAM,
@@ -1057,7 +621,7 @@ unsafe fn on_upload_orphans(hwnd: HWND) {
 
     let hwnd_val = hwnd;
     std::thread::spawn(move || {
-        let Some(token) = refresh_gdrive_access_token(&token_path) else {
+        let Some(token) = refresh_access_token(&token_path) else {
             unsafe {
                 if h_status != 0 {
                     SetWindowTextW(h_status, to_wide("Erro ao renovar token de acesso do Google Drive.").as_ptr());
@@ -1085,23 +649,14 @@ unsafe fn on_upload_orphans(hwnd: HWND) {
                 .join(game.account_id.to_string())
                 .join(game.app_id.to_string())
                 .join("manifest.tsv");
-            let mut existing_cn = 1u64;
-            if let Ok(prev) = fs::read_to_string(&manifest_file) {
-                for l in prev.lines() {
-                    if let Some((k, v)) = l.split_once('\t') {
-                        if k == "cn" {
-                            if let Ok(cn) = v.parse::<u64>() {
-                                existing_cn = cn.max(1);
-                            }
-                        }
-                    }
-                }
+            let mut manifest_data = if let Ok(prev) = fs::read_to_string(&manifest_file) {
+                parse_manifest(&prev)
+            } else {
+                ManifestData::default()
+            };
+            if manifest_data.change_number == 0 {
+                manifest_data.change_number = 1;
             }
-
-            let mut manifest_lines = Vec::new();
-            manifest_lines.push(format!("cn\t{}", existing_cn));
-            manifest_lines.push(format!("build\t{}", 0));
-            manifest_lines.push(format!("default_token\t"));
 
             for (rel_name, full_path) in &game.files {
                 if let Ok(bytes) = fs::read(full_path) {
@@ -1127,25 +682,29 @@ unsafe fn on_upload_orphans(hwnd: HWND) {
                     }
                     let _ = fs::write(&vault_file, &bytes);
 
-                    let sha = cr_proto::sha1::to_hex(&sha1_digest(&bytes));
+                    let sha = sha1_digest(&bytes);
                     let file_ts = fs::metadata(full_path)
                         .ok()
                         .and_then(|m| m.modified().ok())
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
-                    manifest_lines.push(format!(
-                        "file\t{}\t{}\t{}\t{}\t{}\t0\t4294967295",
-                        rel_name, "", sha, file_ts, bytes.len()
-                    ));
+                    let (root_token, clean_filename) = split_root_token(rel_name);
+                    manifest_data.files.insert(
+                        clean_filename.clone(),
+                        ManifestFileRecord {
+                            filename: clean_filename,
+                            root_token,
+                            sha1: sha,
+                            timestamp: file_ts,
+                            raw_size: bytes.len() as u64,
+                            platforms_to_sync: 0xFFFF_FFFF,
+                        },
+                    );
                 }
             }
 
-            let manifest_content = manifest_lines.join("\n") + "\n";
-            let manifest_file = vault_dir
-                .join(game.account_id.to_string())
-                .join(game.app_id.to_string())
-                .join("manifest.tsv");
+            let manifest_content = serialize_manifest(&manifest_data);
             if let Some(parent) = manifest_file.parent() {
                 let _ = fs::create_dir_all(parent);
             }
@@ -1239,38 +798,11 @@ unsafe fn populate_existing_config(hwnd: HWND) {
 }
 
 fn is_gdrive_connected(steam_dir: &str) -> bool {
-    let token_path = Path::new(steam_dir).join("chronokeep_gdrive.json");
-    if let Ok(content) = fs::read_to_string(token_path) {
-        if let Some(rt) = extract_json_str(&content, "refresh_token") {
-            return !rt.is_empty();
-        }
-    }
-    false
+    cr_common::config::is_gdrive_connected(Path::new(steam_dir))
 }
 
 fn resolve_service_port_for_gui(steam_path: &str) -> u16 {
-    let port_dat = Path::new(steam_path).join("chrono_port.dat");
-    if let Ok(content) = fs::read_to_string(&port_dat) {
-        if let Ok(p) = content.trim().parse::<u16>() {
-            if p > 0 {
-                return p;
-            }
-        }
-    }
-    let ini_path = Path::new(steam_path).join("chronokeep.ini");
-    if let Ok(content) = fs::read_to_string(&ini_path) {
-        for line in content.lines() {
-            let line = line.trim();
-            if let Some((k, v)) = line.split_once('=') {
-                if k.trim().eq_ignore_ascii_case("port") {
-                    if let Ok(p) = v.trim().parse::<u16>() {
-                        return p;
-                    }
-                }
-            }
-        }
-    }
-    DEFAULT_SERVICE_PORT
+    cr_common::config::resolve_service_port(steam_path)
 }
 
 unsafe fn refresh_status_label(hwnd: HWND) {
@@ -1416,124 +948,7 @@ unsafe fn prompt_enable_cloud_if_needed(hwnd: HWND, steam_dir: &Path) -> bool {
     true
 }
 
-fn exchange_code_for_tokens(code: &str, redirect_uri: &str) -> Option<String> {
-    unsafe {
-        let body = format!(
-            "code={}&client_id={}&client_secret={}&redirect_uri={}&grant_type=authorization_code",
-            url_encode(code),
-            url_encode(GDRIVE_CLIENT_ID),
-            url_encode(GDRIVE_CLIENT_SECRET),
-            url_encode(redirect_uri)
-        );
-        let body_bytes = body.as_bytes();
 
-        let agent = to_wide("ChronoKeepSetup/1.0");
-        let h_session = WinHttpOpen(
-            agent.as_ptr(),
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            null(),
-            null(),
-            0,
-        );
-        if h_session.is_null() {
-            return None;
-        }
-
-        let host_w = to_wide("oauth2.googleapis.com");
-        let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);
-        if h_conn.is_null() {
-            WinHttpCloseHandle(h_session);
-            return None;
-        }
-
-        let verb_w = to_wide("POST");
-        let path_w = to_wide("/token");
-        let h_req = WinHttpOpenRequest(
-            h_conn,
-            verb_w.as_ptr(),
-            path_w.as_ptr(),
-            null(),
-            null(),
-            null(),
-            WINHTTP_FLAG_SECURE | WINHTTP_FLAG_ESCAPE_DISABLE,
-        );
-        if h_req.is_null() {
-            WinHttpCloseHandle(h_conn);
-            WinHttpCloseHandle(h_session);
-            return None;
-        }
-
-        let hdr_w = to_wide("Content-Type: application/x-www-form-urlencoded");
-        WinHttpAddRequestHeaders(
-            h_req,
-            hdr_w.as_ptr(),
-            hdr_w.len().saturating_sub(1) as DWORD,
-            WINHTTP_ADDREQ_FLAG_ADD,
-        );
-
-        let ok = WinHttpSendRequest(
-            h_req,
-            null(),
-            0,
-            body_bytes.as_ptr() as *const c_void,
-            body_bytes.len() as DWORD,
-            body_bytes.len() as DWORD,
-            0,
-        );
-        if ok == 0 || WinHttpReceiveResponse(h_req, null_mut()) == 0 {
-            WinHttpCloseHandle(h_req);
-            WinHttpCloseHandle(h_conn);
-            WinHttpCloseHandle(h_session);
-            return None;
-        }
-
-        let mut status_code: DWORD = 0;
-        let mut status_len: DWORD = std::mem::size_of::<DWORD>() as DWORD;
-        WinHttpQueryHeaders(
-            h_req,
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            null(),
-            &mut status_code as *mut _ as *mut c_void,
-            &mut status_len,
-            null_mut(),
-        );
-
-        let mut resp_bytes = Vec::new();
-        loop {
-            let mut avail: DWORD = 0;
-            if WinHttpQueryDataAvailable(h_req, &mut avail) == 0 || avail == 0 {
-                break;
-            }
-            let mut chunk = vec![0u8; avail as usize];
-            let mut read: DWORD = 0;
-            if WinHttpReadData(
-                h_req,
-                chunk.as_mut_ptr() as *mut c_void,
-                avail,
-                &mut read,
-            ) == 0
-                || read == 0
-            {
-                break;
-            }
-            resp_bytes.extend_from_slice(&chunk[..read as usize]);
-        }
-
-        WinHttpCloseHandle(h_req);
-        WinHttpCloseHandle(h_conn);
-        WinHttpCloseHandle(h_session);
-
-        if status_code != 200 {
-            return None;
-        }
-        let json = String::from_utf8_lossy(&resp_bytes).into_owned();
-        if extract_json_str(&json, "refresh_token").is_some() {
-            Some(json)
-        } else {
-            None
-        }
-    }
-}
 
 unsafe fn on_google_browser_login(hwnd: HWND) {
     let steam_dir_str = get_control_text(hwnd, ID_EDIT_STEAM);

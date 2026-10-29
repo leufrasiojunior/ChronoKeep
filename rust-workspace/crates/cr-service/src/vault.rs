@@ -3,7 +3,7 @@
 //! and maintains atomic manifest metadata in `<vault_dir>/<account_id>/<app_id>/manifest.tsv`.
 
 use cr_proto::cloud_messages::{sanitize_rel_path, CloudFileRecord};
-use cr_proto::sha1::{from_hex, sha1_digest, to_hex};
+use cr_proto::sha1::sha1_digest;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -400,56 +400,30 @@ impl VaultStorage {
         let Ok(content) = fs::read_to_string(&path) else {
             return AppManifest::default();
         };
-        let mut manifest = AppManifest::default();
-        for raw_line in content.lines() {
-            let line = raw_line.trim_end_matches(&['\r', '\n'][..]);
-            if line.trim().is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts[0] == "META" && parts.len() >= 3 {
-                manifest.change_number = parts[1].parse().unwrap_or(0);
-                manifest.app_build_id = parts[2].parse().unwrap_or(0);
-                if parts.len() >= 4 {
-                    manifest.default_root_token = parts[3].to_string();
-                }
-            } else if parts[0] == "FILE" && parts.len() >= 7 {
-                let (tok, clean) = cr_proto::cloud_messages::split_root_token(parts[1]);
-                let filename = clean;
-                if filename.is_empty() {
-                    continue;
-                }
-                let root_token = if !parts[2].is_empty() {
-                    parts[2].to_string()
-                } else {
-                    tok
-                };
-                let Some(sha_vec) = from_hex(parts[3]) else {
-                    continue;
-                };
-                if sha_vec.len() != 20 {
-                    continue;
-                }
-                let mut sha1 = [0u8; 20];
-                sha1.copy_from_slice(&sha_vec);
-                let timestamp = parts[4].parse().unwrap_or(0);
-                let raw_size = parts[5].parse().unwrap_or(0);
-                let platforms_to_sync = parts[6].parse().unwrap_or(0xFFFF_FFFF);
-                manifest.files.insert(
-                    filename.clone(),
-                    CloudFileRecord {
-                        filename,
-                        root_token,
-                        sha1,
-                        timestamp,
-                        raw_size,
-                        persist_state: 0,
-                        platforms_to_sync,
-                    },
-                );
-            }
+        let parsed = cr_common::manifest::parse_manifest(&content);
+        AppManifest {
+            change_number: parsed.change_number,
+            app_build_id: parsed.app_build_id,
+            default_root_token: parsed.default_root_token,
+            files: parsed
+                .files
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        CloudFileRecord {
+                            filename: v.filename,
+                            root_token: v.root_token,
+                            sha1: v.sha1,
+                            timestamp: v.timestamp,
+                            raw_size: v.raw_size,
+                            persist_state: 0,
+                            platforms_to_sync: v.platforms_to_sync,
+                        },
+                    )
+                })
+                .collect(),
         }
-        manifest
     }
 
     pub fn save_manifest(
@@ -463,26 +437,30 @@ impl VaultStorage {
         let path = self.manifest_path(account_id, app_id);
         let tmp_path = path.with_extension("tsv.tmp");
 
-        let mut out = String::new();
-        out.push_str("# cr-clone vault manifest v1\n");
-        out.push_str(&format!(
-            "META\t{}\t{}\t{}\n",
-            manifest.change_number, manifest.app_build_id, manifest.default_root_token
-        ));
+        let data = cr_common::manifest::ManifestData {
+            change_number: manifest.change_number,
+            app_build_id: manifest.app_build_id,
+            default_root_token: manifest.default_root_token.clone(),
+            files: manifest
+                .files
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        cr_common::manifest::ManifestFileRecord {
+                            filename: v.filename.clone(),
+                            root_token: v.root_token.clone(),
+                            sha1: v.sha1,
+                            timestamp: v.timestamp,
+                            raw_size: v.raw_size,
+                            platforms_to_sync: v.platforms_to_sync,
+                        },
+                    )
+                })
+                .collect(),
+        };
 
-        let mut sorted: Vec<&CloudFileRecord> = manifest.files.values().collect();
-        sorted.sort_by(|a, b| a.filename.cmp(&b.filename));
-        for f in sorted {
-            out.push_str(&format!(
-                "FILE\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                f.filename,
-                f.root_token,
-                to_hex(&f.sha1),
-                f.timestamp,
-                f.raw_size,
-                f.platforms_to_sync
-            ));
-        }
+        let out = cr_common::manifest::serialize_manifest(&data);
 
         {
             let mut file = File::create(&tmp_path)?;
@@ -541,32 +519,7 @@ impl VaultStorage {
 }
 
 fn collect_files_recursive(base: &Path, current: &Path, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(entries) = fs::read_dir(current) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files_recursive(base, &path, out);
-        } else if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "cr_tmp" {
-                    continue;
-                }
-            }
-            if let Ok(rel) = path.strip_prefix(base) {
-                let rel_str = rel
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                let clean = sanitize_rel_path(&rel_str);
-                if !clean.is_empty() {
-                    out.push((clean, path));
-                }
-            }
-        }
-    }
+    cr_common::fs_utils::collect_files_recursive(base, current, out);
 }
 
 pub fn root_id_to_token(root_id: u32) -> String {
