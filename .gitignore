@@ -14,7 +14,9 @@ dist/
 *.pdb
 *.log
 
-# Imagens temporarias de teste
+# Imagens de icones
 icones_gerados/*.jpg
 icones_gerados/*.png
+!icones_gerados/chronokeep_source.jpg
+!icones_gerados/app-logo.png
 log.txt

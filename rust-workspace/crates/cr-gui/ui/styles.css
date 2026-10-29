@@ -114,18 +114,24 @@ body {
 .app-logo {
   width: 26px;
   height: 26px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-bg);
-  color: #FFF;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  background: transparent;
+}
+
+.app-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.25));
 }
 
 .app-logo.large {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-md);
+  width: 52px;
+  height: 52px;
 }
 
 .app-title {
