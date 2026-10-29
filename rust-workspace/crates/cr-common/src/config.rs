@@ -77,7 +77,19 @@ pub fn is_gdrive_connected(steam_dir: &Path) -> bool {
     }
     if let Ok(cur) = std::env::current_exe() {
         if let Some(parent) = cur.parent() {
-            return parent.join("chronokeep_gdrive.json").exists();
+            if parent.join("chronokeep_gdrive.json").exists() {
+                return true;
+            }
+        }
+    }
+    let ini_path = steam_dir.join("chronokeep.ini");
+    if let Ok(content) = std::fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("gdrive_refresh_token") && !v.trim().is_empty() {
+                    return true;
+                }
+            }
         }
     }
     false

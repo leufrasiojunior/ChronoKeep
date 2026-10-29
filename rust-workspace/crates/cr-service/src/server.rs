@@ -16,11 +16,12 @@ pub fn handle_connection(
     mut stream: TcpStream,
     engine: Arc<Mutex<RpcEngine>>,
     log_path: Arc<PathBuf>,
+    max_upload_mb: u64,
 ) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
     let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
 
-    let Some((method, path, body)) = read_http_request(&mut stream, &log_path) else {
+    let Some((method, path, body)) = read_http_request(&mut stream, &log_path, max_upload_mb) else {
         return;
     };
 
@@ -299,6 +300,7 @@ fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {
 fn read_http_request(
     stream: &mut TcpStream,
     log_path: &Path,
+    max_upload_mb: u64,
 ) -> Option<(String, String, Vec<u8>)> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0u8; 4096];
@@ -354,12 +356,13 @@ fn read_http_request(
         let _ = stream.flush();
     }
 
-    if content_length > 512 * 1024 * 1024 {
+    let max_bytes = (max_upload_mb as usize).saturating_mul(1024 * 1024);
+    if content_length > max_bytes {
         log_msg(
             log_path,
             &format!(
-                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de 512MB",
-                method, path, content_length
+                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo configurado de {}MB",
+                method, path, content_length, max_upload_mb
             ),
         );
         return None;

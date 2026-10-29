@@ -50,6 +50,7 @@ fn main() {
             start_google_login,
             disconnect_google,
             scan_saves,
+            upload_game_save,
             get_logs,
             clear_log,
             open_directory,

@@ -388,9 +388,19 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
     let json_resp = exchange_code_for_tokens(&code, &redirect_uri)
         .ok_or_else(|| "Falha ao trocar código de autorização por tokens no Google.".to_string())?;
 
-    let refresh_token = extract_json_str(&json_resp, "refresh_token")
-        .ok_or_else(|| "Google não retornou refresh_token (verifique se já autorizou anteriormente).".to_string())?;
+    // 1. Persistir o token JSON completo onde o daemon e is_gdrive_connected buscam
+    let token_json_path = s_path.join("chronokeep_gdrive.json");
+    let _ = fs::write(&token_json_path, &json_resp);
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            if parent != s_path {
+                let _ = fs::write(parent.join("chronokeep_gdrive.json"), &json_resp);
+            }
+        }
+    }
 
+    // 2. Extrair e manter refresh_token em chronokeep.ini para retrocompatibilidade
+    let refresh_token = extract_json_str(&json_resp, "refresh_token");
     let ini_path = s_path.join("chronokeep.ini");
     let mut lines = Vec::new();
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -401,7 +411,9 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
             }
         }
     }
-    lines.push(format!("gdrive_refresh_token={}", refresh_token));
+    if let Some(rt) = refresh_token {
+        lines.push(format!("gdrive_refresh_token={}", rt));
+    }
     let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
 
     Ok(OperationResult {
@@ -413,18 +425,68 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
 #[tauri::command]
 pub fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
     let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
-    let ini_path = Path::new(&s_dir).join("chronokeep.ini");
+    let s_path = Path::new(&s_dir);
+
+    // 1. Remover entradas do chronokeep.ini
+    let ini_path = s_path.join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
         let lines: Vec<String> = content
             .lines()
-            .filter(|l| !l.trim().to_ascii_lowercase().starts_with("gdrive_refresh_token"))
+            .filter(|l| {
+                let t = l.trim().to_ascii_lowercase();
+                !t.starts_with("gdrive_refresh_token") && !t.starts_with("gdrive_folder_id")
+            })
             .map(|s| s.to_string())
             .collect();
         let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
     }
+
+    // 2. Apagar chronokeep_gdrive.json na pasta da Steam
+    let token_json_path = s_path.join("chronokeep_gdrive.json");
+    if token_json_path.exists() {
+        let _ = fs::remove_file(&token_json_path);
+    }
+
+    // 3. Apagar chronokeep_gdrive.json na pasta do executável atual, se existir
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            let p_token = parent.join("chronokeep_gdrive.json");
+            if p_token.exists() {
+                let _ = fs::remove_file(&p_token);
+            }
+        }
+    }
+
+    // 4. Limpar cache em memória de pastas do Google Drive
+    cr_common::gdrive::clear_folder_cache();
+
     OperationResult {
         success: true,
-        message: "Conta do Google Drive desconectada.".to_string(),
+        message: "Conta do Google Drive desconectada com sucesso.".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn upload_game_save(
+    app_id: u32,
+    account_id: u32,
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+    let steam_path = Path::new(&s_dir);
+    let vault_path = Path::new(&v_dir);
+
+    match crate::orphans::upload_single_game_save(steam_path, vault_path, app_id, account_id) {
+        Ok(count) => OperationResult {
+            success: true,
+            message: format!("Sucesso! {} arquivo(s) do AppID {} sincronizados com o Google Drive.", count, app_id),
+        },
+        Err(err) => OperationResult {
+            success: false,
+            message: err,
+        },
     }
 }
 

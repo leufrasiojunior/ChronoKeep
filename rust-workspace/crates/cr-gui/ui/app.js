@@ -392,7 +392,7 @@ async function scanSaves() {
           <td>${item.total_size_formatted}</td>
           <td><span class="status-pill ${item.source.includes("Vault") ? "active" : ""}">${item.source}</span></td>
           <td>
-            <button class="btn btn-secondary btn-sm" onclick="showToast('Sincronização em segundo plano monitorada pelo daemon.')">
+            <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this)">
               Sincronizar
             </button>
           </td>
@@ -404,6 +404,52 @@ async function scanSaves() {
     tbody.innerHTML = `<tr><td colspan="6" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
   }
 }
+
+// --------------------------------------------------------------------------
+// Manual Game Save Sync
+// --------------------------------------------------------------------------
+async function syncGameSave(appId, accountId, btn) {
+  const originalText = btn ? btn.textContent : "Sincronizar";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Enviando...";
+  }
+  showToast(`Sincronizando AppID ${appId} com o Google Drive...`);
+
+  try {
+    const steamDir = document.getElementById("cfg-steam-dir")?.value;
+    const vaultDir = document.getElementById("cfg-vault-dir")?.value;
+    const res = await invokeBackend("upload_game_save", {
+      appId,
+      accountId,
+      steamDir: steamDir || null,
+      vaultDir: vaultDir || null,
+    });
+    if (res && res.success) {
+      showToast(res.message);
+      if (btn) {
+        btn.textContent = "Sincronizado ✅";
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }, 4000);
+      }
+    } else {
+      showToast(res ? res.message : "Falha na sincronização", true);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+  } catch (err) {
+    showToast(`Erro ao sincronizar: ${err}`, true);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  }
+}
+window.syncGameSave = syncGameSave;
 
 // --------------------------------------------------------------------------
 // Logs Loader

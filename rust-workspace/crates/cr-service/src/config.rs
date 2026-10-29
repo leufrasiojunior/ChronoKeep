@@ -11,6 +11,7 @@ pub struct ServiceConfig {
     pub port: u16,
     pub vault_dir: PathBuf,
     pub log_path: PathBuf,
+    pub max_upload_mb: u64,
 }
 
 impl ServiceConfig {
@@ -23,6 +24,7 @@ impl ServiceConfig {
         let config_path = exe_dir.join("chronokeep.ini");
         let mut port = DEFAULT_SERVICE_PORT;
         let mut vault_dir = detect_default_vault_dir(Some(&exe_dir));
+        let mut max_upload_mb = 512u64;
 
         if let Ok(content) = fs::read_to_string(&config_path) {
             for line in content.lines() {
@@ -41,6 +43,12 @@ impl ServiceConfig {
                         }
                     } else if key.eq_ignore_ascii_case("vault_dir") && !val.is_empty() {
                         vault_dir = PathBuf::from(val);
+                    } else if key.eq_ignore_ascii_case("max_upload_mb") {
+                        if let Ok(mb) = val.parse::<u64>() {
+                            if mb > 0 {
+                                max_upload_mb = mb;
+                            }
+                        }
                     }
                 }
             }
@@ -49,9 +57,11 @@ impl ServiceConfig {
                 "# Configuracao do ChronoKeep (Cloud Save Vault)\r\n\
                  # Altere 'vault_dir' para sua pasta do Google Drive, OneDrive ou pasta local de preferencia.\r\n\
                  port={}\r\n\
-                 vault_dir={}\r\n",
+                 vault_dir={}\r\n\
+                 max_upload_mb={}\r\n",
                 port,
-                vault_dir.display()
+                vault_dir.display(),
+                max_upload_mb
             );
             let _ = fs::write(&config_path, default_ini);
         }
@@ -61,6 +71,7 @@ impl ServiceConfig {
             port,
             vault_dir,
             log_path,
+            max_upload_mb,
         }
     }
 }
