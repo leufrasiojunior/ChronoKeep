@@ -578,33 +578,33 @@ pub fn upload_single_game_save(
             let ok = sync_orphan_file_to_drive_with_retry(&token, account_id, app_id, rel_name, &bytes);
             if ok {
                 uploaded_count += 1;
-            }
 
-            let vault_dest = vault_app_files.join(rel_name);
-            if let Some(parent) = vault_dest.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            let _ = fs::write(&vault_dest, &bytes);
+                let vault_dest = vault_app_files.join(rel_name);
+                if let Some(parent) = vault_dest.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&vault_dest, &bytes);
 
-            let sha = sha1_digest(&bytes);
-            let file_ts = fs::metadata(full_path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let (root_token, clean_filename) = split_root_token(rel_name);
-            manifest_data.files.insert(
-                clean_filename.clone(),
-                ManifestFileRecord {
-                    filename: clean_filename,
-                    root_token,
-                    sha1: sha,
-                    timestamp: file_ts,
-                    raw_size: bytes.len() as u64,
-                    platforms_to_sync: 0xFFFF_FFFF,
-                },
-            );
+                let sha = sha1_digest(&bytes);
+                let file_ts = fs::metadata(full_path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let (root_token, clean_filename) = split_root_token(rel_name);
+                manifest_data.files.insert(
+                    clean_filename.clone(),
+                    ManifestFileRecord {
+                        filename: clean_filename,
+                        root_token,
+                        sha1: sha,
+                        timestamp: file_ts,
+                        raw_size: bytes.len() as u64,
+                        platforms_to_sync: 0xFFFF_FFFF,
+                    },
+                );
+            }
         }
     }
 
@@ -622,13 +622,28 @@ pub fn upload_single_game_save(
     }
     let _ = fs::write(&manifest_file, manifest_content.as_bytes());
 
-    let _ = sync_orphan_file_to_drive_with_retry(
+    let manifest_ok = sync_orphan_file_to_drive_with_retry(
         &token,
         account_id,
         app_id,
         "manifest.tsv",
         manifest_content.as_bytes(),
     );
+    if !manifest_ok {
+        return Err(format!(
+            "Os arquivos de save do AppID {} foram enviados, mas houve falha ao sincronizar o índice 'manifest.tsv' com o Google Drive.",
+            app_id
+        ));
+    }
+
+    if uploaded_count < valid_files.len() {
+        return Err(format!(
+            "Sincronização parcial: {} de {} arquivo(s) do AppID {} foram enviados ao Google Drive.",
+            uploaded_count,
+            valid_files.len(),
+            app_id
+        ));
+    }
 
     Ok(uploaded_count)
 }

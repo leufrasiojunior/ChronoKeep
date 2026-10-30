@@ -11,6 +11,7 @@ use cr_common::config::{
     resolve_service_port, DEFAULT_SERVICE_PORT,
 };
 use cr_common::fs_utils::{collect_files_recursive, format_size};
+use cr_common::manifest::parse_manifest;
 use cr_common::gdrive::{
     exchange_code_for_tokens, DEFAULT_GDRIVE_CLIENT_ID as GDRIVE_CLIENT_ID,
     DEFAULT_GDRIVE_SCOPE as GDRIVE_SCOPE,
@@ -658,48 +659,78 @@ fn get_steam_library_folders(steam_path: &Path) -> Vec<PathBuf> {
     folders
 }
 
-fn resolve_game_name(
-    app_id: u32,
+fn resolve_game_names_batch(
+    app_ids: &[u32],
     libraries: &[PathBuf],
     cache: &mut HashMap<u32, String>,
-) -> String {
-    // 1. Verificar cache persistente em memória / disco
-    if let Some(cached) = cache.get(&app_id) {
-        if !cached.trim().is_empty() {
-            return cached.clone();
+) {
+    let mut missing = Vec::new();
+
+    // 1. Verificar cache e arquivos .acf locais das bibliotecas Steam (0ms offline)
+    for &app_id in app_ids {
+        if let Some(cached) = cache.get(&app_id) {
+            if !cached.trim().is_empty() {
+                continue;
+            }
+        }
+
+        let mut found_local = None;
+        for lib in libraries {
+            let acf = lib.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
+            if let Some(name) = read_game_name_from_manifest(&acf) {
+                found_local = Some(name);
+                break;
+            }
+        }
+
+        if let Some(name) = found_local {
+            cache.insert(app_id, name);
+        } else {
+            missing.push(app_id);
         }
     }
 
-    // 2. Verificar manifests locais (.acf) em todas as bibliotecas da Steam no computador
-    for lib in libraries {
-        let acf = lib.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
-        if let Some(name) = read_game_name_from_manifest(&acf) {
-            cache.insert(app_id, name.clone());
-            return name;
-        }
+    if missing.is_empty() {
+        return;
     }
 
-    // 3. Fallback: Consultar Steam Store API (store.steampowered.com)
+    // 2. Para jogos sem manifesto local e ainda não no cache:
+    // Consulta a Steam Store API com verificação de conectividade. Se a API estiver fora do ar
+    // ou a primeira chamada der timeout/erro, interrompe imediatamente novas requisições nesta sessão
+    // e registra o fallback "AppID <id>" em cache (miss caching), impedindo travamentos seriais.
     #[cfg(target_os = "windows")]
     {
-        let path = format!("/api/appdetails?appids={}&filters=basic", app_id);
-        if let Some((200, resp)) = cr_common::http::https_request("GET", "store.steampowered.com", &path, &[], &[]) {
-            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&resp) {
-                if let Some(name) = val.get(&app_id.to_string())
-                    .and_then(|app| app.get("data"))
-                    .and_then(|data| data.get("name"))
-                    .and_then(|n| n.as_str())
-                {
-                    let name_str = name.to_string();
-                    cache.insert(app_id, name_str.clone());
-                    return name_str;
+        let mut network_available = true;
+        for app_id in missing {
+            if !network_available {
+                cache.insert(app_id, format!("AppID {}", app_id));
+                continue;
+            }
+            let path = format!("/api/appdetails?appids={}&filters=basic", app_id);
+            if let Some((200, resp)) = cr_common::http::https_request("GET", "store.steampowered.com", &path, &[], &[]) {
+                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&resp) {
+                    if let Some(name) = val.get(&app_id.to_string())
+                        .and_then(|app| app.get("data"))
+                        .and_then(|data| data.get("name"))
+                        .and_then(|n| n.as_str())
+                    {
+                        cache.insert(app_id, name.to_string());
+                        continue;
+                    }
                 }
+                cache.insert(app_id, format!("AppID {}", app_id));
+            } else {
+                network_available = false;
+                cache.insert(app_id, format!("AppID {}", app_id));
             }
         }
     }
-
-    // 4. Se não encontrar, retornar AppID formatado
-    format!("AppID {}", app_id)
+    #[cfg(not(target_os = "windows"))]
+    {
+        for app_id in missing {
+            cache.insert(app_id, format!("AppID {}", app_id));
+        }
+    }
 }
 
 #[tauri::command]
@@ -770,7 +801,10 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
                         let manifest_p = app_path.join("manifest.tsv");
                         let in_cloud = if manifest_p.exists() {
                             fs::read_to_string(&manifest_p)
-                                .map(|c| c.lines().any(|l| l.starts_with("cn\t") || l.starts_with("file\t")))
+                                .map(|c| {
+                                    let m = parse_manifest(&c);
+                                    m.change_number > 0 && !m.files.is_empty()
+                                })
                                 .unwrap_or(false)
                         } else {
                             false
@@ -802,9 +836,12 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
     let libraries = get_steam_library_folders(steam_path);
     let mut cache = load_app_names_cache();
 
+    let all_app_ids: Vec<u32> = map.keys().map(|(_, app_id)| *app_id).collect();
+    resolve_game_names_batch(&all_app_ids, &libraries, &mut cache);
+
     let items: Vec<GameSaveItemDto> = map.into_iter()
         .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
-            let name = resolve_game_name(app_id, &libraries, &mut cache);
+            let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
             GameSaveItemDto {
                 account_id,
                 app_id,
