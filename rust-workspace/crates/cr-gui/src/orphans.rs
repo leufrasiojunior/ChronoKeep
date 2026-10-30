@@ -487,6 +487,24 @@ pub fn find_or_create_gdrive_token_file(steam_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+fn load_max_upload_mb(steam_dir: &Path) -> u64 {
+    let ini_path = steam_dir.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("max_upload_mb") {
+                    if let Ok(mb) = v.trim().parse::<u64>() {
+                        if mb > 0 {
+                            return mb;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    512
+}
+
 pub fn upload_single_game_save(
     steam_dir: &Path,
     vault_dir: &Path,
@@ -572,18 +590,29 @@ pub fn upload_single_game_save(
         manifest_data.change_number += 1;
     }
 
+    let max_mb = load_max_upload_mb(steam_dir);
+    let max_bytes = max_mb * 1024 * 1024;
     let mut uploaded_count = 0;
+    let mut oversized_count = 0;
+
     for (rel_name, full_path) in &valid_files {
         if let Ok(bytes) = fs::read(full_path) {
+            // Guarda sempre no Cofre local para preservação do save
+            let vault_dest = vault_app_files.join(rel_name);
+            if let Some(parent) = vault_dest.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(&vault_dest, &bytes);
+
+            // Verifica o limite de upload configurado na UI para envio manual
+            if (bytes.len() as u64) > max_bytes {
+                oversized_count += 1;
+                continue;
+            }
+
             let ok = sync_orphan_file_to_drive_with_retry(&token, account_id, app_id, rel_name, &bytes);
             if ok {
                 uploaded_count += 1;
-
-                let vault_dest = vault_app_files.join(rel_name);
-                if let Some(parent) = vault_dest.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                let _ = fs::write(&vault_dest, &bytes);
 
                 let sha = sha1_digest(&bytes);
                 let file_ts = fs::metadata(full_path)
@@ -609,11 +638,20 @@ pub fn upload_single_game_save(
     }
 
     if uploaded_count == 0 {
-        return Err(format!(
-            "Falha ao enviar os {} arquivo(s) do AppID {} para o Google Drive. Verifique a conexão com a internet ou permissões da conta.",
-            valid_files.len(),
-            app_id
-        ));
+        if oversized_count > 0 {
+            return Err(format!(
+                "Nenhum arquivo enviado à nuvem: todos os {} arquivo(s) do AppID {} excedem o limite de upload manual ({} MB) e foram preservados apenas no Cofre local.",
+                valid_files.len(),
+                app_id,
+                max_mb
+            ));
+        } else {
+            return Err(format!(
+                "Falha ao enviar os {} arquivo(s) do AppID {} para o Google Drive. Verifique a conexão com a internet ou permissões da conta.",
+                valid_files.len(),
+                app_id
+            ));
+        }
     }
 
     let manifest_content = serialize_manifest(&manifest_data);
@@ -636,11 +674,12 @@ pub fn upload_single_game_save(
         ));
     }
 
-    if uploaded_count < valid_files.len() {
+    let target_upload_count = valid_files.len().saturating_sub(oversized_count);
+    if uploaded_count < target_upload_count {
         return Err(format!(
-            "Sincronização parcial: {} de {} arquivo(s) do AppID {} foram enviados ao Google Drive.",
+            "Sincronização parcial: apenas {} de {} arquivo(s) do AppID {} foram enviados ao Google Drive com sucesso.",
             uploaded_count,
-            valid_files.len(),
+            target_upload_count,
             app_id
         ));
     }

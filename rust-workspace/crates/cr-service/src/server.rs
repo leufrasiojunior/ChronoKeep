@@ -300,7 +300,7 @@ fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {
 fn read_http_request(
     stream: &mut TcpStream,
     log_path: &Path,
-    max_upload_mb: u64,
+    _max_upload_mb: u64,
 ) -> Option<(String, String, Vec<u8>)> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0u8; 4096];
@@ -356,13 +356,16 @@ fn read_http_request(
         let _ = stream.flush();
     }
 
-    let max_bytes = (max_upload_mb as usize).saturating_mul(1024 * 1024);
-    if content_length > max_bytes {
+    // Sincronização automática interceptada da Steam via daemon:
+    // Não impõe limite restritivo; sincroniza independente do tamanho.
+    // Mantém apenas uma trava técnica de segurança contra transbordamento de buffer (4GB).
+    const MAX_SAFE_DAEMON_PAYLOAD: usize = 4 * 1024 * 1024 * 1024;
+    if content_length > MAX_SAFE_DAEMON_PAYLOAD {
         log_msg(
             log_path,
             &format!(
-                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo configurado de {}MB",
-                method, path, content_length, max_upload_mb
+                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de seguranca (4GB)",
+                method, path, content_length
             ),
         );
         return None;
