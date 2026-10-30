@@ -17,7 +17,7 @@ use cr_common::gdrive::{
 };
 use cr_common::http::{extract_json_str, url_decode, url_encode};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -61,6 +61,8 @@ pub struct GameSaveItemDto {
     pub total_bytes: u64,
     pub total_size_formatted: String,
     pub source: String,
+    pub in_local: bool,
+    pub in_cloud: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -69,9 +71,67 @@ pub struct OperationResult {
     pub message: String,
 }
 
+fn get_gui_prefs_path() -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata).join("ChronoKeep").join("gui_prefs.ini");
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            return parent.join("gui_prefs.ini");
+        }
+    }
+    PathBuf::from("gui_prefs.ini")
+}
+
+pub fn load_preferred_steam_dir() -> String {
+    let prefs_file = get_gui_prefs_path();
+    if let Ok(content) = fs::read_to_string(&prefs_file) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("last_steam_dir") {
+                    let path = v.trim();
+                    if !path.is_empty() && Path::new(path).exists() {
+                        return path.to_string();
+                    }
+                }
+            }
+        }
+    }
+    detect_default_steam_dir()
+}
+
+pub fn save_preferred_steam_dir(steam_dir: &str) {
+    let prefs_file = get_gui_prefs_path();
+    if let Some(parent) = prefs_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut lines = Vec::new();
+    let mut updated = false;
+    if let Ok(content) = fs::read_to_string(&prefs_file) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some((k, _)) = trimmed.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("last_steam_dir") {
+                    lines.push(format!("last_steam_dir={}", steam_dir));
+                    updated = true;
+                    continue;
+                }
+            }
+            if !trimmed.is_empty() {
+                lines.push(trimmed.to_string());
+            }
+        }
+    }
+    if !updated {
+        lines.push(format!("last_steam_dir={}", steam_dir));
+    }
+    let content = lines.join("\r\n") + "\r\n";
+    let _ = fs::write(prefs_file, content);
+}
+
 #[tauri::command]
 pub fn get_system_info() -> SystemInfoDto {
-    let steam_dir = detect_default_steam_dir();
+    let steam_dir = load_preferred_steam_dir();
     let s_path = Path::new(&steam_dir);
     let vault_dir = detect_default_vault_dir(None).to_string_lossy().into_owned();
 
@@ -93,7 +153,7 @@ pub fn get_system_info() -> SystemInfoDto {
 
 #[tauri::command]
 pub fn get_config() -> ConfigDto {
-    let steam_dir = detect_default_steam_dir();
+    let steam_dir = load_preferred_steam_dir();
     let s_path = Path::new(&steam_dir);
     let mut vault_dir = detect_default_vault_dir(None).to_string_lossy().into_owned();
     let mut port = DEFAULT_SERVICE_PORT;
@@ -179,11 +239,17 @@ pub fn save_config(cfg: ConfigDto) -> OperationResult {
         lines.push(format!("gdrive_folder_id={}", gdrive_folder_id));
     }
 
+    let current_port = resolve_service_port(&cfg.steam_dir);
     let content = lines.join("\r\n") + "\r\n";
     if fs::write(&ini_path, content).is_ok() {
-        // Se o daemon estiver ativo, reinicia para carregar imediatamente as novas configurações (limite de upload, vault, etc.)
-        if check_daemon_health(cfg.port) {
-            stop_service_from_gui(cfg.port);
+        save_preferred_steam_dir(&cfg.steam_dir);
+        // Se o daemon estiver ativo (na porta anterior ou na nova), reinicia para aplicar as novas configurações
+        let was_running = check_daemon_health(current_port) || (current_port != cfg.port && check_daemon_health(cfg.port));
+        if was_running {
+            stop_service_from_gui(current_port);
+            if current_port != cfg.port {
+                stop_service_from_gui(cfg.port);
+            }
             start_service_from_gui(s_path, cfg.port);
         }
         OperationResult {
@@ -200,7 +266,7 @@ pub fn save_config(cfg: ConfigDto) -> OperationResult {
 
 #[tauri::command]
 pub fn get_service_status(steam_dir: Option<String>) -> ServiceStatusDto {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let port = resolve_service_port(&s_dir);
     let online = check_daemon_health(port);
     ServiceStatusDto { online, port }
@@ -208,7 +274,7 @@ pub fn get_service_status(steam_dir: Option<String>) -> ServiceStatusDto {
 
 #[tauri::command]
 pub fn start_service(steam_dir: Option<String>) -> OperationResult {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let s_path = Path::new(&s_dir);
     let port = resolve_service_port(&s_dir);
 
@@ -235,7 +301,7 @@ pub fn start_service(steam_dir: Option<String>) -> OperationResult {
 
 #[tauri::command]
 pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let port = resolve_service_port(&s_dir);
     let stopped = stop_service_from_gui(port);
     if stopped {
@@ -311,6 +377,9 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     // Ativa [cloud] no opensteamtool.toml se existir
     ensure_opensteamtool_cloud_enabled(s_path);
 
+    // Salva o diretório da Steam como preferência da GUI
+    save_preferred_steam_dir(&steam_dir);
+
     // Inicia serviço em segundo plano
     start_service_from_gui(s_path, port);
 
@@ -322,7 +391,7 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
 
 #[tauri::command]
 pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, String> {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let s_path = Path::new(&s_dir);
 
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -399,10 +468,16 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
 
     // 1. Persistir o token JSON completo onde o daemon e is_gdrive_connected buscam
     let token_json_path = s_path.join("chronokeep_gdrive.json");
-    let _ = fs::write(&token_json_path, &json_resp);
+    fs::write(&token_json_path, &json_resp).map_err(|e| {
+        format!(
+            "Falha de permissão ao gravar token em '{}': {}. Execute o ChronoKeep como Administrador ou conceda permissão de escrita.",
+            token_json_path.display(),
+            e
+        )
+    })?;
     if let Ok(cur) = std::env::current_exe() {
         if let Some(parent) = cur.parent() {
-            if parent != s_path {
+            if parent != s_path && parent.join("chrono-daemon.exe").exists() {
                 let _ = fs::write(parent.join("chronokeep_gdrive.json"), &json_resp);
             }
         }
@@ -440,7 +515,7 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
 
 #[tauri::command]
 pub fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let s_path = Path::new(&s_dir);
 
     // 1. Remover entradas do chronokeep.ini
@@ -497,7 +572,7 @@ pub fn upload_game_save(
     steam_dir: Option<String>,
     vault_dir: Option<String>,
 ) -> OperationResult {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
     let steam_path = Path::new(&s_dir);
     let vault_path = Path::new(&v_dir);
@@ -514,14 +589,128 @@ pub fn upload_game_save(
     }
 }
 
+fn get_app_names_cache_path() -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let p = PathBuf::from(appdata).join("ChronoKeep");
+        let _ = fs::create_dir_all(&p);
+        return p.join("app_names_cache.json");
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            return parent.join("app_names_cache.json");
+        }
+    }
+    PathBuf::from("app_names_cache.json")
+}
+
+fn load_app_names_cache() -> HashMap<u32, String> {
+    let p = get_app_names_cache_path();
+    if let Ok(content) = fs::read_to_string(&p) {
+        if let Ok(map) = serde_json::from_str::<HashMap<u32, String>>(&content) {
+            return map;
+        }
+    }
+    HashMap::new()
+}
+
+fn save_app_names_cache(cache: &HashMap<u32, String>) {
+    let p = get_app_names_cache_path();
+    if let Ok(content) = serde_json::to_string_pretty(cache) {
+        let _ = fs::write(p, content);
+    }
+}
+
+fn read_game_name_from_manifest(acf_path: &Path) -> Option<String> {
+    if let Ok(content) = fs::read_to_string(acf_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.to_ascii_lowercase().starts_with("\"name\"") {
+                let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
+                if parts.len() >= 2 {
+                    let name = parts[1].trim();
+                    if !name.is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_steam_library_folders(steam_path: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![steam_path.to_path_buf()];
+    let vdf = steam_path.join("steamapps").join("libraryfolders.vdf");
+    if let Ok(content) = fs::read_to_string(&vdf) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.to_ascii_lowercase().starts_with("\"path\"") {
+                let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
+                if parts.len() >= 2 {
+                    let p = PathBuf::from(parts[1].trim());
+                    if p.exists() && !folders.contains(&p) {
+                        folders.push(p);
+                    }
+                }
+            }
+        }
+    }
+    folders
+}
+
+fn resolve_game_name(
+    app_id: u32,
+    libraries: &[PathBuf],
+    cache: &mut HashMap<u32, String>,
+) -> String {
+    // 1. Verificar cache persistente em memória / disco
+    if let Some(cached) = cache.get(&app_id) {
+        if !cached.trim().is_empty() {
+            return cached.clone();
+        }
+    }
+
+    // 2. Verificar manifests locais (.acf) em todas as bibliotecas da Steam no computador
+    for lib in libraries {
+        let acf = lib.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
+        if let Some(name) = read_game_name_from_manifest(&acf) {
+            cache.insert(app_id, name.clone());
+            return name;
+        }
+    }
+
+    // 3. Fallback: Consultar Steam Store API (store.steampowered.com)
+    #[cfg(target_os = "windows")]
+    {
+        let path = format!("/api/appdetails?appids={}&filters=basic", app_id);
+        if let Some((200, resp)) = cr_common::http::https_request("GET", "store.steampowered.com", &path, &[], &[]) {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&resp) {
+                if let Some(name) = val.get(&app_id.to_string())
+                    .and_then(|app| app.get("data"))
+                    .and_then(|data| data.get("name"))
+                    .and_then(|n| n.as_str())
+                {
+                    let name_str = name.to_string();
+                    cache.insert(app_id, name_str.clone());
+                    return name_str;
+                }
+            }
+        }
+    }
+
+    // 4. Se não encontrar, retornar AppID formatado
+    format!("AppID {}", app_id)
+}
+
 #[tauri::command]
 pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<GameSaveItemDto> {
-    let s_dir = steam_dir.unwrap_or_else(detect_default_steam_dir);
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
     let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
     let steam_path = Path::new(&s_dir);
     let vault_path = Path::new(&v_dir);
 
-    let mut map: BTreeMap<(u32, u32), (usize, u64, String)> = BTreeMap::new();
+    // Map: (account_id, app_id) -> (file_count, total_bytes, source, in_cloud)
+    let mut map: BTreeMap<(u32, u32), (usize, u64, String, bool)> = BTreeMap::new();
 
     // 1. Escanear Steam userdata
     let userdata_dir = steam_path.join("userdata");
@@ -551,7 +740,7 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
                         }
                         if !files.is_empty() {
                             let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
-                            map.insert((account_id, app_id), (files.len(), total_bytes, "Steam Userdata".to_string()));
+                            map.insert((account_id, app_id), (files.len(), total_bytes, "Steam Userdata".to_string(), false));
                         }
                     }
                 }
@@ -559,7 +748,7 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
         }
     }
 
-    // 2. Escanear Vault
+    // 2. Escanear Cofre (Vault)
     if vault_path.exists() {
         if let Ok(entries) = fs::read_dir(vault_path) {
             for entry in entries.flatten() {
@@ -578,8 +767,19 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
                             continue;
                         }
 
+                        let manifest_p = app_path.join("manifest.tsv");
+                        let in_cloud = if manifest_p.exists() {
+                            fs::read_to_string(&manifest_p)
+                                .map(|c| c.lines().any(|l| l.starts_with("cn\t") || l.starts_with("file\t")))
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        };
+
+                        let files_dir = app_path.join("files");
+                        let scan_target = if files_dir.exists() { &files_dir } else { &app_path };
                         let mut files: Vec<(String, PathBuf)> = Vec::new();
-                        collect_files_recursive(&app_path, &app_path, &mut files);
+                        collect_files_recursive(scan_target, scan_target, &mut files);
                         files.retain(|(rel, _)| rel != "manifest.tsv");
 
                         if !files.is_empty() {
@@ -588,9 +788,10 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
                                 .and_modify(|e| {
                                     e.0 = e.0.max(files.len());
                                     e.1 = e.1.max(total_bytes);
-                                    e.2 = "Steam + Vault".to_string();
+                                    e.2 = "Steam + Cofre".to_string();
+                                    e.3 = e.3 || in_cloud;
                                 })
-                                .or_insert((files.len(), total_bytes, "Vault Local".to_string()));
+                                .or_insert((files.len(), total_bytes, "Cofre Local".to_string(), in_cloud));
                         }
                     }
                 }
@@ -598,23 +799,34 @@ pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<G
         }
     }
 
-    map.into_iter()
-        .map(|((account_id, app_id), (file_count, total_bytes, source))| GameSaveItemDto {
-            account_id,
-            app_id,
-            name: format!("AppID {}", app_id),
-            file_count,
-            total_bytes,
-            total_size_formatted: format_size(total_bytes),
-            source,
+    let libraries = get_steam_library_folders(steam_path);
+    let mut cache = load_app_names_cache();
+
+    let items: Vec<GameSaveItemDto> = map.into_iter()
+        .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
+            let name = resolve_game_name(app_id, &libraries, &mut cache);
+            GameSaveItemDto {
+                account_id,
+                app_id,
+                name,
+                file_count,
+                total_bytes,
+                total_size_formatted: format_size(total_bytes),
+                source,
+                in_local: true,
+                in_cloud,
+            }
         })
-        .collect()
+        .collect();
+
+    save_app_names_cache(&cache);
+    items
 }
 
 #[tauri::command]
-pub fn get_logs(log_name: String, max_lines: Option<usize>) -> String {
-    let steam_dir = detect_default_steam_dir();
-    let s_path = Path::new(&steam_dir);
+pub fn get_logs(log_name: String, max_lines: Option<usize>, steam_dir: Option<String>) -> String {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
     let log_file = match log_name.as_str() {
         "bridge" => s_path.join("chronokeep_bridge.log"),
         _ => s_path.join("chrono_daemon.log"),
@@ -625,22 +837,41 @@ pub fn get_logs(log_name: String, max_lines: Option<usize>) -> String {
     }
 
     let limit = max_lines.unwrap_or(300);
-    if let Ok(content) = fs::read_to_string(&log_file) {
-        let lines: Vec<&str> = content.lines().collect();
-        if lines.len() <= limit {
-            content
+    let content = if let Ok(meta) = fs::metadata(&log_file) {
+        if meta.len() > 1024 * 1024 {
+            if let Ok(mut f) = fs::File::open(&log_file) {
+                use std::io::{Read, Seek, SeekFrom};
+                let offset = meta.len().saturating_sub(512 * 1024);
+                let _ = f.seek(SeekFrom::Start(offset));
+                let mut buf = Vec::new();
+                let _ = f.read_to_end(&mut buf);
+                String::from_utf8_lossy(&buf).to_string()
+            } else {
+                fs::read_to_string(&log_file).unwrap_or_default()
+            }
         } else {
-            lines[lines.len() - limit..].join("\n")
+            fs::read_to_string(&log_file).unwrap_or_default()
         }
     } else {
-        "[Erro ao ler arquivo de log]".to_string()
+        fs::read_to_string(&log_file).unwrap_or_default()
+    };
+
+    if content.is_empty() {
+        return "[Arquivo de log vazio]".to_string();
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() <= limit {
+        lines.join("\n")
+    } else {
+        lines[lines.len() - limit..].join("\n")
     }
 }
 
 #[tauri::command]
-pub fn clear_log(log_name: String) -> OperationResult {
-    let steam_dir = detect_default_steam_dir();
-    let s_path = Path::new(&steam_dir);
+pub fn clear_log(log_name: String, steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
     let log_file = match log_name.as_str() {
         "bridge" => s_path.join("chronokeep_bridge.log"),
         _ => s_path.join("chrono_daemon.log"),
@@ -683,5 +914,28 @@ pub fn open_directory(path: String) -> OperationResult {
     OperationResult {
         success: true,
         message: "Pasta aberta no Explorer.".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> OperationResult {
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = OsStr::new(&url).encode_wide().chain(std::iter::once(0)).collect();
+        let op: Vec<u16> = OsStr::new("open").encode_wide().chain(std::iter::once(0)).collect();
+        unsafe {
+            crate::win32::ShellExecuteW(0, op.as_ptr(), wide.as_ptr(), std::ptr::null(), std::ptr::null(), 1);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
+
+    OperationResult {
+        success: true,
+        message: "Link aberto no navegador.".to_string(),
     }
 }

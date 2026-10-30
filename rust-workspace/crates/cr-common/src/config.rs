@@ -77,7 +77,7 @@ pub fn is_gdrive_connected(steam_dir: &Path) -> bool {
     }
     if let Ok(cur) = std::env::current_exe() {
         if let Some(parent) = cur.parent() {
-            if parent.join("chronokeep_gdrive.json").exists() {
+            if parent.join("chrono-daemon.exe").exists() && parent.join("chronokeep_gdrive.json").exists() {
                 return true;
             }
         }

@@ -5,15 +5,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Recursively collects valid files from `current` relative to `base`.
-/// Ignores `.cr_tmp` temporary files.
+/// Ignores `.cr_tmp` temporary files, ignores symlinks/junctions, and bounds recursion depth to 15.
 pub fn collect_files_recursive(base: &Path, current: &Path, out: &mut Vec<(String, PathBuf)>) {
+    collect_files_recursive_bounded(base, current, out, 0);
+}
+
+fn collect_files_recursive_bounded(
+    base: &Path,
+    current: &Path,
+    out: &mut Vec<(String, PathBuf)>,
+    depth: usize,
+) {
+    if depth > 15 {
+        return;
+    }
     let Ok(entries) = fs::read_dir(current) else {
         return;
     };
     for entry in entries.flatten() {
+        if let Ok(ft) = entry.file_type() {
+            if ft.is_symlink() {
+                continue;
+            }
+        }
         let path = entry.path();
         if path.is_dir() {
-            collect_files_recursive(base, &path, out);
+            collect_files_recursive_bounded(base, &path, out, depth + 1);
         } else if path.is_file() {
             if let Some(ext) = path.extension() {
                 if ext == "cr_tmp" || ext == "tmp" {

@@ -892,3 +892,57 @@ input:checked + .slider:before {
   pointer-events: auto;
 }
 
+/* ==========================================================================
+   Status pill warning & Game Title
+   ========================================================================== */
+.status-pill.warning {
+  background: rgba(255, 185, 0, 0.15);
+  color: #e09600;
+  border-color: rgba(255, 185, 0, 0.3);
+}
+
+.game-title {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Under Construction View
+   ========================================================================== */
+.construction-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 380px;
+  padding: 40px 20px;
+}
+
+.construction-card {
+  max-width: 500px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 36px 30px;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.construction-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.construction-card h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.construction-card p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+

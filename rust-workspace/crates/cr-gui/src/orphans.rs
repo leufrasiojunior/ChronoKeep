@@ -608,6 +608,14 @@ pub fn upload_single_game_save(
         }
     }
 
+    if uploaded_count == 0 {
+        return Err(format!(
+            "Falha ao enviar os {} arquivo(s) do AppID {} para o Google Drive. Verifique a conexão com a internet ou permissões da conta.",
+            valid_files.len(),
+            app_id
+        ));
+    }
+
     let manifest_content = serialize_manifest(&manifest_data);
     if let Some(parent) = manifest_file.parent() {
         let _ = fs::create_dir_all(parent);

@@ -76,6 +76,13 @@ extern "system" {
         dw_number_of_bytes_to_read: DWORD,
         lpdw_number_of_bytes_read: *mut DWORD,
     ) -> BOOL;
+    fn WinHttpSetTimeouts(
+        h_internet: HINTERNET,
+        n_resolve_timeout: i32,
+        n_connect_timeout: i32,
+        n_send_timeout: i32,
+        n_receive_timeout: i32,
+    ) -> BOOL;
     fn WinHttpCloseHandle(h_internet: HINTERNET) -> BOOL;
 }
 
@@ -172,6 +179,7 @@ pub fn https_request(
         if h_session.is_null() {
             return None;
         }
+        WinHttpSetTimeouts(h_session, 3000, 3000, 5000, 5000);
 
         let host_w = to_wide(host);
         let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);

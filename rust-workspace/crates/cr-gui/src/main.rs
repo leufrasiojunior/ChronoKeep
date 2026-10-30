@@ -54,6 +54,7 @@ fn main() {
             get_logs,
             clear_log,
             open_directory,
+            open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ChronoKeep GUI");

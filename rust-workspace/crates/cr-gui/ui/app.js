@@ -100,13 +100,13 @@ function updateDaemonStatusUI(online, port) {
 
   if (online) {
     if (dot) { dot.className = "status-dot online"; }
-    if (text) text.textContent = `Daemon Ativo (${port})`;
+    if (text) text.textContent = "Daemon Ativo";
     if (heroBadge) {
-      heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">Daemon Ativo (${port})</span>`;
+      heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">Daemon Ativo</span>`;
     }
     if (toggle) toggle.checked = true;
     if (tileLabel) tileLabel.textContent = "Parar Daemon";
-    if (cardDesc) cardDesc.textContent = `Serviço em execução na porta ${port} (HTTP Loopback)`;
+    if (cardDesc) cardDesc.textContent = "Serviço de sincronização ativo em segundo plano";
   } else {
     if (dot) { dot.className = "status-dot offline"; }
     if (text) text.textContent = "Daemon Inativo";
@@ -115,7 +115,7 @@ function updateDaemonStatusUI(online, port) {
     }
     if (toggle) toggle.checked = false;
     if (tileLabel) tileLabel.textContent = "Iniciar Daemon";
-    if (cardDesc) cardDesc.textContent = `Serviço de sincronização HTTP local (Porta ${port})`;
+    if (cardDesc) cardDesc.textContent = "Serviço de sincronização local desligado";
   }
 }
 
@@ -175,7 +175,9 @@ async function loadInitialData() {
       appConfig = { ...appConfig, ...cfg };
       document.getElementById("input-steam-dir").value = appConfig.steam_dir;
       document.getElementById("input-vault-dir").value = appConfig.vault_dir;
-      document.getElementById("input-port").value = appConfig.port;
+      if (document.getElementById("input-port")) {
+        document.getElementById("input-port").value = appConfig.port;
+      }
       document.getElementById("select-max-upload").value = String(appConfig.max_upload_mb);
       document.getElementById("select-theme").value = appConfig.theme;
       applyTheme(appConfig.theme);
@@ -320,10 +322,11 @@ function setupActionHandlers() {
 
   // Save Settings
   document.getElementById("btn-save-config")?.addEventListener("click", async () => {
+    const portEl = document.getElementById("input-port");
     const newCfg = {
       steam_dir: document.getElementById("input-steam-dir").value.trim(),
       vault_dir: document.getElementById("input-vault-dir").value.trim(),
-      port: parseInt(document.getElementById("input-port").value, 10) || 39771,
+      port: (portEl ? parseInt(portEl.value, 10) : appConfig.port) || 39771,
       gdrive_connected: appConfig.gdrive_connected,
       max_upload_mb: parseInt(document.getElementById("select-max-upload").value, 10) || 512,
       theme: document.getElementById("select-theme").value,
@@ -349,15 +352,24 @@ function setupActionHandlers() {
     applyTheme(e.target.value);
   });
 
-  // Scan Saves
+  // Scan Saves & Batch Sync
   document.getElementById("btn-scan-saves")?.addEventListener("click", scanSaves);
+  document.getElementById("btn-sync-selected")?.addEventListener("click", syncSelectedSaves);
+
+  // GitHub External Link
+  document.getElementById("nav-github-link")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    invokeBackend("open_url", { url: "https://github.com/leufrasiojunior/ChronoKeep" });
+  });
 
   // Logs actions
   document.getElementById("btn-refresh-log")?.addEventListener("click", loadLogs);
   document.getElementById("select-log-target")?.addEventListener("change", loadLogs);
   document.getElementById("btn-clear-log")?.addEventListener("click", async () => {
     const target = document.getElementById("select-log-target").value;
-    const res = await invokeBackend("clear_log", { logName: target });
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const steamDir = inputSteam || appConfig.steam_dir;
+    const res = await invokeBackend("clear_log", { logName: target, steamDir: steamDir || null });
     showToast(res ? res.message : "Log limpo.");
     loadLogs();
   });
@@ -369,7 +381,7 @@ function setupActionHandlers() {
 async function scanSaves() {
   const tbody = document.getElementById("tbody-saves");
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Varrendo pastas de saves locais no PC...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8" class="empty-state">Varrendo pastas de saves locais no PC...</td></tr>`;
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -383,19 +395,32 @@ async function scanSaves() {
     });
 
     if (!items || items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Nenhum save local de jogo encontrado nas pastas especificadas.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-state">Nenhum save local de jogo encontrado nas pastas especificadas.</td></tr>`;
+      updateSelectionUI();
       return;
     }
 
     tbody.innerHTML = items
       .map(
         (item) => `
-        <tr>
+        <tr data-appid="${item.app_id}" data-accountid="${item.account_id}">
+          <td style="text-align: center;">
+            <input type="checkbox" class="orphan-checkbox" data-appid="${item.app_id}" data-accountid="${item.account_id}">
+          </td>
           <td><strong>${item.app_id}</strong></td>
-          <td>${item.name}</td>
+          <td><span class="game-title">${escapeHtml(item.name)}</span></td>
           <td>${item.file_count} arquivos</td>
           <td>${item.total_size_formatted}</td>
-          <td><span class="status-pill ${item.source.includes("Vault") ? "active" : ""}">${item.source}</span></td>
+          <td>
+            <span class="status-pill active">✓ ${item.source.replace("Vault", "Cofre")}</span>
+          </td>
+          <td>
+            ${
+              item.in_cloud
+                ? `<span class="status-pill active">✓ Na Nuvem</span>`
+                : `<span class="status-pill warning">Pendente</span>`
+            }
+          </td>
           <td>
             <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this)">
               Sincronizar
@@ -405,9 +430,114 @@ async function scanSaves() {
       `
       )
       .join("");
+
+    bindOrphanCheckboxes();
+    updateSelectionUI();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
   }
+}
+
+function escapeHtml(text) {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function bindOrphanCheckboxes() {
+  const master = document.getElementById("check-all-orphans");
+  const checks = document.querySelectorAll(".orphan-checkbox");
+
+  if (master) {
+    master.checked = false;
+    master.onchange = () => {
+      checks.forEach((c) => (c.checked = master.checked));
+      updateSelectionUI();
+    };
+  }
+
+  checks.forEach((c) => {
+    c.onchange = () => {
+      if (master) {
+        master.checked = Array.from(checks).length > 0 && Array.from(checks).every((ch) => ch.checked);
+      }
+      updateSelectionUI();
+    };
+  });
+}
+
+function updateSelectionUI() {
+  const checked = document.querySelectorAll(".orphan-checkbox:checked");
+  const count = checked.length;
+  const btnSyncSelected = document.getElementById("btn-sync-selected");
+  const countSpan = document.getElementById("selected-count");
+
+  if (countSpan) countSpan.textContent = String(count);
+  if (btnSyncSelected) {
+    btnSyncSelected.disabled = count === 0;
+  }
+}
+
+async function syncSelectedSaves() {
+  const checked = Array.from(document.querySelectorAll(".orphan-checkbox:checked"));
+  if (checked.length === 0) return;
+
+  const btnSyncSelected = document.getElementById("btn-sync-selected");
+  const originalHtml = btnSyncSelected ? btnSyncSelected.innerHTML : "";
+
+  if (btnSyncSelected) {
+    btnSyncSelected.disabled = true;
+    btnSyncSelected.textContent = `Sincronizando 1 de ${checked.length}...`;
+  }
+
+  let successCount = 0;
+  for (let i = 0; i < checked.length; i++) {
+    const el = checked[i];
+    const appId = parseInt(el.getAttribute("data-appid"), 10);
+    const accountId = parseInt(el.getAttribute("data-accountid"), 10);
+
+    if (btnSyncSelected) {
+      btnSyncSelected.textContent = `Sincronizando ${i + 1} de ${checked.length}...`;
+    }
+
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const vaultDir = inputVault || appConfig.vault_dir;
+
+      const res = await invokeBackend("upload_game_save", {
+        appId,
+        accountId,
+        steamDir: steamDir || null,
+        vaultDir: vaultDir || null,
+      });
+
+      if (res && res.success) {
+        successCount++;
+        const row = el.closest("tr");
+        if (row) {
+          const cells = row.querySelectorAll("td");
+          if (cells.length >= 7) {
+            cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`Erro ao sincronizar AppID ${appId}:`, e);
+    }
+  }
+
+  showToast(`${successCount} jogo(s) sincronizado(s) com a nuvem com sucesso!`);
+  if (btnSyncSelected) {
+    btnSyncSelected.disabled = false;
+    btnSyncSelected.innerHTML = originalHtml || `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> Sincronizar Selecionados (<span id="selected-count">0</span>)`;
+  }
+  updateSelectionUI();
 }
 
 // --------------------------------------------------------------------------
@@ -436,6 +566,13 @@ async function syncGameSave(appId, accountId, btn) {
       showToast(res.message);
       if (btn) {
         btn.textContent = "Sincronizado ✅";
+        const row = btn.closest("tr");
+        if (row) {
+          const cells = row.querySelectorAll("td");
+          if (cells.length >= 7) {
+            cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
+          }
+        }
         setTimeout(() => {
           btn.disabled = false;
           btn.textContent = originalText;
@@ -469,7 +606,13 @@ async function loadLogs() {
   output.textContent = `Carregando ${target === "bridge" ? "chronokeep_bridge.log" : "chrono_daemon.log"}...`;
 
   try {
-    const content = await invokeBackend("get_logs", { logName: target, maxLines: 300 });
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const steamDir = inputSteam || appConfig.steam_dir;
+    const content = await invokeBackend("get_logs", {
+      logName: target,
+      maxLines: 300,
+      steamDir: steamDir || null,
+    });
     output.textContent = content || "[Arquivo de log vazio]";
     output.scrollTop = output.scrollHeight;
   } catch (e) {

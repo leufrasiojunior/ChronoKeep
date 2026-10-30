@@ -59,8 +59,17 @@
           <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
           </svg>
-          <span class="nav-label">Saves & Órfãos</span>
+          <span class="nav-label">Saves Órfãos</span>
           <span class="badge-pill">NOVO</span>
+        </button>
+
+        <button class="nav-item" data-page="games">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <path d="M6 12h4m-2-2v4m7-3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path>
+          </svg>
+          <span class="nav-label">Jogos & Nuvem</span>
         </button>
 
         <button class="nav-item" data-page="logs">
@@ -84,7 +93,7 @@
       </div>
 
       <div class="nav-group bottom-group">
-        <a href="https://github.com/leufrasiojunior/ChronoKeep" target="_blank" class="nav-item external">
+        <a href="https://github.com/leufrasiojunior/ChronoKeep" id="nav-github-link" class="nav-item external">
           <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
           </svg>
@@ -287,8 +296,8 @@
                     </svg>
                   </div>
                   <div class="card-text">
-                    <div class="card-name">Salvaguardas de Domínio Valve</div>
-                    <div class="card-desc">AppIDs 7, 760, 241100 filtrados; Monotonicidade de Change Number</div>
+                    <div class="card-name">Salvaguardas do Sistema Steam</div>
+                    <div class="card-desc">Filtros de integridade e monotonicidade de versão ativos</div>
                   </div>
                 </div>
                 <div class="card-right">
@@ -333,7 +342,7 @@
             </div>
           </div>
 
-          <!-- Vault Path -->
+          <!-- Vault/Cofre Path -->
           <div class="settings-card">
             <div class="card-left">
               <div class="card-icon-box">
@@ -342,8 +351,8 @@
                 </svg>
               </div>
               <div class="card-text">
-                <div class="card-name">Pasta do Vault Local</div>
-                <div class="card-desc">Local onde os saves interceptados e manifestos TSV são preservados</div>
+                <div class="card-name">Pasta do Cofre Local</div>
+                <div class="card-desc">Diretório local onde cópias dos saves e manifestos são preservados</div>
               </div>
             </div>
             <div class="card-right input-group">
@@ -353,25 +362,6 @@
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                 </svg>
               </button>
-            </div>
-          </div>
-
-          <!-- Port & Max Upload -->
-          <div class="settings-card">
-            <div class="card-left">
-              <div class="card-icon-box">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                  <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-                </svg>
-              </div>
-              <div class="card-text">
-                <div class="card-name">Porta de Comunicação do Daemon</div>
-                <div class="card-desc">Porta TCP local para recepção de requisições da DLL bridge</div>
-              </div>
-            </div>
-            <div class="card-right">
-              <input type="number" id="input-port" class="number-input" value="39771" min="1024" max="65535">
             </div>
           </div>
 
@@ -442,41 +432,70 @@
         </div>
       </section>
 
-      <!-- PAGE 3: SAVES NA NUVEM & ÓRFÃOS -->
+      <!-- PAGE 3: SAVES ÓRFÃOS -->
       <section class="page" id="page-cloud-saves">
         <div class="page-title-row">
-          <h1 class="page-title">Saves na Nuvem & Órfãos</h1>
-          <button class="btn btn-primary" id="btn-scan-saves">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            Escanear Saves no PC
-          </button>
+          <h1 class="page-title">Saves Órfãos</h1>
+          <div class="page-actions">
+            <button class="btn btn-secondary" id="btn-sync-selected" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Sincronizar Selecionados (<span id="selected-count">0</span>)
+            </button>
+            <button class="btn btn-primary" id="btn-scan-saves">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              Escanear Saves no PC
+            </button>
+          </div>
         </div>
 
         <div class="sub-header-desc">
-          Varre os diretórios locais do Steam userdata e do Vault para catalogar saves existentes que ainda não foram sincronizados com o Google Drive.
+          Varre os diretórios locais do Steam userdata e do Cofre para catalogar saves existentes que ainda não foram sincronizados com o Google Drive.
         </div>
 
         <div class="saves-table-container">
           <table class="fluent-table" id="table-saves">
             <thead>
               <tr>
+                <th style="width: 40px; text-align: center;">
+                  <input type="checkbox" id="check-all-orphans" title="Selecionar todos">
+                </th>
                 <th>AppID</th>
-                <th>Jogo / Identificador</th>
+                <th>Jogo</th>
                 <th>Arquivos</th>
                 <th>Tamanho</th>
-                <th>Origem Local</th>
+                <th>No Cofre / Local</th>
+                <th>Na Nuvem</th>
                 <th>Ações</th>
               </tr>
             </thead>
             <tbody id="tbody-saves">
               <tr>
-                <td colspan="6" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
+                <td colspan="8" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- PAGE: JOGOS & NUVEM (EM CONSTRUÇÃO) -->
+      <section class="page" id="page-games">
+        <div class="page-title-row">
+          <h1 class="page-title">Jogos & Nuvem</h1>
+        </div>
+        <div class="construction-container">
+          <div class="construction-card">
+            <div class="construction-icon">🎮</div>
+            <h2>Em construção</h2>
+            <p>Esta seção exibirá todos os seus jogos identificados, capas oficiais, AppIDs, status detalhado de saves locais e na nuvem, com opção de habilitar ou pausar o backup individual de cada título.</p>
+            <span class="status-pill active">Em breve no ChronoKeep</span>
+          </div>
         </div>
       </section>
 
@@ -519,7 +538,7 @@
           <div class="about-section">
             <h3>Salvaguardas de Integridade Ativas:</h3>
             <ul class="features-list">
-              <li>✅ <strong>Isolamento de AppIDs de Sistema</strong>: 7, 760, 241100 e 241300 protegidos contra upload/sobrescrita indevida.</li>
+              <li>✅ <strong>Isolamento de Processos de Sistema</strong>: Módulos internos da Steam protegidos contra sincronização indevida.</li>
               <li>✅ <strong>Monotonicidade de Change Number (CN)</strong>: Saves locais nunca são sobrescritos se o CN da nuvem for inferior.</li>
               <li>✅ <strong>Prevenção de Corrupção por Token Recursivo</strong>: Higienização de tokens <code>%WinMyDocuments%</code> duplicados.</li>
               <li>✅ <strong>Controle de Concorrência RAII</strong>: Bloqueio estrito de downloads concorrentes simultâneos do mesmo AppID.</li>
