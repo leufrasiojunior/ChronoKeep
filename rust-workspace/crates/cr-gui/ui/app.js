@@ -29,12 +29,13 @@ let toastTimeout = null;
 function showToast(message, duration = 3500) {
   const toast = document.getElementById("toast");
   if (!toast) return;
+  const timeoutMs = (typeof duration === "number" && duration > 0) ? duration : 5000;
   toast.textContent = message;
   toast.classList.add("show");
   if (toastTimeout) clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
     toast.classList.remove("show");
-  }, duration);
+  }, timeoutMs);
 }
 
 // --------------------------------------------------------------------------
@@ -495,6 +496,7 @@ async function syncSelectedSaves() {
   }
 
   let successCount = 0;
+  const failedList = [];
   for (let i = 0; i < checked.length; i++) {
     const el = checked[i];
     const appId = parseInt(el.getAttribute("data-appid"), 10);
@@ -526,13 +528,23 @@ async function syncSelectedSaves() {
             cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
           }
         }
+      } else {
+        const errorMsg = (res && res.message) ? res.message : "Falha desconhecida";
+        failedList.push({ appId, error: errorMsg });
       }
     } catch (e) {
       console.error(`Erro ao sincronizar AppID ${appId}:`, e);
+      failedList.push({ appId, error: e.message || String(e) });
     }
   }
 
-  showToast(`${successCount} jogo(s) sincronizado(s) com a nuvem com sucesso!`);
+  if (failedList.length === 0) {
+    showToast(`${successCount} jogo(s) sincronizado(s) com a nuvem com sucesso!`, 4000);
+  } else if (successCount === 0) {
+    showToast(`Falha ao sincronizar ${failedList.length} jogo(s) selecionado(s): ${failedList[0].error}`, 6000);
+  } else {
+    showToast(`${successCount} jogo(s) sincronizado(s), mas ${failedList.length} falharam: ${failedList[0].error}`, 6000);
+  }
   if (btnSyncSelected) {
     btnSyncSelected.disabled = false;
     btnSyncSelected.innerHTML = originalHtml || `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> Sincronizar Selecionados (<span id="selected-count">0</span>)`;
@@ -563,7 +575,7 @@ async function syncGameSave(appId, accountId, btn) {
       vaultDir: vaultDir || null,
     });
     if (res && res.success) {
-      showToast(res.message);
+      showToast(res.message, 4000);
       if (btn) {
         btn.textContent = "Sincronizado ✅";
         const row = btn.closest("tr");
@@ -579,14 +591,14 @@ async function syncGameSave(appId, accountId, btn) {
         }, 4000);
       }
     } else {
-      showToast(res ? res.message : "Falha na sincronização", true);
+      showToast(res ? res.message : "Falha na sincronização", 5000);
       if (btn) {
         btn.disabled = false;
         btn.textContent = originalText;
       }
     }
   } catch (err) {
-    showToast(`Erro ao sincronizar: ${err}`, true);
+    showToast(`Erro ao sincronizar: ${err}`, 5000);
     if (btn) {
       btn.disabled = false;
       btn.textContent = originalText;

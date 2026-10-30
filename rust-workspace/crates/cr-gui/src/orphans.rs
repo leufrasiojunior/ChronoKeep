@@ -655,10 +655,6 @@ pub fn upload_single_game_save(
     }
 
     let manifest_content = serialize_manifest(&manifest_data);
-    if let Some(parent) = manifest_file.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(&manifest_file, manifest_content.as_bytes());
 
     let manifest_ok = sync_orphan_file_to_drive_with_retry(
         &token,
@@ -673,6 +669,11 @@ pub fn upload_single_game_save(
             app_id
         ));
     }
+
+    if let Some(parent) = manifest_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&manifest_file, manifest_content.as_bytes());
 
     let target_upload_count = valid_files.len().saturating_sub(oversized_count);
     if uploaded_count < target_upload_count {
