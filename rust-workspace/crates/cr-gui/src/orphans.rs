@@ -596,19 +596,22 @@ pub fn upload_single_game_save(
     let mut oversized_count = 0;
 
     for (rel_name, full_path) in &valid_files {
+        let vault_dest = vault_app_files.join(rel_name);
+        if let Some(parent) = vault_dest.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        let file_len = fs::metadata(full_path).map(|m| m.len()).unwrap_or(0);
+        // Verifica o limite de upload configurado na UI antes de carregar o arquivo na RAM
+        if file_len > max_bytes {
+            let _ = fs::copy(full_path, &vault_dest);
+            oversized_count += 1;
+            continue;
+        }
+
         if let Ok(bytes) = fs::read(full_path) {
             // Guarda sempre no Cofre local para preservação do save
-            let vault_dest = vault_app_files.join(rel_name);
-            if let Some(parent) = vault_dest.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
             let _ = fs::write(&vault_dest, &bytes);
-
-            // Verifica o limite de upload configurado na UI para envio manual
-            if (bytes.len() as u64) > max_bytes {
-                oversized_count += 1;
-                continue;
-            }
 
             let ok = sync_orphan_file_to_drive_with_retry(&token, account_id, app_id, rel_name, &bytes);
             if ok {

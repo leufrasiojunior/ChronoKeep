@@ -4,7 +4,8 @@ use crate::installer::{
     deploy_component, ensure_opensteamtool_cloud_enabled, is_opensteamtool_cloud_disabled,
 };
 use crate::service_mgr::{
-    kill_process_and_wait, start_service_from_gui, stop_service_from_gui,
+    is_process_running, kill_process_and_wait, launch_steam, start_service_from_gui,
+    stop_service_from_gui,
 };
 use cr_common::config::{
     check_daemon_health, detect_default_steam_dir, detect_default_vault_dir, is_gdrive_connected,
@@ -334,6 +335,12 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
 
     let _ = fs::create_dir_all(&vault_dir);
 
+    // Encerra Steam se em execução para evitar bloqueio ao sobrescrever a DLL carregada
+    let steam_was_running = is_process_running("steam.exe");
+    if steam_was_running {
+        kill_process_and_wait("steam.exe", 5000);
+    }
+
     // Encerra daemon se ativo
     kill_process_and_wait("chrono-daemon.exe", 2000);
 
@@ -384,6 +391,12 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     // Inicia serviço em segundo plano
     start_service_from_gui(s_path, port);
 
+    // Relança a Steam se estava aberta antes da instalação
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        launch_steam(s_path);
+    }
+
     OperationResult {
         success: true,
         message: "ChronoKeep instalado na Steam com sucesso! O serviço daemon foi iniciado.".to_string(),
@@ -422,8 +435,8 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
         }
     }
 
-    // Escuta callback
-    let mut auth_code = None;
+    // Escuta callback e valida resultado antes de responder ao navegador
+    let mut exchange_result = None;
     for stream in listener.incoming().flatten() {
         let mut s = stream;
         let _ = s.set_read_timeout(Some(Duration::from_secs(45)));
@@ -436,6 +449,7 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
             continue;
         }
 
+        let mut auth_code = None;
         if let Some(q_idx) = first_line.find('?') {
             let query_part = first_line[q_idx + 1..].split_whitespace().next().unwrap_or("");
             for pair in query_part.split('&') {
@@ -447,25 +461,61 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
             }
         }
 
-        let html = "<html><head><meta charset='utf-8'><title>ChronoKeep</title></head>\
-            <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
-            <h1 style='color:#60CDFF;'>ChronoKeep Conectado!</h1>\
-            <p>Sua conta do Google Drive foi vinculada com sucesso. Você já pode fechar esta aba e voltar ao aplicativo.</p>\
-            </body></html>";
-        let resp = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            html.len(),
-            html
-        );
-        let _ = s.write_all(resp.as_bytes());
-        let _ = s.flush();
-        break;
+        if let Some(code) = auth_code {
+            if let Some(json_resp) = exchange_code_for_tokens(&code, &redirect_uri) {
+                let html = "<html><head><meta charset='utf-8'><title>ChronoKeep</title></head>\
+                    <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                    <h1 style='color:#60CDFF;'>ChronoKeep Conectado!</h1>\
+                    <p>Sua conta do Google Drive foi vinculada com sucesso. Você já pode fechar esta aba e voltar ao aplicativo.</p>\
+                    </body></html>";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                );
+                let _ = s.write_all(resp.as_bytes());
+                let _ = s.flush();
+                exchange_result = Some(Ok(json_resp));
+                break;
+            } else {
+                let html = "<html><head><meta charset='utf-8'><title>ChronoKeep - Erro</title></head>\
+                    <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                    <h1 style='color:#F87171;'>Falha na Vinculação</h1>\
+                    <p>Não foi possível trocar o código de autorização pelos tokens de acesso do Google. Você já pode fechar esta aba e tentar novamente no aplicativo.</p>\
+                    </body></html>";
+                let resp = format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                );
+                let _ = s.write_all(resp.as_bytes());
+                let _ = s.flush();
+                exchange_result = Some(Err("Falha ao trocar código de autorização por tokens no Google.".to_string()));
+                break;
+            }
+        } else {
+            let html = "<html><head><meta charset='utf-8'><title>ChronoKeep - Cancelado</title></head>\
+                <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                <h1 style='color:#F87171;'>Autorização Cancelada ou Negada</h1>\
+                <p>Nenhum código de autorização foi fornecido pelo Google. Você já pode fechar esta aba e tentar novamente no aplicativo.</p>\
+                </body></html>";
+            let resp = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                html.len(),
+                html
+            );
+            let _ = s.write_all(resp.as_bytes());
+            let _ = s.flush();
+            exchange_result = Some(Err("Nenhum código de autorização recebido do navegador.".to_string()));
+            break;
+        }
     }
 
-    let code = auth_code.ok_or_else(|| "Nenhum código de autorização recebido do navegador.".to_string())?;
-
-    let json_resp = exchange_code_for_tokens(&code, &redirect_uri)
-        .ok_or_else(|| "Falha ao trocar código de autorização por tokens no Google.".to_string())?;
+    let json_resp = match exchange_result {
+        Some(Ok(resp)) => resp,
+        Some(Err(err)) => return Err(err),
+        None => return Err("Tempo limite esgotado aguardando autorização no navegador.".to_string()),
+    };
 
     // 1. Persistir o token JSON completo onde o daemon e is_gdrive_connected buscam
     let token_json_path = s_path.join("chronokeep_gdrive.json");

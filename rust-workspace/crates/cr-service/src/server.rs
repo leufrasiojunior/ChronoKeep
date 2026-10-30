@@ -358,20 +358,21 @@ fn read_http_request(
 
     // Sincronização automática interceptada da Steam via daemon:
     // Não impõe limite restritivo; sincroniza independente do tamanho.
-    // Mantém apenas uma trava técnica de segurança contra transbordamento de buffer (4GB).
-    const MAX_SAFE_DAEMON_PAYLOAD: usize = 4 * 1024 * 1024 * 1024;
+    // Mantém uma trava técnica de segurança contra transbordamento ou exaustão de memória (1GB).
+    const MAX_SAFE_DAEMON_PAYLOAD: usize = 1024 * 1024 * 1024;
     if content_length > MAX_SAFE_DAEMON_PAYLOAD {
         log_msg(
             log_path,
             &format!(
-                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de seguranca (4GB)",
+                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de seguranca (1GB)",
                 method, path, content_length
             ),
         );
         return None;
     }
 
-    let mut body = Vec::with_capacity(content_length);
+    // Inicializa com capacidade moderada para evitar alocação excessiva imediata de memória
+    let mut body = Vec::with_capacity(content_length.min(16 * 1024 * 1024));
     if buf.len() > header_end {
         body.extend_from_slice(&buf[header_end..]);
     }
