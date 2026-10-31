@@ -1074,16 +1074,26 @@ pub fn open_url(url: String) -> OperationResult {
 }
 
 #[tauri::command]
-pub fn check_for_updates() -> crate::updater::UpdateCheckResult {
+pub async fn check_for_updates() -> crate::updater::UpdateCheckResult {
     let steam_dir = load_preferred_steam_dir();
     let s_path = PathBuf::from(&steam_dir);
-    crate::updater::check_updates(&s_path)
+    tauri::async_runtime::spawn_blocking(move || crate::updater::check_updates(&s_path))
+        .await
+        .unwrap_or_else(|e| crate::updater::UpdateCheckResult {
+            success: false,
+            message: format!("Erro ao checar atualizações: {}", e),
+            release_tag: String::new(),
+            has_updates: false,
+            components: Vec::new(),
+        })
 }
 
 #[tauri::command]
-pub fn update_component(component: String) -> Result<crate::updater::UpdateApplyResult, String> {
+pub async fn update_component(component: String) -> Result<crate::updater::UpdateApplyResult, String> {
     let steam_dir = load_preferred_steam_dir();
     let s_path = PathBuf::from(&steam_dir);
-    crate::updater::apply_update(&component, &s_path)
+    tauri::async_runtime::spawn_blocking(move || crate::updater::apply_update(&component, &s_path))
+        .await
+        .map_err(|e| format!("Erro na tarefa de atualização: {}", e))?
 }
 

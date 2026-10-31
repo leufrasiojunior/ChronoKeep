@@ -350,8 +350,10 @@ async function loadInitialData() {
 
     await checkDaemon();
 
-    // Verificação proativa de atualizações em segundo plano ao abrir o aplicativo
-    checkForUpdates(false).catch((e) => console.warn("Auto-check updates on startup:", e));
+    // Verificação proativa de atualizações em segundo plano após o carregamento inicial da UI
+    setTimeout(() => {
+      checkForUpdates(false).catch((e) => console.warn("Auto-check updates on startup:", e));
+    }, 400);
   } catch (err) {
     console.error("Erro ao carregar dados iniciais:", err);
   }

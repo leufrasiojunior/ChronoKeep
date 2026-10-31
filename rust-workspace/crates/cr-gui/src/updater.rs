@@ -112,19 +112,8 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
     if !cur_hash.is_empty() && cur_hash == embedded_hash {
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = std::process::Command::new(daemon_path);
-        cmd.arg("version");
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        if let Ok(output) = cmd.output() {
-            let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if ver.starts_with("v") && ver.len() <= 10 {
-                return ver;
-            }
-        }
-    }
     match cur_hash.as_str() {
+        "bd3e9c3e9e16dbd6207dbd1bf66ac13aa8fd2c6a28f155ffa4bf006d1288b2bc" => "v0.1.6".to_string(),
         "67adff9ae4589b8060a9cd17d0a6046e7a1907ab71b59f2527ed5f6427e5a850" => "v0.1.5".to_string(),
         "24de7fd18a865a3b2b3c6a3220d511ed12b16d2011139a88acd0454860461e48" => "v0.1.5".to_string(),
         "011328eac03fd39a6fa1500649552499c717d27692868c77969fd179d7adbeb3" => "v0.1.4".to_string(),
@@ -147,6 +136,7 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }
     match cur_hash.as_str() {
+        "cd56c1520b8f0326c67e154ed7ab7099ccd843edd9a4ef5a56bca278960f51ec" => "v0.1.6".to_string(),
         "1a5767db4161aace8be0f7be7c05518575bafa40914b4301cac106d5e7c14e21" => "v0.1.5".to_string(),
         "8433a409012ef36ac17e48f29b1e5591793b563ed5316f0724d7da724fbf56ff" => "v0.1.5".to_string(),
         "9a883c9e39592e4934dac08c7b5aa1099116369e7b686b2bbeb674c84609a988" => "v0.1.4".to_string(),
