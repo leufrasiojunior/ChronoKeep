@@ -2,10 +2,8 @@ name: Build and Release ChronoKeep
 
 on:
   push:
-    branches: [ "main" ]
-    tags: [ "v*" ]
-  pull_request:
-    branches: [ "main" ]
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       component:
@@ -251,15 +249,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if (Test-Path versions.json) {
+            $manifestContent = Get-Content -Raw versions.json
             git remote set-url origin "https://x-access-token:$($env:GITHUB_TOKEN)@github.com/$($env:GITHUB_REPOSITORY).git"
+            git reset --hard HEAD
             git fetch origin main
-            git checkout -B sync-release-manifest
+            git checkout -f main
+            git reset --hard origin/main
+            Set-Content -Path "versions.json" -Value $manifestContent -Encoding UTF8
             git add versions.json
             git diff --quiet --cached
             if ($LASTEXITCODE -ne 0) {
               git commit -m "chore(release): update versions.json manifest [skip ci]"
               git pull --rebase origin main
-              git push origin sync-release-manifest:main
+              git push origin main
             }
           }
 

@@ -5,19 +5,19 @@
     "gui": {
       "version": "v0.1.5",
       "filename": "ChronoKeep.exe",
-      "sha256": "caccba274d8c0990f3dcb7582121845f1ab70ca2a3539043dd149fedf0a5ca5c",
+      "sha256": "135dc13a8bea19534f1e0b79c84f9b65aa6b0039ab64840f4fdcd225e62c2375",
       "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.5/ChronoKeep.exe"
     },
     "daemon": {
       "version": "v0.1.5",
       "filename": "chrono-daemon.exe",
-      "sha256": "24de7fd18a865a3b2b3c6a3220d511ed12b16d2011139a88acd0454860461e48",
+      "sha256": "67adff9ae4589b8060a9cd17d0a6046e7a1907ab71b59f2527ed5f6427e5a850",
       "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.5/chrono-daemon.exe"
     },
     "bridge_dll": {
       "version": "v0.1.5",
       "filename": "chronokeep.dll",
-      "sha256": "8433a409012ef36ac17e48f29b1e5591793b563ed5316f0724d7da724fbf56ff",
+      "sha256": "1a5767db4161aace8be0f7be7c05518575bafa40914b4301cac106d5e7c14e21",
       "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.5/chronokeep.dll"
     }
   }

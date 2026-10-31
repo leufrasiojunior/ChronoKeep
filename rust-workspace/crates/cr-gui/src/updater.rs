@@ -125,6 +125,8 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
         }
     }
     match cur_hash.as_str() {
+        "67adff9ae4589b8060a9cd17d0a6046e7a1907ab71b59f2527ed5f6427e5a850" => "v0.1.5".to_string(),
+        "24de7fd18a865a3b2b3c6a3220d511ed12b16d2011139a88acd0454860461e48" => "v0.1.5".to_string(),
         "011328eac03fd39a6fa1500649552499c717d27692868c77969fd179d7adbeb3" => "v0.1.4".to_string(),
         "2e11a572a133710fb7a550072d1171a79f18efa96a46d1961bc1eb222fca4b94" => "v0.1.4".to_string(),
         "d7c6a8dd046aaf50d6ffa4cb4935c4b32e110c435eafabd4c318470fa462f57e" => "v0.1.3".to_string(),
@@ -145,6 +147,8 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }
     match cur_hash.as_str() {
+        "1a5767db4161aace8be0f7be7c05518575bafa40914b4301cac106d5e7c14e21" => "v0.1.5".to_string(),
+        "8433a409012ef36ac17e48f29b1e5591793b563ed5316f0724d7da724fbf56ff" => "v0.1.5".to_string(),
         "9a883c9e39592e4934dac08c7b5aa1099116369e7b686b2bbeb674c84609a988" => "v0.1.4".to_string(),
         "daf4c9e79183632d97adeae7ea432eddf600b91197c8a2c5c51c42a2a0cd56aa" => "v0.1.4".to_string(),
         "ec4fb0630a74624d782a211846cf070e06a0e48fa8ca6e7ca0d43c620931943f" => "v0.1.3".to_string(),
