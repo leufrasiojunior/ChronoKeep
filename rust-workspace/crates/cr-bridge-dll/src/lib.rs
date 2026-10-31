@@ -367,8 +367,8 @@ fn init_internal(normalized_path: &str, source_tag: &str) -> bool {
     SERVICE_PORT.store(port, Ordering::Release);
 
     log_line(&format!(
-        "=== Bridge DLL inicializada [{}] (porta={}) ===",
-        source_tag, port
+        "=== Bridge DLL v{} inicializada [{}] (porta={}) ===",
+        env!("CARGO_PKG_VERSION"), source_tag, port
     ));
     log_line(&format!("Steam Path: {}", normalized_path));
 
