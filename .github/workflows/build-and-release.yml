@@ -78,7 +78,7 @@ jobs:
         shell: pwsh
         run: |
           cd rust-workspace
-          cargo rustc --release -p cr-gui -- -C link-arg=crates/cr-gui/assets/app.res
+          cargo build --release -p cr-gui
           cd ..
 
       - name: Assemble Release Assets & Generate versions.json
