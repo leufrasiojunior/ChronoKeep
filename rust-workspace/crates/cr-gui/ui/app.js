@@ -1148,26 +1148,81 @@ async function checkForUpdates(showUserToast = false) {
   }
 }
 
+function confirmSteamRestart(componentLabel = "componente") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("steam-restart-modal");
+    const btnCancel = document.getElementById("btn-steam-restart-cancel");
+    const btnConfirm = document.getElementById("btn-steam-restart-confirm");
+    const compName = document.getElementById("steam-restart-component-name");
+
+    if (!modal || !btnCancel || !btnConfirm) {
+      resolve(true);
+      return;
+    }
+
+    if (compName) {
+      compName.textContent = componentLabel;
+    }
+
+    modal.style.display = "flex";
+
+    const onKeydown = (e) => {
+      if (e.key === "Escape") {
+        cleanup(false);
+      }
+    };
+
+    const onOverlayClick = (e) => {
+      if (e.target === modal) {
+        cleanup(false);
+      }
+    };
+
+    const cleanup = (result) => {
+      window.removeEventListener("keydown", onKeydown);
+      modal.removeEventListener("click", onOverlayClick);
+      modal.style.display = "none";
+      btnCancel.onclick = null;
+      btnConfirm.onclick = null;
+      resolve(result);
+    };
+
+    btnCancel.onclick = () => cleanup(false);
+    btnConfirm.onclick = () => cleanup(true);
+    modal.addEventListener("click", onOverlayClick);
+    window.addEventListener("keydown", onKeydown);
+  });
+}
+
 async function updateComponent(componentId, reopenSteam = true, steamWasRunning = null) {
   if (isUpdatingComponent) return;
-  isUpdatingComponent = true;
 
   const btn = document.getElementById(`btn-update-${componentId}`);
   const originalText = btn ? btn.textContent : "Atualizar";
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "Atualizando...";
-  }
 
   // Verifica se a Steam está aberta para atualizar daemon ou bridge DLL quando chamado individualmente
   let isSteamOpen = steamWasRunning;
   if ((componentId === "daemon" || componentId === "bridge") && steamWasRunning === null) {
     try {
       isSteamOpen = await invokeBackend("is_steam_running");
-      if (isSteamOpen) {
-        showToast("Steam aberta detectada: ela será encerrada para aplicar a atualização e reaberta automaticamente ao finalizar.", 6000);
+    } catch (_) {
+      isSteamOpen = false;
+    }
+
+    if (isSteamOpen) {
+      const compLabel = componentId === "bridge" ? "Bridge DLL (Hook Steam)" : "Daemon (Serviço de Sincronização)";
+      const confirmed = await confirmSteamRestart(compLabel);
+      if (!confirmed) {
+        showToast("Atualização cancelada.", 3000);
+        return;
       }
-    } catch (_) {}
+    }
+  }
+
+  isUpdatingComponent = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Atualizando...";
   }
 
   showToast(`Baixando e aplicando atualização de ${componentId}...`, 5000);
@@ -1226,9 +1281,20 @@ async function updateAllComponents() {
     try {
       steamWasRunning = await invokeBackend("is_steam_running");
       if (steamWasRunning) {
-        showToast("Steam aberta detectada: ela será encerrada durante as atualizações e reaberta automaticamente ao finalizar.", 7000);
+        const confirmed = await confirmSteamRestart("todos os componentes da Steam");
+        if (!confirmed) {
+          showToast("Atualização cancelada.", 3000);
+          return;
+        }
       }
     } catch (_) {}
+  }
+
+  const btnAll = document.getElementById("btn-update-all");
+  const origAllText = btnAll ? btnAll.textContent : "Atualizar Todos";
+  if (btnAll) {
+    btnAll.disabled = true;
+    btnAll.textContent = "Atualizando em lote...";
   }
 
   try {
@@ -1248,6 +1314,11 @@ async function updateAllComponents() {
           await invokeBackend("launch_steam");
         }
       } catch (_) {}
+    }
+  } finally {
+    if (btnAll) {
+      btnAll.disabled = false;
+      btnAll.textContent = origAllText;
     }
   }
 }

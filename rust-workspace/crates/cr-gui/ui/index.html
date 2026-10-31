@@ -835,6 +835,38 @@
     </div>
   </div>
 
+  <!-- ContentDialog: Confirmação de Reinício da Steam -->
+  <div id="steam-restart-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="steam-restart-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="steam-restart-title" class="dialog-title">Reinicialização da Steam Necessária</h2>
+        <p class="dialog-subtitle">Atualização de componentes do ChronoKeep</p>
+      </div>
+
+      <div class="dialog-body">
+        <p>A Steam está aberta no momento. Para aplicar a atualização de <strong id="steam-restart-component-name">componente</strong>, a Steam precisa ser encerrada temporariamente e será reaberta de forma automática ao concluir.</p>
+
+        <div class="dialog-callout warning">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-text">
+            <strong>Atenção ao progresso de jogos:</strong>
+            <p>Certifique-se de salvar o progresso dos seus jogos antes de continuar. Todos os processos da Steam serão finalizados para permitir a substituição segura dos arquivos.</p>
+          </div>
+        </div>
+
+        <p class="dialog-highlight-choice">Deseja prosseguir com o fechamento e reinicialização da Steam?</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-steam-restart-cancel" class="btn btn-secondary">Cancelar</button>
+        <button id="btn-steam-restart-confirm" class="btn btn-primary">Continuar e Reiniciar Steam</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
