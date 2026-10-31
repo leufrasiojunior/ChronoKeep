@@ -171,7 +171,11 @@ jobs:
               sha256 = $hashes["gui"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
             }
-            $manifestObj.components | Add-Member -NotePropertyName "gui" -NotePropertyValue $guiObj -Force
+            if ($null -ne $manifestObj.components.gui) {
+              $manifestObj.components.gui = $guiObj
+            } else {
+              $manifestObj.components | Add-Member -NotePropertyName "gui" -NotePropertyValue $guiObj -Force
+            }
           }
 
           # Atualiza DAEMON apenas se for solicitado explicitamente OU se a sua versao no Cargo.toml mudou
@@ -183,7 +187,11 @@ jobs:
               sha256 = $hashes["daemon"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
             }
-            $manifestObj.components | Add-Member -NotePropertyName "daemon" -NotePropertyValue $daemonObj -Force
+            if ($null -ne $manifestObj.components.daemon) {
+              $manifestObj.components.daemon = $daemonObj
+            } else {
+              $manifestObj.components | Add-Member -NotePropertyName "daemon" -NotePropertyValue $daemonObj -Force
+            }
           }
 
           # Atualiza BRIDGE DLL apenas se for solicitado explicitamente OU se a sua versao no Cargo.toml mudou
@@ -195,7 +203,11 @@ jobs:
               sha256 = $hashes["bridge"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
             }
-            $manifestObj.components | Add-Member -NotePropertyName "bridge_dll" -NotePropertyValue $bridgeObj -Force
+            if ($null -ne $manifestObj.components.bridge_dll) {
+              $manifestObj.components.bridge_dll = $bridgeObj
+            } else {
+              $manifestObj.components | Add-Member -NotePropertyName "bridge_dll" -NotePropertyValue $bridgeObj -Force
+            }
           }
 
           # Salva versions.json na raiz do repositorio (para servir via raw content)
