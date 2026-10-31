@@ -26,6 +26,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-manifest
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build Windows Release Binaries
@@ -237,12 +241,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if (Test-Path versions.json) {
+            git remote set-url origin "https://x-access-token:$($env:GITHUB_TOKEN)@github.com/$($env:GITHUB_REPOSITORY).git"
+            git fetch origin main
+            git checkout -B sync-release-manifest
             git add versions.json
             git diff --quiet --cached
             if ($LASTEXITCODE -ne 0) {
               git commit -m "chore(release): update versions.json manifest [skip ci]"
-              git remote set-url origin "https://x-access-token:$($env:GITHUB_TOKEN)@github.com/$($env:GITHUB_REPOSITORY).git"
-              git push origin HEAD:main
+              git pull --rebase origin main
+              git push origin sync-release-manifest:main
             }
           }
 
