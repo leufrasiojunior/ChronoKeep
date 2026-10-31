@@ -310,6 +310,38 @@ body {
   background: var(--text-tertiary);
 }
 
+.sidebar-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--card-border, rgba(255, 255, 255, 0.06));
+  font-size: 11px;
+}
+
+.sidebar-version-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sidebar-ver-key {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+
+.sidebar-ver-val {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 11px;
+  font-family: inherit;
+}
+
 /* ==========================================================================
    Content Viewport & Pages
    ========================================================================== */

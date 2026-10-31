@@ -36,6 +36,12 @@ pub struct SystemInfoDto {
     pub opensteamtool_active: bool,
     pub is_installed: bool,
     pub version: String,
+    #[serde(default)]
+    pub gui_version: String,
+    #[serde(default)]
+    pub dll_version: String,
+    #[serde(default)]
+    pub daemon_version: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -150,12 +156,56 @@ pub fn get_system_info() -> SystemInfoDto {
         || s_path.join("cloud_redirect.dll").exists())
         && s_path.join("chrono-daemon.exe").exists();
 
+    let gui_ver = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let embedded_daemon_hash = cr_proto::sha256::sha256_hex(EMBEDDED_CHRONO_DAEMON).to_lowercase();
+    let embedded_bridge_hash = cr_proto::sha256::sha256_hex(EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
+
+    let daemon_path = s_path.join("chrono-daemon.exe");
+    let daemon_version = if daemon_path.exists() {
+        if let Ok(h) = cr_proto::sha256::sha256_file(&daemon_path) {
+            if h.to_lowercase() == embedded_daemon_hash {
+                gui_ver.clone()
+            } else {
+                "Instalado".to_string()
+            }
+        } else {
+            "Instalado".to_string()
+        }
+    } else {
+        "Não instalado".to_string()
+    };
+
+    let bridge_path = if s_path.join("chronokeep.dll").exists() {
+        Some(s_path.join("chronokeep.dll"))
+    } else if s_path.join("cloud_redirect.dll").exists() {
+        Some(s_path.join("cloud_redirect.dll"))
+    } else {
+        None
+    };
+
+    let dll_version = if let Some(p) = bridge_path {
+        if let Ok(h) = cr_proto::sha256::sha256_file(&p) {
+            if h.to_lowercase() == embedded_bridge_hash {
+                gui_ver.clone()
+            } else {
+                "Instalado".to_string()
+            }
+        } else {
+            "Instalado".to_string()
+        }
+    } else {
+        "Não instalado".to_string()
+    };
+
     SystemInfoDto {
         steam_dir,
         vault_dir,
         opensteamtool_active,
         is_installed,
-        version: "0.1.2".to_string(),
+        version: gui_ver.clone(),
+        gui_version: gui_ver,
+        dll_version,
+        daemon_version,
     }
 }
 

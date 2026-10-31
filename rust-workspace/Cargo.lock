@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "cr-bridge-dll"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cr-common",
  "cr-proto",
@@ -401,14 +401,14 @@ dependencies = [
 
 [[package]]
 name = "cr-common"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cr-proto",
 ]
 
 [[package]]
 name = "cr-gui"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cr-common",
  "cr-proto",
@@ -421,11 +421,11 @@ dependencies = [
 
 [[package]]
 name = "cr-proto"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "cr-service"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cr-common",
  "cr-proto",

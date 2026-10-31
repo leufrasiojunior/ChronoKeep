@@ -143,7 +143,13 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
             let (status, ver) = if current_hash == remote_hash {
                 ("up_to_date".to_string(), manifest.release_version.clone())
             } else {
-                ("update_available".to_string(), "Desatualizado".to_string())
+                let embedded_daemon_hash = sha256_hex(crate::commands::EMBEDDED_CHRONO_DAEMON).to_lowercase();
+                let ver = if current_hash == embedded_daemon_hash {
+                    format!("v{}", env!("CARGO_PKG_VERSION"))
+                } else {
+                    "Desatualizado".to_string()
+                };
+                ("update_available".to_string(), ver)
             };
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
@@ -176,7 +182,13 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
             let (status, ver) = if current_hash == remote_hash {
                 ("up_to_date".to_string(), manifest.release_version.clone())
             } else {
-                ("update_available".to_string(), "Desatualizado".to_string())
+                let embedded_bridge_hash = sha256_hex(crate::commands::EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
+                let ver = if current_hash == embedded_bridge_hash {
+                    format!("v{}", env!("CARGO_PKG_VERSION"))
+                } else {
+                    "Desatualizado".to_string()
+                };
+                ("update_available".to_string(), ver)
             };
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
