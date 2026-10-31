@@ -194,6 +194,10 @@ fn pull_drive_folder_recursive(
 
     for item in items {
         if item.mime_type == "application/vnd.google-apps.folder" {
+            // Ignora pastas na nuvem cujo nome seja um token de raiz (ex: %WinMyDocuments%)
+            if item.name.starts_with('%') && item.name.ends_with('%') {
+                continue;
+            }
             let next_prefix = if rel_prefix.is_empty() {
                 item.name.clone()
             } else {
@@ -209,11 +213,13 @@ fn pull_drive_folder_recursive(
                 log_path,
             );
         } else {
-            let rel_file = if rel_prefix.is_empty() {
+            let raw_rel_file = if rel_prefix.is_empty() {
                 item.name.clone()
             } else {
                 format!("{}/{}", rel_prefix, item.name)
             };
+            let (_, clean_file) = cr_proto::cloud_messages::split_root_token(&raw_rel_file);
+            let rel_file = if !clean_file.is_empty() { clean_file } else { raw_rel_file };
 
             // Se for manifest.tsv, só adota se a nuvem tiver um CN superior ao local
             if rel_file == "manifest.tsv" {

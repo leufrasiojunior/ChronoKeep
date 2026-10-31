@@ -68,7 +68,8 @@ impl VaultStorage {
         app_id: u32,
         clean_filename: &str,
     ) -> Option<PathBuf> {
-        let safe_rel = sanitize_rel_path(clean_filename);
+        let (_, clean_name) = cr_proto::cloud_messages::split_root_token(clean_filename);
+        let safe_rel = sanitize_rel_path(&clean_name);
         if safe_rel.is_empty() {
             return None;
         }
@@ -103,8 +104,34 @@ impl VaultStorage {
         let mut seen_on_disk = std::collections::HashSet::new();
 
         for (rel_name, full_path) in disk_files {
-            seen_on_disk.insert(rel_name.clone());
-            let Ok(meta) = fs::metadata(&full_path) else {
+            let (tok_in_name, clean_name) = cr_proto::cloud_messages::split_root_token(&rel_name);
+            let (rel_to_process, path_to_process) = if !tok_in_name.is_empty() {
+                // Auto-recuperação/higienização: se existia uma pasta física de token (ex: %WinMyDocuments%),
+                // migra os arquivos para a raiz correta e remove a pasta indevida do disco.
+                let proper_dest = files_root.join(&clean_name);
+                if !proper_dest.exists() {
+                    if let Some(p) = proper_dest.parent() {
+                        let _ = fs::create_dir_all(p);
+                    }
+                    let _ = fs::rename(&full_path, &proper_dest);
+                } else {
+                    let _ = fs::remove_file(&full_path);
+                }
+                if let Some(parent) = full_path.parent() {
+                    let _ = fs::remove_dir(parent);
+                }
+                if !seen_on_disk.contains(&clean_name) {
+                    (clean_name, proper_dest)
+                } else {
+                    modified = true;
+                    continue;
+                }
+            } else {
+                (rel_name, full_path)
+            };
+
+            seen_on_disk.insert(rel_to_process.clone());
+            let Ok(meta) = fs::metadata(&path_to_process) else {
                 continue;
             };
             let disk_size = meta.len();
@@ -115,14 +142,14 @@ impl VaultStorage {
                 .map(|d| d.as_secs())
                 .unwrap_or_else(now_unix);
 
-            let vdf_meta = vdf_files.get(&rel_name);
+            let vdf_meta = vdf_files.get(&rel_to_process);
             let preferred_token = legacy_tokens
-                .get(&rel_name)
+                .get(&rel_to_process)
                 .cloned()
                 .or_else(|| vdf_meta.map(|(tok, _)| tok.clone()))
                 .filter(|t| !t.is_empty());
 
-            let needs_hash = match manifest.files.get(&rel_name) {
+            let needs_hash = match manifest.files.get(&rel_to_process) {
                 Some(entry) => {
                     let token_mismatch = preferred_token
                         .as_ref()
@@ -137,13 +164,13 @@ impl VaultStorage {
             };
 
             if needs_hash {
-                if let Ok(bytes) = fs::read(&full_path) {
+                if let Ok(bytes) = fs::read(&path_to_process) {
                     let sha = sha1_digest(&bytes);
                     let root_token = preferred_token
                         .or_else(|| {
                             manifest
                                 .files
-                                .get(&rel_name)
+                                .get(&rel_to_process)
                                 .map(|e| e.root_token.clone())
                                 .filter(|t| !t.is_empty())
                         })
@@ -153,9 +180,9 @@ impl VaultStorage {
                         .filter(|&t| t > 0)
                         .unwrap_or(disk_mtime);
                     manifest.files.insert(
-                        rel_name.clone(),
+                        rel_to_process.clone(),
                         CloudFileRecord {
-                            filename: rel_name,
+                            filename: rel_to_process,
                             root_token,
                             sha1: sha,
                             timestamp: ts,
@@ -444,12 +471,21 @@ impl VaultStorage {
             files: manifest
                 .files
                 .iter()
-                .map(|(k, v)| {
+                .map(|(_, v)| {
+                    let (tok, clean) = cr_proto::cloud_messages::split_root_token(&v.filename);
+                    let filename = if !clean.is_empty() { clean } else { v.filename.clone() };
+                    let root_token = if !tok.is_empty() {
+                        tok
+                    } else if !v.root_token.is_empty() {
+                        v.root_token.clone()
+                    } else {
+                        manifest.default_root_token.clone()
+                    };
                     (
-                        k.clone(),
+                        filename.clone(),
                         cr_common::manifest::ManifestFileRecord {
-                            filename: v.filename.clone(),
-                            root_token: v.root_token.clone(),
+                            filename,
+                            root_token,
                             sha1: v.sha1,
                             timestamp: v.timestamp,
                             raw_size: v.raw_size,
