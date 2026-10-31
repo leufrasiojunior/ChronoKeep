@@ -242,16 +242,18 @@ jobs:
 
           $relTitle = if ($tagName -like "v*") { "ChronoKeep $tagName" } else { "ChronoKeep Latest Build" }
 
-          $assetsToUpload = Get-ChildItem -Path release-artifacts/* | ForEach-Object { $_.FullName }
+          $files = @(Get-ChildItem -Path release-artifacts/* | ForEach-Object { $_.FullName })
           if (Test-Path "ChronoKeep-Windows-x64.zip") {
-            $assetsToUpload += (Get-Item "ChronoKeep-Windows-x64.zip").FullName
+            $files += (Get-Item "ChronoKeep-Windows-x64.zip").FullName
           }
 
           $null = gh release view $tagName 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tagName @assetsToUpload --clobber
-          } else {
-            gh release create $tagName @assetsToUpload --title $relTitle --notes "ChronoKeep Release Assets ($tagName)"
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tagName --title $relTitle --notes "ChronoKeep Release Assets ($tagName)"
+          }
+
+          foreach ($f in $files) {
+            gh release upload $tagName $f --clobber
           }
 
       - name: Commit updated versions.json to repository
