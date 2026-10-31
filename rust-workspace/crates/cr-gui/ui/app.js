@@ -21,7 +21,9 @@ let appConfig = {
   gdrive_connected: false,
   max_upload_mb: 512,
   theme: "dark",
+  backup_provider: "gdrive",
 };
+let defaultVaultDir = "";
 
 let daemonOnline = false;
 let toastTimeout = null;
@@ -46,10 +48,27 @@ function setupNavigation() {
   const pages = document.querySelectorAll(".page");
 
   navItems.forEach((btn) => {
+    const pageId = btn.getAttribute("data-page");
+    try {
+      if (localStorage.getItem(`seen_badge_${pageId}`)) {
+        const badge = btn.querySelector(".badge-pill");
+        if (badge) badge.remove();
+      }
+    } catch (_) {}
+
     btn.addEventListener("click", () => {
       const pageId = btn.getAttribute("data-page");
       navItems.forEach((i) => i.classList.remove("active"));
       btn.classList.add("active");
+
+      // Remove o badge de novidade ao clicar na aba correspondente
+      const badge = btn.querySelector(".badge-pill");
+      if (badge) {
+        badge.remove();
+        try {
+          localStorage.setItem(`seen_badge_${pageId}`, "true");
+        } catch (_) {}
+      }
 
       pages.forEach((p) => {
         if (p.id === `page-${pageId}`) {
@@ -77,12 +96,26 @@ function setupNavigation() {
         document.querySelector("[data-page='logs']")?.click();
       } else if (q.includes("save") || q.includes("nuvem") || q.includes("orfao")) {
         document.querySelector("[data-page='cloud-saves']")?.click();
-      } else if (q.includes("steam") || q.includes("vault") || q.includes("porta") || q.includes("tema")) {
+      } else if (q.includes("provedor") || q.includes("provedores") || q.includes("drive") || q.includes("gdrive") || q.includes("cofre")) {
+        document.querySelector("[data-page='providers']")?.click();
+      } else if (q.includes("steam") || q.includes("porta") || q.includes("tema") || q.includes("config")) {
         document.querySelector("[data-page='settings']")?.click();
       } else if (q.includes("inicio") || q.includes("daemon")) {
         document.querySelector("[data-page='home']")?.click();
       }
     });
+  }
+}
+
+function updateProviderPanel(provider) {
+  const panelGdrive = document.getElementById("panel-provider-gdrive");
+  const panelLocal = document.getElementById("panel-provider-local");
+  if (provider === "local") {
+    if (panelGdrive) panelGdrive.style.display = "none";
+    if (panelLocal) panelLocal.style.display = "flex";
+  } else {
+    if (panelGdrive) panelGdrive.style.display = "flex";
+    if (panelLocal) panelLocal.style.display = "none";
   }
 }
 
@@ -127,6 +160,11 @@ function updateGDriveStatusUI(connected) {
   const tileLabel = document.getElementById("tile-gdrive-label");
   const cardDesc = document.getElementById("card-desc-gdrive");
 
+  // Provedores de Backup elements
+  const providerPill = document.getElementById("provider-gdrive-status-pill");
+  const providerBtnAction = document.getElementById("btn-provider-gdrive-action");
+  const providerCardDesc = document.getElementById("provider-card-desc-gdrive");
+
   if (connected) {
     if (heroBadge) {
       heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">Google Drive Conectado</span>`;
@@ -137,6 +175,18 @@ function updateGDriveStatusUI(connected) {
     }
     if (tileLabel) tileLabel.textContent = "Drive Conectado";
     if (cardDesc) cardDesc.textContent = "Conta Google vinculada — Sincronização em nuvem ativa";
+
+    if (providerPill) {
+      providerPill.textContent = "Conectado";
+      providerPill.className = "status-pill active";
+    }
+    if (providerBtnAction) {
+      providerBtnAction.textContent = "Desconectar Google Drive";
+      providerBtnAction.className = "btn btn-secondary";
+    }
+    if (providerCardDesc) {
+      providerCardDesc.textContent = "Conta Google vinculada — Sincronização em nuvem ativa";
+    }
   } else {
     if (heroBadge) {
       heroBadge.innerHTML = `<span class="badge-dot offline"></span><span class="badge-text">Google Drive Desconectado</span>`;
@@ -147,6 +197,18 @@ function updateGDriveStatusUI(connected) {
     }
     if (tileLabel) tileLabel.textContent = "Conectar Drive";
     if (cardDesc) cardDesc.textContent = "Clique para autorizar upload de saves no navegador";
+
+    if (providerPill) {
+      providerPill.textContent = "Desconectado";
+      providerPill.className = "status-pill";
+    }
+    if (providerBtnAction) {
+      providerBtnAction.textContent = "Fazer Login no Google";
+      providerBtnAction.className = "btn btn-primary";
+    }
+    if (providerCardDesc) {
+      providerCardDesc.textContent = "Conecte sua conta para envio automático de saves e manifestos na nuvem";
+    }
   }
 }
 
@@ -158,6 +220,7 @@ async function loadInitialData() {
     const sysInfo = await invokeBackend("get_system_info");
     if (sysInfo) {
       appConfig.steam_dir = sysInfo.steam_dir;
+      defaultVaultDir = sysInfo.vault_dir;
       appConfig.vault_dir = sysInfo.vault_dir;
       const ostPill = document.getElementById("ost-status-pill");
       if (ostPill) {
@@ -169,11 +232,18 @@ async function loadInitialData() {
           ostPill.className = "status-pill";
         }
       }
+      if (sysInfo.version) {
+        const verEl = document.getElementById("about-version");
+        if (verEl) verEl.textContent = `v${sysInfo.version}`;
+      }
     }
 
     const cfg = await invokeBackend("get_config");
     if (cfg) {
       appConfig = { ...appConfig, ...cfg };
+      if (!appConfig.vault_dir) {
+        appConfig.vault_dir = defaultVaultDir;
+      }
       document.getElementById("input-steam-dir").value = appConfig.steam_dir;
       document.getElementById("input-vault-dir").value = appConfig.vault_dir;
       if (document.getElementById("input-port")) {
@@ -183,6 +253,13 @@ async function loadInitialData() {
       document.getElementById("select-theme").value = appConfig.theme;
       applyTheme(appConfig.theme);
       updateGDriveStatusUI(appConfig.gdrive_connected);
+
+      // Sincroniza dropdown e painel do provedor de backup
+      const providerSelect = document.getElementById("select-backup-provider");
+      if (providerSelect) {
+        providerSelect.value = appConfig.backup_provider || "gdrive";
+        updateProviderPanel(providerSelect.value);
+      }
     }
 
     await checkDaemon();
@@ -320,17 +397,42 @@ function setupActionHandlers() {
   };
   document.getElementById("tile-gdrive-login")?.addEventListener("click", gdriveAction);
   document.getElementById("btn-gdrive-action")?.addEventListener("click", gdriveAction);
+  document.getElementById("btn-provider-gdrive-action")?.addEventListener("click", gdriveAction);
 
-  // Save Settings
-  document.getElementById("btn-save-config")?.addEventListener("click", async () => {
+  // Provedores de Backup Handlers
+  const providerSelect = document.getElementById("select-backup-provider");
+  if (providerSelect) {
+    providerSelect.addEventListener("change", (e) => {
+      updateProviderPanel(e.target.value);
+    });
+  }
+
+  // Reset Vault Path to Default
+  document.getElementById("btn-reset-vault-default")?.addEventListener("click", () => {
+    const input = document.getElementById("input-vault-dir");
+    if (input && defaultVaultDir) {
+      input.value = defaultVaultDir;
+      showToast("Caminho padrão restaurado: " + defaultVaultDir);
+    }
+  });
+
+  // Save Settings Function (Geral & Provedores)
+  const saveSettings = async (feedbackElId = "config-feedback") => {
     const portEl = document.getElementById("input-port");
+    const providerEl = document.getElementById("select-backup-provider");
+    const maxUploadEl = document.getElementById("select-max-upload");
+    const steamDirEl = document.getElementById("input-steam-dir");
+    const vaultDirEl = document.getElementById("input-vault-dir");
+    const themeEl = document.getElementById("select-theme");
+
     const newCfg = {
-      steam_dir: document.getElementById("input-steam-dir").value.trim(),
-      vault_dir: document.getElementById("input-vault-dir").value.trim(),
+      steam_dir: steamDirEl ? steamDirEl.value.trim() : appConfig.steam_dir,
+      vault_dir: vaultDirEl ? vaultDirEl.value.trim() : appConfig.vault_dir,
       port: (portEl ? parseInt(portEl.value, 10) : appConfig.port) || 39771,
       gdrive_connected: appConfig.gdrive_connected,
-      max_upload_mb: parseInt(document.getElementById("select-max-upload").value, 10) || 512,
-      theme: document.getElementById("select-theme").value,
+      max_upload_mb: maxUploadEl ? parseInt(maxUploadEl.value, 10) : 512,
+      theme: themeEl ? themeEl.value : appConfig.theme,
+      backup_provider: providerEl ? providerEl.value : (appConfig.backup_provider || "gdrive"),
     };
 
     const res = await invokeBackend("save_config", { cfg: newCfg });
@@ -338,7 +440,7 @@ function setupActionHandlers() {
       appConfig = { ...appConfig, ...newCfg };
       applyTheme(newCfg.theme);
       showToast("Configurações salvas com sucesso!");
-      const fb = document.getElementById("config-feedback");
+      const fb = document.getElementById(feedbackElId);
       if (fb) {
         fb.textContent = "✓ Salvo!";
         setTimeout(() => { fb.textContent = ""; }, 2500);
@@ -346,7 +448,10 @@ function setupActionHandlers() {
     } else {
       showToast(res ? res.message : "Erro ao salvar.");
     }
-  });
+  };
+
+  document.getElementById("btn-save-config")?.addEventListener("click", () => saveSettings("config-feedback"));
+  document.getElementById("btn-save-providers")?.addEventListener("click", () => saveSettings("providers-feedback"));
 
   // Theme selector live preview
   document.getElementById("select-theme")?.addEventListener("change", (e) => {
@@ -357,11 +462,13 @@ function setupActionHandlers() {
   document.getElementById("btn-scan-saves")?.addEventListener("click", scanSaves);
   document.getElementById("btn-sync-selected")?.addEventListener("click", syncSelectedSaves);
 
-  // GitHub External Link
-  document.getElementById("nav-github-link")?.addEventListener("click", (e) => {
-    e.preventDefault();
+  // GitHub External Links
+  const openGitHub = (e) => {
+    e?.preventDefault();
     invokeBackend("open_url", { url: "https://github.com/leufrasiojunior/ChronoKeep" });
-  });
+  };
+  document.getElementById("nav-github-link")?.addEventListener("click", openGitHub);
+  document.getElementById("btn-about-github")?.addEventListener("click", openGitHub);
 
   // Logs actions
   document.getElementById("btn-refresh-log")?.addEventListener("click", loadLogs);
@@ -381,8 +488,14 @@ function setupActionHandlers() {
 // --------------------------------------------------------------------------
 async function scanSaves() {
   const tbody = document.getElementById("tbody-saves");
+  const scanBtn = document.getElementById("btn-scan-saves");
+  const originalScanHtml = scanBtn ? scanBtn.innerHTML : "";
+  if (scanBtn) {
+    scanBtn.disabled = true;
+    scanBtn.innerHTML = `<span class="fluent-spinner-sm"></span> Escaneando...`;
+  }
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="8" class="empty-state">Varrendo pastas de saves locais no PC...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div class="fluent-spinner" style="margin: 0 auto 12px auto;"></div>Varrendo pastas de saves locais no PC...</td></tr>`;
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -406,7 +519,12 @@ async function scanSaves() {
         (item) => `
         <tr data-appid="${item.app_id}" data-accountid="${item.account_id}">
           <td style="text-align: center;">
-            <input type="checkbox" class="orphan-checkbox" data-appid="${item.app_id}" data-accountid="${item.account_id}">
+            <input type="checkbox" class="orphan-checkbox" 
+                   data-appid="${item.app_id}" 
+                   data-accountid="${item.account_id}"
+                   data-name="${escapeHtml(item.name)}"
+                   data-bytes="${item.total_bytes}"
+                   data-files="${item.file_count}">
           </td>
           <td><strong>${item.app_id}</strong></td>
           <td><span class="game-title">${escapeHtml(item.name)}</span></td>
@@ -423,7 +541,7 @@ async function scanSaves() {
             }
           </td>
           <td>
-            <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this)">
+            <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this, ${item.total_bytes}, '${escapeHtml(item.name).replace(/'/g, "\\'")}')">
               Sincronizar
             </button>
           </td>
@@ -436,6 +554,11 @@ async function scanSaves() {
     updateSelectionUI();
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
+  } finally {
+    if (scanBtn) {
+      scanBtn.disabled = false;
+      scanBtn.innerHTML = originalScanHtml;
+    }
   }
 }
 
@@ -471,13 +594,72 @@ function bindOrphanCheckboxes() {
   });
 }
 
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const val = (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1);
+  return `${val} ${units[i]}`;
+}
+
+let syncProgressTimeout = null;
+
+// Permite ao navegador repintar a tela e manter spinners rodando suavemente
+function yieldToUI(delayMs = 30) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function showSyncProgress(title, detail, percent) {
+  const card = document.getElementById("sync-progress-card");
+  const titleEl = document.getElementById("progress-status-title");
+  const detailEl = document.getElementById("progress-status-detail");
+  const percentEl = document.getElementById("progress-percent-text");
+  const barEl = document.getElementById("fluent-progress-bar");
+  const spinnerEl = document.getElementById("sync-spinner");
+
+  if (!card) return;
+  card.style.display = "flex";
+  if (syncProgressTimeout) {
+    clearTimeout(syncProgressTimeout);
+    syncProgressTimeout = null;
+  }
+  if (titleEl && title) titleEl.textContent = title;
+  if (detailEl && detail) detailEl.textContent = detail;
+  const pct = Math.min(100, Math.max(0, Math.round(percent || 0)));
+  if (percentEl) percentEl.textContent = `${pct}%`;
+  if (barEl) barEl.style.width = `${pct}%`;
+
+  if (spinnerEl) {
+    if (pct >= 100) {
+      spinnerEl.style.display = "none";
+    } else {
+      spinnerEl.style.display = "inline-block";
+    }
+  }
+}
+
+function hideSyncProgress(delayMs = 3500) {
+  if (syncProgressTimeout) clearTimeout(syncProgressTimeout);
+  syncProgressTimeout = setTimeout(() => {
+    const card = document.getElementById("sync-progress-card");
+    if (card) card.style.display = "none";
+  }, delayMs);
+}
+
 function updateSelectionUI() {
-  const checked = document.querySelectorAll(".orphan-checkbox:checked");
+  const checked = Array.from(document.querySelectorAll(".orphan-checkbox:checked"));
   const count = checked.length;
   const btnSyncSelected = document.getElementById("btn-sync-selected");
   const countSpan = document.getElementById("selected-count");
 
-  if (countSpan) countSpan.textContent = String(count);
+  const totalSelectedBytes = checked.reduce(
+    (acc, el) => acc + (parseInt(el.getAttribute("data-bytes"), 10) || 0),
+    0
+  );
+
+  if (countSpan) {
+    countSpan.textContent = count > 0 ? `${count} • ${formatBytes(totalSelectedBytes)}` : "0";
+  }
   if (btnSyncSelected) {
     btnSyncSelected.disabled = count === 0;
   }
@@ -490,21 +672,55 @@ async function syncSelectedSaves() {
   const btnSyncSelected = document.getElementById("btn-sync-selected");
   const originalHtml = btnSyncSelected ? btnSyncSelected.innerHTML : "";
 
-  if (btnSyncSelected) {
-    btnSyncSelected.disabled = true;
-    btnSyncSelected.textContent = `Sincronizando 1 de ${checked.length}...`;
-  }
+  const totalGames = checked.length;
+  const totalBytes = checked.reduce(
+    (acc, el) => acc + (parseInt(el.getAttribute("data-bytes"), 10) || 0),
+    0
+  );
 
+  let processedBytes = 0;
   let successCount = 0;
   const failedList = [];
-  for (let i = 0; i < checked.length; i++) {
+
+  showSyncProgress(
+    "Iniciando sincronização com o Google Drive...",
+    `0 de ${totalGames} jogos • 0 B de ${formatBytes(totalBytes)}`,
+    0
+  );
+
+  if (btnSyncSelected) {
+    btnSyncSelected.disabled = true;
+    btnSyncSelected.innerHTML = `<span class="fluent-spinner-sm"></span> Sincronizando (0/${totalGames})...`;
+  }
+
+  for (let i = 0; i < totalGames; i++) {
     const el = checked[i];
     const appId = parseInt(el.getAttribute("data-appid"), 10);
     const accountId = parseInt(el.getAttribute("data-accountid"), 10);
+    const gameName = el.getAttribute("data-name") || `AppID ${appId}`;
+    const gameBytes = parseInt(el.getAttribute("data-bytes"), 10) || 0;
+    const row = el.closest("tr");
+
+    const currentPercent = totalBytes > 0 ? (processedBytes / totalBytes) * 100 : (i / totalGames) * 100;
+    showSyncProgress(
+      `Sincronizando: ${gameName} (${i + 1} de ${totalGames})`,
+      `${formatBytes(processedBytes)} de ${formatBytes(totalBytes)} • Jogo ${i + 1} de ${totalGames}`,
+      currentPercent
+    );
 
     if (btnSyncSelected) {
-      btnSyncSelected.textContent = `Sincronizando ${i + 1} de ${checked.length}...`;
+      btnSyncSelected.innerHTML = `<span class="fluent-spinner-sm"></span> Sincronizando (${i + 1}/${totalGames})...`;
     }
+
+    if (row) {
+      const cells = row.querySelectorAll("td");
+      if (cells.length >= 7) {
+        cells[6].innerHTML = `<span class="status-pill warning"><span class="fluent-spinner-sm"></span> Enviando...</span>`;
+      }
+    }
+
+    // Dá um respiro para o navegador atualizar os spinners
+    await yieldToUI(35);
 
     try {
       const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -521,7 +737,6 @@ async function syncSelectedSaves() {
 
       if (res && res.success) {
         successCount++;
-        const row = el.closest("tr");
         if (row) {
           const cells = row.querySelectorAll("td");
           if (cells.length >= 7) {
@@ -531,12 +746,41 @@ async function syncSelectedSaves() {
       } else {
         const errorMsg = (res && res.message) ? res.message : "Falha desconhecida";
         failedList.push({ appId, error: errorMsg });
+        if (row) {
+          const cells = row.querySelectorAll("td");
+          if (cells.length >= 7) {
+            cells[6].innerHTML = `<span class="status-pill offline" title="${escapeHtml(errorMsg)}">Falha</span>`;
+          }
+        }
       }
     } catch (e) {
       console.error(`Erro ao sincronizar AppID ${appId}:`, e);
       failedList.push({ appId, error: e.message || String(e) });
+      if (row) {
+        const cells = row.querySelectorAll("td");
+        if (cells.length >= 7) {
+          cells[6].innerHTML = `<span class="status-pill offline">Erro</span>`;
+        }
+      }
     }
+
+    processedBytes += gameBytes;
+    const progressAfterGame = totalBytes > 0 ? (processedBytes / totalBytes) * 100 : ((i + 1) / totalGames) * 100;
+    showSyncProgress(
+      `Concluído: ${gameName}`,
+      `${formatBytes(processedBytes)} de ${formatBytes(totalBytes)} • ${i + 1} de ${totalGames} jogos processados`,
+      progressAfterGame
+    );
+
+    await yieldToUI(20);
   }
+
+  showSyncProgress(
+    "Sincronização em lote finalizada!",
+    `${successCount} de ${totalGames} jogos sincronizados com sucesso • ${formatBytes(processedBytes)} enviados`,
+    100
+  );
+  hideSyncProgress(4000);
 
   if (failedList.length === 0) {
     showToast(`${successCount} jogo(s) sincronizado(s) com a nuvem com sucesso!`, 4000);
@@ -555,13 +799,30 @@ async function syncSelectedSaves() {
 // --------------------------------------------------------------------------
 // Manual Game Save Sync
 // --------------------------------------------------------------------------
-async function syncGameSave(appId, accountId, btn) {
-  const originalText = btn ? btn.textContent : "Sincronizar";
+async function syncGameSave(appId, accountId, btn, totalBytes = 0, gameName = "") {
+  const originalHtml = btn ? btn.innerHTML : "Sincronizar";
+  const displayName = gameName || `AppID ${appId}`;
+  const row = btn ? btn.closest("tr") : null;
+
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "Enviando...";
+    btn.innerHTML = `<span class="fluent-spinner-sm"></span> Enviando...`;
   }
-  showToast(`Sincronizando AppID ${appId} com o Google Drive...`);
+  if (row) {
+    const cells = row.querySelectorAll("td");
+    if (cells.length >= 7) {
+      cells[6].innerHTML = `<span class="status-pill warning"><span class="fluent-spinner-sm"></span> Enviando...</span>`;
+    }
+  }
+
+  showSyncProgress(
+    `Sincronizando ${displayName}...`,
+    totalBytes > 0 ? `1 jogo • ${formatBytes(totalBytes)}` : "Enviando save para o Google Drive...",
+    30
+  );
+  showToast(`Sincronizando ${displayName} com o Google Drive...`);
+
+  await yieldToUI(35);
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -575,33 +836,59 @@ async function syncGameSave(appId, accountId, btn) {
       vaultDir: vaultDir || null,
     });
     if (res && res.success) {
+      showSyncProgress(
+        `Sincronizado: ${displayName}!`,
+        totalBytes > 0 ? `${formatBytes(totalBytes)} enviados com sucesso` : "Concluído",
+        100
+      );
+      hideSyncProgress(3000);
       showToast(res.message, 4000);
+      if (row) {
+        const cells = row.querySelectorAll("td");
+        if (cells.length >= 7) {
+          cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
+        }
+      }
       if (btn) {
         btn.textContent = "Sincronizado ✅";
-        const row = btn.closest("tr");
-        if (row) {
-          const cells = row.querySelectorAll("td");
-          if (cells.length >= 7) {
-            cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
-          }
-        }
         setTimeout(() => {
           btn.disabled = false;
-          btn.textContent = originalText;
+          btn.innerHTML = originalHtml;
         }, 4000);
       }
     } else {
-      showToast(res ? res.message : "Falha na sincronização", 5000);
+      const errorMsg = res ? res.message : "Falha na sincronização";
+      showSyncProgress(
+        `Falha ao sincronizar: ${displayName}`,
+        errorMsg,
+        0
+      );
+      hideSyncProgress(4000);
+      showToast(errorMsg, 5000);
+      if (row) {
+        const cells = row.querySelectorAll("td");
+        if (cells.length >= 7) {
+          cells[6].innerHTML = `<span class="status-pill offline" title="${escapeHtml(errorMsg)}">Falha</span>`;
+        }
+      }
       if (btn) {
         btn.disabled = false;
-        btn.textContent = originalText;
+        btn.innerHTML = originalHtml;
       }
     }
   } catch (err) {
+    showSyncProgress(`Erro ao sincronizar: ${displayName}`, String(err), 0);
+    hideSyncProgress(4000);
     showToast(`Erro ao sincronizar: ${err}`, 5000);
+    if (row) {
+      const cells = row.querySelectorAll("td");
+      if (cells.length >= 7) {
+        cells[6].innerHTML = `<span class="status-pill offline">Erro</span>`;
+      }
+    }
     if (btn) {
       btn.disabled = false;
-      btn.textContent = originalText;
+      btn.innerHTML = originalHtml;
     }
   }
 }

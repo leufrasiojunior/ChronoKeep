@@ -45,13 +45,24 @@
           <span class="nav-label">Início</span>
         </button>
 
+        <button class="nav-item" data-page="providers">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+          <span class="nav-label">Provedores de Backup</span>
+          <span class="badge-pill">NOVO</span>
+        </button>
+
         <button class="nav-item" data-page="settings">
           <div class="nav-indicator"></div>
           <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
-          <span class="nav-label">Geral & Pastas</span>
+          <span class="nav-label">Geral & Sistema</span>
         </button>
 
         <button class="nav-item" data-page="cloud-saves">
@@ -286,37 +297,148 @@
                 </div>
               </div>
 
-              <!-- Card 4: Salvaguardas Steam Cloud -->
-              <div class="settings-card">
-                <div class="card-left">
-                  <div class="card-icon-box">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <polyline points="12 6 12 12 14 14"></polyline>
-                    </svg>
-                  </div>
-                  <div class="card-text">
-                    <div class="card-name">Salvaguardas do Sistema Steam</div>
-                    <div class="card-desc">Filtros de integridade e monotonicidade de versão ativos</div>
-                  </div>
-                </div>
-                <div class="card-right">
-                  <span class="status-pill active">Protegido</span>
-                </div>
-              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- PAGE 2: GERAL & CONFIGURAÇÃO -->
-      <section class="page" id="page-settings">
+      <!-- PAGE: PROVEDORES DE BACKUP -->
+      <section class="page" id="page-providers">
         <div class="page-title-row">
-          <h1 class="page-title">Geral & Pastas</h1>
+          <h1 class="page-title">Provedores de Backup</h1>
+        </div>
+
+        <div class="sub-header-desc">
+          Configure para onde seus saves serão sincronizados: nuvem externa (Google Drive) ou cofre local no seu computador.
         </div>
 
         <div class="settings-group">
-          <h2 class="group-title">Diretórios do Sistema</h2>
+          <!-- Dropdown Seleção de Provedor -->
+          <div class="settings-card highlight-card">
+            <div class="card-left">
+              <div class="card-icon-box accent">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                  <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name">Provedor Ativo de Backup</div>
+                <div class="card-desc">Selecione o destino de sincronização para os saves do Steam</div>
+              </div>
+            </div>
+            <div class="card-right">
+              <select id="select-backup-provider" class="select-input">
+                <option value="gdrive" selected>Google Drive (Nuvem)</option>
+                <option value="local">Armazenamento Local (Cofre)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- PAINEL 1: GOOGLE DRIVE -->
+          <div id="panel-provider-gdrive" class="provider-panel">
+            <h2 class="group-title">Configurações do Google Drive</h2>
+
+            <!-- Card Conexão Google -->
+            <div class="settings-card">
+              <div class="card-left">
+                <div class="card-icon-box orange">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                  </svg>
+                </div>
+                <div class="card-text">
+                  <div class="card-name">Autenticação Google Drive</div>
+                  <div class="card-desc" id="provider-card-desc-gdrive">Conecte sua conta para envio automático de saves e manifestos na nuvem</div>
+                </div>
+              </div>
+              <div class="card-right">
+                <span class="status-pill" id="provider-gdrive-status-pill">Desconectado</span>
+                <button class="btn btn-primary" id="btn-provider-gdrive-action">Fazer Login no Google</button>
+              </div>
+            </div>
+
+            <!-- Card Limite de Upload Manual (movido de Geral) -->
+            <div class="settings-card">
+              <div class="card-left">
+                <div class="card-icon-box">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  </svg>
+                </div>
+                <div class="card-text">
+                  <div class="card-name">Limite de Upload Manual por Arquivo</div>
+                  <div class="card-desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
+                </div>
+              </div>
+              <div class="card-right">
+                <select id="select-max-upload" class="select-input">
+                  <option value="128">128 MB</option>
+                  <option value="256">256 MB</option>
+                  <option value="512" selected>512 MB (Padrão)</option>
+                  <option value="1024">1024 MB (1 GB)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- PAINEL 2: ARMAZENAMENTO LOCAL (COFRE) -->
+          <div id="panel-provider-local" class="provider-panel" style="display: none;">
+            <h2 class="group-title">Configurações do Cofre Local</h2>
+
+            <!-- Card Pasta do Cofre Local (movido de Geral) -->
+            <div class="settings-card">
+              <div class="card-left">
+                <div class="card-icon-box cyan">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </div>
+                <div class="card-text">
+                  <div class="card-name">Pasta do Cofre Local</div>
+                  <div class="card-desc">Diretório onde cópias dos saves e manifestos são preservados localmente</div>
+                </div>
+              </div>
+              <div class="card-right input-group">
+                <input type="text" id="input-vault-dir" class="text-input" placeholder="%USERPROFILE%\Saved Games\ChronoKeepVault">
+                <button class="btn btn-secondary btn-sm" id="btn-reset-vault-default" title="Restaurar pasta padrão (%USERPROFILE%\Saved Games\ChronoKeepVault)">
+                  Restaurar Padrão
+                </button>
+                <button class="btn btn-icon" id="btn-explore-vault" title="Abrir pasta no Explorer">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Ações do Formulário de Provedores -->
+          <div class="form-actions-row">
+            <button class="btn btn-primary" id="btn-save-providers">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              Salvar Configurações
+            </button>
+            <span class="action-feedback" id="providers-feedback"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE: GERAL & SISTEMA -->
+      <section class="page" id="page-settings">
+        <div class="page-title-row">
+          <h1 class="page-title">Geral & Sistema</h1>
+        </div>
+
+        <div class="settings-group">
+          <h2 class="group-title">Configurações Gerais</h2>
 
           <!-- Steam Path -->
           <div class="settings-card">
@@ -339,53 +461,6 @@
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                 </svg>
               </button>
-            </div>
-          </div>
-
-          <!-- Vault/Cofre Path -->
-          <div class="settings-card">
-            <div class="card-left">
-              <div class="card-icon-box">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                </svg>
-              </div>
-              <div class="card-text">
-                <div class="card-name">Pasta do Cofre Local</div>
-                <div class="card-desc">Diretório local onde cópias dos saves e manifestos são preservados</div>
-              </div>
-            </div>
-            <div class="card-right input-group">
-              <input type="text" id="input-vault-dir" class="text-input" placeholder="C:\SteamVault">
-              <button class="btn btn-icon" id="btn-explore-vault" title="Abrir pasta no Explorer">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div class="settings-card">
-            <div class="card-left">
-              <div class="card-icon-box">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="17 8 12 3 7 8"></polyline>
-                  <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-              </div>
-              <div class="card-text">
-                <div class="card-name">Limite de Upload Manual por Arquivo</div>
-                <div class="card-desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
-              </div>
-            </div>
-            <div class="card-right">
-              <select id="select-max-upload" class="select-input">
-                <option value="128">128 MB</option>
-                <option value="256">256 MB</option>
-                <option value="512" selected>512 MB (Padrão)</option>
-                <option value="1024">1024 MB (1 GB)</option>
-              </select>
             </div>
           </div>
 
@@ -459,6 +534,23 @@
           Varre os diretórios locais do Steam userdata e do Cofre para catalogar saves existentes que ainda não foram sincronizados com o Google Drive.
         </div>
 
+        <!-- Barra de Progresso de Sincronização Fluent -->
+        <div id="sync-progress-card" class="sync-progress-card" style="display: none;">
+          <div class="progress-info-row">
+            <div class="progress-header-left">
+              <div class="fluent-spinner" id="sync-spinner"></div>
+              <div class="progress-text-group">
+                <span class="progress-status-title" id="progress-status-title">Preparando sincronização...</span>
+                <span class="progress-status-detail" id="progress-status-detail">0 de 0 jogos • 0 B de 0 B</span>
+              </div>
+            </div>
+            <div class="progress-percent-badge" id="progress-percent-text">0%</div>
+          </div>
+          <div class="fluent-progress-track">
+            <div class="fluent-progress-bar" id="fluent-progress-bar" style="width: 0%;"></div>
+          </div>
+        </div>
+
         <div class="saves-table-container">
           <table class="fluent-table" id="table-saves">
             <thead>
@@ -530,24 +622,18 @@
               <img src="app-logo.png" alt="ChronoKeep Logo" class="app-logo-img">
             </div>
             <div>
-              <h2 class="about-name">ChronoKeep Manager</h2>
-              <p class="about-desc">v0.1.2 — Solução Clean-Room de Preservação e Sincronização Steam Cloud</p>
+              <h2 class="about-name">ChronoKeep</h2>
+              <p class="about-desc" id="about-version">v0.1.2</p>
             </div>
           </div>
 
-          <div class="about-section">
-            <h3>Salvaguardas de Integridade Ativas:</h3>
-            <ul class="features-list">
-              <li>✅ <strong>Isolamento de Processos de Sistema</strong>: Módulos internos da Steam protegidos contra sincronização indevida.</li>
-              <li>✅ <strong>Monotonicidade de Change Number (CN)</strong>: Saves locais nunca são sobrescritos se o CN da nuvem for inferior.</li>
-              <li>✅ <strong>Prevenção de Corrupção por Token Recursivo</strong>: Higienização de tokens <code>%WinMyDocuments%</code> duplicados.</li>
-              <li>✅ <strong>Controle de Concorrência RAII</strong>: Bloqueio estrito de downloads concorrentes simultâneos do mesmo AppID.</li>
-              <li>✅ <strong>Acoplamento ao Ciclo de Vida Steam</strong>: O daemon encerra instantaneamente quando o processo <code>steam.exe</code> for finalizado.</li>
-            </ul>
-          </div>
-
-          <div class="about-footer">
-            <span>Desenvolvido em Rust puro com interface moderna Windows 11 Fluent Design.</span>
+          <div class="about-actions">
+            <button class="btn btn-secondary" id="btn-about-github">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+              </svg>
+              <span>Repositório no GitHub</span>
+            </button>
           </div>
         </div>
       </section>
