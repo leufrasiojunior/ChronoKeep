@@ -1,4 +1,4 @@
-//! Process supervision and daemon management for `ChronoKeepSetup.exe`.
+//! Process supervision and daemon management for `ChronoKeep.exe`.
 
 use crate::win32::CREATE_NO_WINDOW;
 use cr_common::config::{check_daemon_health, find_companion_binary};

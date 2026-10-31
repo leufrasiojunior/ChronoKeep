@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ChronoKeepSetup",
+  "productName": "ChronoKeep",
   "version": "0.1.2",
-  "identifier": "com.chronokeep.setup",
+  "identifier": "com.chronokeep.app",
   "build": {
     "frontendDist": "ui"
   },
@@ -19,7 +19,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Configurações do ChronoKeep",
+        "title": "ChronoKeep",
         "width": 1050,
         "height": 700,
         "minWidth": 850,

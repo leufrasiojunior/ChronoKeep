@@ -636,6 +636,110 @@
             </button>
           </div>
         </div>
+
+        <!-- Card de Atualizações de Componentes -->
+        <div class="update-card">
+          <div class="update-card-header">
+            <div>
+              <h3 class="card-title">Atualizações de Componentes</h3>
+              <p class="card-subtitle">Verifique e atualize individualmente o Painel, o Serviço Daemon e a Bridge Steam Cloud.</p>
+            </div>
+            <div class="update-header-actions">
+              <button class="btn btn-secondary" id="btn-check-updates">
+                <svg id="icon-check-updates" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+                </svg>
+                <span id="text-check-updates">Verificar Atualizações</span>
+              </button>
+              <button class="btn btn-primary" id="btn-update-all" style="display: none;">
+                <span>Atualizar Todos</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="update-status-banner" class="update-banner" style="display: none;">
+            <span id="update-banner-icon"></span>
+            <span id="update-banner-text"></span>
+          </div>
+
+          <div class="update-components-list">
+            <!-- Item 1: ChronoKeep (GUI) -->
+            <div class="update-item" id="update-item-gui">
+              <div class="update-item-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                  <line x1="8" y1="21" x2="16" y2="21"></line>
+                  <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+              </div>
+              <div class="update-item-info">
+                <div class="update-item-title">ChronoKeep (Painel Interface)</div>
+                <div class="update-item-meta">
+                  <span class="meta-label">Versão instalada:</span>
+                  <span class="meta-val" id="meta-gui-cur">v0.1.2</span>
+                  <span class="meta-sep">•</span>
+                  <span class="meta-label">Mais recente:</span>
+                  <span class="meta-val" id="meta-gui-latest">-</span>
+                </div>
+              </div>
+              <div class="update-item-action">
+                <span class="badge-tag neutral" id="badge-gui">Não verificado</span>
+                <button class="btn btn-sm btn-primary" id="btn-update-gui" style="display: none;">Atualizar</button>
+              </div>
+            </div>
+
+            <!-- Item 2: chrono-daemon (Serviço) -->
+            <div class="update-item" id="update-item-daemon">
+              <div class="update-item-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                  <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                  <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                  <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                </svg>
+              </div>
+              <div class="update-item-info">
+                <div class="update-item-title">chrono-daemon (Serviço de Sincronização)</div>
+                <div class="update-item-meta">
+                  <span class="meta-label">Status local:</span>
+                  <span class="meta-val" id="meta-daemon-cur">-</span>
+                  <span class="meta-sep">•</span>
+                  <span class="meta-label">Mais recente:</span>
+                  <span class="meta-val" id="meta-daemon-latest">-</span>
+                </div>
+              </div>
+              <div class="update-item-action">
+                <span class="badge-tag neutral" id="badge-daemon">Não verificado</span>
+                <button class="btn btn-sm btn-primary" id="btn-update-daemon" style="display: none;">Atualizar</button>
+              </div>
+            </div>
+
+            <!-- Item 3: chronokeep.dll (Bridge Steam Cloud) -->
+            <div class="update-item" id="update-item-bridge">
+              <div class="update-item-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                  <polyline points="2 17 12 22 22 17"></polyline>
+                  <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+              </div>
+              <div class="update-item-info">
+                <div class="update-item-title">chronokeep.dll (Bridge Steam Cloud)</div>
+                <div class="update-item-meta">
+                  <span class="meta-label">Status local:</span>
+                  <span class="meta-val" id="meta-bridge-cur">-</span>
+                  <span class="meta-sep">•</span>
+                  <span class="meta-label">Mais recente:</span>
+                  <span class="meta-val" id="meta-bridge-latest">-</span>
+                </div>
+              </div>
+              <div class="update-item-action">
+                <span class="badge-tag neutral" id="badge-bridge">Não verificado</span>
+                <button class="btn btn-sm btn-primary" id="btn-update-bridge" style="display: none;">Atualizar</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
