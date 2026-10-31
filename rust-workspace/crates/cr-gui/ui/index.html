@@ -643,6 +643,57 @@
   <!-- Notification Toast Container -->
   <div id="toast" class="toast"></div>
 
+  <!-- ContentDialog: Termo de Isenção e Responsabilidade -->
+  <div id="disclaimer-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="disclaimer-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="disclaimer-title" class="dialog-title">Aviso Importante & Isenção de Responsabilidade</h2>
+        <p class="dialog-subtitle">Por favor, leia atentamente antes de continuar</p>
+      </div>
+
+      <div class="dialog-body">
+        <p>O <strong>ChronoKeep</strong> é um software livre e open-source criado por um desenvolvedor independente, desenvolvido para gerenciar e preservar seus saves, conquistas e tempo de jogo conforme a sua necessidade.</p>
+
+        <p>O aplicativo atua redirecionando as operações de sincronização em nuvem da Steam para o provedor de sua escolha (como o Google Drive) e permitindo resgatar saves antigos.</p>
+
+        <div class="dialog-callout safe">
+          <div class="callout-icon">🛡️</div>
+          <div class="callout-text">
+            <strong>Armazenamento Local Seguro (ChronoKeep Vault):</strong>
+            <p>Na prática, o risco de perda ou corrupção de arquivos é muito baixo, pois todos os dados são sempre guardados diretamente em seu disco local.</p>
+          </div>
+        </div>
+
+        <div class="dialog-callout warning">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-text">
+            <strong>Ressalvas e Limitações:</strong>
+            <p>Se você se preocupa com a integridade dos saves locais, o software preserva cópias no disco, mas como qualquer utilitário de sistema:</p>
+            <ul>
+              <li>Podem ocorrer corrupções em situações anômalas;</li>
+              <li>Risco residual de perda ou divergência de dados;</li>
+              <li>Não há garantia de sincronização com todos os jogos (alguns utilizam padrões proprietários fora da API Steam Cloud).</li>
+            </ul>
+          </div>
+        </div>
+
+        <p><strong>Isenção de Responsabilidade:</strong> O desenvolvedor não se responsabiliza caso qualquer perda venha a ocorrer, mas caso note qualquer anormalidade, por favor <a href="https://github.com/leufrasiojunior/ChronoKeep/issues" class="dialog-link" id="link-disclaimer-issue">abra uma issue no GitHub</a> explicando o mais detalhado possível o ocorrido (informando o jogo e AppID se possuir) para que possamos investigar e solucionar.</p>
+
+        <p>O ChronoKeep pode te ajudar caso precise reinstalar o Windows sem backup prévio, após falhas de software ou hardware, ou caso queira iniciar o jogo em um PC e continuar em outro com máxima confiabilidade.</p>
+
+        <p class="dialog-highlight-choice">A escolha de continuar é sua.</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-disclaimer-cancel" class="btn btn-secondary">Cancelar</button>
+        <button id="btn-disclaimer-accept" class="btn btn-primary">Eu entendo os riscos</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

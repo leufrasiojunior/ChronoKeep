@@ -3,6 +3,7 @@
    ========================================================================== */
 
 :root {
+  color-scheme: dark;
   --font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
   
   /* Dark Theme Palette (Default) */
@@ -16,6 +17,9 @@
   --card-bg-hover: rgba(255, 255, 255, 0.08);
   --card-border: rgba(255, 255, 255, 0.08);
   --card-border-strong: rgba(255, 255, 255, 0.12);
+
+  --input-bg: #2B2B2B;
+  --input-border: rgba(255, 255, 255, 0.16);
   
   --text-primary: #FFFFFF;
   --text-secondary: #CCCCCC;
@@ -36,9 +40,15 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+
+  --dialog-bg: #282828;
+  --dialog-header-bg: #202020;
+  --dialog-footer-bg: #202020;
+  --dialog-border: rgba(255, 255, 255, 0.16);
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg-color: rgba(243, 243, 243, 0.85);
   --bg-solid: #F3F3F3;
   --bg-subtle: rgba(0, 0, 0, 0.03);
@@ -49,6 +59,9 @@
   --card-bg-hover: rgba(255, 255, 255, 0.9);
   --card-border: rgba(0, 0, 0, 0.08);
   --card-border-strong: rgba(0, 0, 0, 0.14);
+
+  --input-bg: #FFFFFF;
+  --input-border: rgba(0, 0, 0, 0.18);
   
   --text-primary: #1A1A1A;
   --text-secondary: #5C5C5C;
@@ -62,6 +75,11 @@
   --success-color: #107C10;
   --warning-color: #835C00;
   --error-color: #C42B1C;
+
+  --dialog-bg: #FFFFFF;
+  --dialog-header-bg: #F8F9FA;
+  --dialog-footer-bg: #F8F9FA;
+  --dialog-border: rgba(0, 0, 0, 0.15);
 }
 
 /* Reset & Base */
@@ -713,8 +731,8 @@ input:checked + .slider:before {
 }
 
 .text-input, .number-input, .select-input {
-  background: var(--bg-subtle);
-  border: 1px solid var(--card-border-strong);
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text-primary);
   font-family: inherit;
   font-size: 12px;
@@ -736,6 +754,19 @@ input:checked + .slider:before {
 .select-input {
   min-width: 180px;
   cursor: pointer;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  color-scheme: dark;
+}
+
+[data-theme="light"] .select-input {
+  color-scheme: light;
+}
+
+.select-input option {
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  padding: 6px 10px;
 }
 
 .settings-group {
@@ -1082,5 +1113,194 @@ input:checked + .slider:before {
   color: var(--text-secondary);
   line-height: 1.6;
   margin-bottom: 20px;
+}
+
+/* ==========================================================================
+   Fluent ContentDialog (Terms & Disclaimer Modal)
+   ========================================================================== */
+.fluent-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: fadeIn 0.18s ease-out;
+}
+
+.fluent-dialog {
+  background-color: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 620px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.75), 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: dialogScaleUp 0.22s cubic-bezier(0.1, 0.9, 0.2, 1);
+  overflow: hidden;
+  opacity: 1;
+}
+
+@keyframes dialogScaleUp {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.dialog-header {
+  padding: 22px 28px 16px 28px;
+  text-align: center;
+  border-bottom: 1px solid var(--dialog-border);
+  background-color: var(--dialog-header-bg);
+  flex-shrink: 0;
+}
+
+.dialog-logo-center {
+  margin: 0 auto 10px auto;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog-logo-img {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+}
+
+.dialog-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
+}
+
+.dialog-subtitle {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.dialog-body {
+  padding: 20px 28px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background-color: var(--dialog-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dialog-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dialog-body::-webkit-scrollbar-thumb {
+  background: var(--card-border-strong);
+  border-radius: 3px;
+}
+
+.dialog-body p {
+  margin: 0;
+}
+
+.dialog-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  margin: 2px 0;
+}
+
+.dialog-callout .callout-icon {
+  font-size: 18px;
+  line-height: 1.2;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dialog-callout .callout-text {
+  flex: 1;
+}
+
+.dialog-callout .callout-text strong {
+  display: block;
+  font-size: 12.5px;
+  margin-bottom: 3px;
+}
+
+.dialog-callout .callout-text p {
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.dialog-callout.safe {
+  background: rgba(108, 203, 95, 0.12);
+  border-color: rgba(108, 203, 95, 0.35);
+}
+
+.dialog-callout.safe strong {
+  color: var(--success-color);
+}
+
+.dialog-callout.warning {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.dialog-callout.warning strong {
+  color: #FBBF24;
+}
+
+.dialog-callout ul {
+  margin: 6px 0 0 16px;
+  padding: 0;
+  font-size: 12px;
+}
+
+.dialog-callout li {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+}
+
+.dialog-link {
+  color: var(--accent-color);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.dialog-link:hover {
+  text-decoration: none;
+}
+
+.dialog-highlight-choice {
+  text-align: center;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent-color);
+  margin-top: 6px;
+}
+
+.dialog-footer {
+  padding: 16px 28px;
+  border-top: 1px solid var(--dialog-border);
+  background-color: var(--dialog-footer-bg);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
 }
 

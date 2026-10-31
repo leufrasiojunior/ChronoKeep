@@ -41,11 +41,85 @@ function showToast(message, duration = 3500) {
 }
 
 // --------------------------------------------------------------------------
+// First-Run Disclaimer Modal
+// --------------------------------------------------------------------------
+function isDisclaimerAccepted() {
+  try {
+    return localStorage.getItem("chronokeep_disclaimer_accepted") === "true";
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensureDisclaimerAccepted(onAccepted) {
+  if (isDisclaimerAccepted()) {
+    onAccepted();
+    return;
+  }
+
+  const modal = document.getElementById("disclaimer-modal");
+  const btnCancel = document.getElementById("btn-disclaimer-cancel");
+  const btnAccept = document.getElementById("btn-disclaimer-accept");
+  if (!modal || !btnCancel || !btnAccept) {
+    onAccepted();
+    return;
+  }
+
+  modal.style.display = "flex";
+
+  const closeModal = () => {
+    modal.style.display = "none";
+    btnCancel.onclick = null;
+    btnAccept.onclick = null;
+  };
+
+  btnCancel.onclick = () => {
+    closeModal();
+  };
+
+  btnAccept.onclick = () => {
+    try {
+      localStorage.setItem("chronokeep_disclaimer_accepted", "true");
+    } catch (_) {}
+    closeModal();
+    onAccepted();
+  };
+}
+
+// --------------------------------------------------------------------------
 // Navigation (NavigationView)
 // --------------------------------------------------------------------------
 function setupNavigation() {
   const navItems = document.querySelectorAll(".nav-item[data-page]");
   const pages = document.querySelectorAll(".page");
+
+  const activatePage = (btn, pageId) => {
+    navItems.forEach((i) => i.classList.remove("active"));
+    btn.classList.add("active");
+
+    // Remove o badge de novidade ao clicar na aba correspondente
+    const badge = btn.querySelector(".badge-pill");
+    if (badge) {
+      badge.remove();
+      try {
+        localStorage.setItem(`seen_badge_${pageId}`, "true");
+      } catch (_) {}
+    }
+
+    pages.forEach((p) => {
+      if (p.id === `page-${pageId}`) {
+        p.classList.add("active");
+      } else {
+        p.classList.remove("active");
+      }
+    });
+
+    if (pageId === "logs") {
+      loadLogs();
+    } else if (pageId === "cloud-saves") {
+      scanSaves();
+    }
+  };
 
   navItems.forEach((btn) => {
     const pageId = btn.getAttribute("data-page");
@@ -57,32 +131,13 @@ function setupNavigation() {
     } catch (_) {}
 
     btn.addEventListener("click", () => {
-      const pageId = btn.getAttribute("data-page");
-      navItems.forEach((i) => i.classList.remove("active"));
-      btn.classList.add("active");
-
-      // Remove o badge de novidade ao clicar na aba correspondente
-      const badge = btn.querySelector(".badge-pill");
-      if (badge) {
-        badge.remove();
-        try {
-          localStorage.setItem(`seen_badge_${pageId}`, "true");
-        } catch (_) {}
+      if (pageId === "cloud-saves" && !isDisclaimerAccepted()) {
+        ensureDisclaimerAccepted(() => {
+          activatePage(btn, pageId);
+        });
+        return;
       }
-
-      pages.forEach((p) => {
-        if (p.id === `page-${pageId}`) {
-          p.classList.add("active");
-        } else {
-          p.classList.remove("active");
-        }
-      });
-
-      if (pageId === "logs") {
-        loadLogs();
-      } else if (pageId === "cloud-saves") {
-        scanSaves();
-      }
+      activatePage(btn, pageId);
     });
   });
 
@@ -297,22 +352,24 @@ function applyTheme(theme) {
 // --------------------------------------------------------------------------
 function setupActionHandlers() {
   // Tile: Instalar na Steam
-  document.getElementById("tile-install")?.addEventListener("click", async () => {
-    showToast("Instalando componentes do ChronoKeep na Steam...");
-    try {
-      const res = await invokeBackend("install_chronokeep", {
-        steamDir: appConfig.steam_dir,
-        vaultDir: appConfig.vault_dir,
-      });
-      if (res && res.success) {
-        showToast(res.message);
-        await checkDaemon();
-      } else {
-        showToast(res ? res.message : "Falha na instalação.");
+  document.getElementById("tile-install")?.addEventListener("click", () => {
+    ensureDisclaimerAccepted(async () => {
+      showToast("Instalando componentes do ChronoKeep na Steam...");
+      try {
+        const res = await invokeBackend("install_chronokeep", {
+          steamDir: appConfig.steam_dir,
+          vaultDir: appConfig.vault_dir,
+        });
+        if (res && res.success) {
+          showToast(res.message);
+          await checkDaemon();
+        } else {
+          showToast(res ? res.message : "Falha na instalação.");
+        }
+      } catch (e) {
+        showToast("Erro durante a instalação: " + e);
       }
-    } catch (e) {
-      showToast("Erro durante a instalação: " + e);
-    }
+    });
   });
 
   // Toggle Daemon
@@ -469,6 +526,10 @@ function setupActionHandlers() {
   };
   document.getElementById("nav-github-link")?.addEventListener("click", openGitHub);
   document.getElementById("btn-about-github")?.addEventListener("click", openGitHub);
+  document.getElementById("link-disclaimer-issue")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    invokeBackend("open_url", { url: "https://github.com/leufrasiojunior/ChronoKeep/issues" });
+  });
 
   // Logs actions
   document.getElementById("btn-refresh-log")?.addEventListener("click", loadLogs);
@@ -487,6 +548,11 @@ function setupActionHandlers() {
 // Saves Scanner & Renderer
 // --------------------------------------------------------------------------
 async function scanSaves() {
+  if (!isDisclaimerAccepted()) {
+    ensureDisclaimerAccepted(() => scanSaves());
+    return;
+  }
+
   const tbody = document.getElementById("tbody-saves");
   const scanBtn = document.getElementById("btn-scan-saves");
   const originalScanHtml = scanBtn ? scanBtn.innerHTML : "";
