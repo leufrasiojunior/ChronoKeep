@@ -89,8 +89,6 @@ jobs:
           
           if (Test-Path "$binDir/ChronoKeep.exe") {
             Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/
-            # Mantem compatibilidade com scripts legados
-            Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/ChronoKeepSetup.exe
           }
           if (Test-Path "$binDir/chrono-daemon.exe") {
             Copy-Item -Force "$binDir/chrono-daemon.exe" release-artifacts/
@@ -98,18 +96,6 @@ jobs:
           if (Test-Path "$binDir/chronokeep.dll") {
             Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/
             Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/cloud_redirect.dll
-          }
-          if (Test-Path dist/chronokeep.ini) {
-            Copy-Item -Force dist/chronokeep.ini release-artifacts/
-          }
-          if (Test-Path dist/Reparar_Instalacao_Steam.bat) {
-            Copy-Item -Force dist/Reparar_Instalacao_Steam.bat release-artifacts/
-          }
-          if (Test-Path README.md) {
-            Copy-Item -Force README.md release-artifacts/
-          }
-          if (Test-Path GUIA_GOOGLE_CLOUD_OAUTH.md) {
-            Copy-Item -Force GUIA_GOOGLE_CLOUD_OAUTH.md release-artifacts/
           }
 
           # Calcula hashes SHA256 para versions.json
@@ -154,12 +140,22 @@ jobs:
             }
           }
 
-          $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -Path "release-artifacts/versions.json" -Encoding UTF8
+          # Salva versions.json na raiz do repositorio (para servir via raw content)
+          $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -Path "versions.json" -Encoding UTF8
+
+          # Monta pasta temporaria para gerar o pacote ZIP completo
+          New-Item -ItemType Directory -Force -Path temp-zip
+          Copy-Item -Force release-artifacts/* temp-zip/
+          if (Test-Path dist/chronokeep.ini) { Copy-Item -Force dist/chronokeep.ini temp-zip/ }
+          if (Test-Path dist/Reparar_Instalacao_Steam.bat) { Copy-Item -Force dist/Reparar_Instalacao_Steam.bat temp-zip/ }
+          if (Test-Path README.md) { Copy-Item -Force README.md temp-zip/ }
+          if (Test-Path GUIA_GOOGLE_CLOUD_OAUTH.md) { Copy-Item -Force GUIA_GOOGLE_CLOUD_OAUTH.md temp-zip/ }
 
           # Cria o arquivo ZIP completo se todos os binarios estiverem presentes
           if ((Test-Path "release-artifacts/ChronoKeep.exe") -and (Test-Path "release-artifacts/chrono-daemon.exe") -and (Test-Path "release-artifacts/chronokeep.dll")) {
-            Compress-Archive -Path release-artifacts/* -DestinationPath ChronoKeep-Windows-x64.zip -Force
+            Compress-Archive -Path temp-zip/* -DestinationPath ChronoKeep-Windows-x64.zip -Force
           }
+          Remove-Item -Recurse -Force temp-zip
 
           Get-ChildItem -Path release-artifacts
 
@@ -196,3 +192,19 @@ jobs:
           } else {
             gh release create $tagName @assetsToUpload --title $relTitle --notes "ChronoKeep Release Assets ($tagName)"
           }
+
+      - name: Commit updated versions.json to repository
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if (Test-Path versions.json) {
+            git add versions.json
+            git diff --quiet --cached
+            if ($LASTEXITCODE -ne 0) {
+              git commit -m "chore(release): update versions.json manifest [skip ci]"
+              git push origin HEAD:main
+            }
+          }
+

@@ -16,9 +16,9 @@ use crate::win32::CREATE_NO_WINDOW;
 use std::os::windows::process::CommandExt;
 
 const PRIMARY_VERSIONS_URL: &str =
-    "https://github.com/leufrasiojunior/ChronoKeep/releases/latest/download/versions.json";
+    "https://raw.githubusercontent.com/leufrasiojunior/ChronoKeep/main/versions.json";
 const FALLBACK_VERSIONS_URL: &str =
-    "https://raw.githubusercontent.com/leufrasiojunior/ChronoKeep/main/release-artifacts/versions.json";
+    "https://raw.githubusercontent.com/leufrasiojunior/ChronoKeep/develop/versions.json";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ManifestComponent {
