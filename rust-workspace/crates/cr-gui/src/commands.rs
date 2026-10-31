@@ -157,45 +157,17 @@ pub fn get_system_info() -> SystemInfoDto {
         && s_path.join("chrono-daemon.exe").exists();
 
     let gui_ver = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let embedded_daemon_hash = cr_proto::sha256::sha256_hex(EMBEDDED_CHRONO_DAEMON).to_lowercase();
-    let embedded_bridge_hash = cr_proto::sha256::sha256_hex(EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
-
     let daemon_path = s_path.join("chrono-daemon.exe");
-    let daemon_version = if daemon_path.exists() {
-        if let Ok(h) = cr_proto::sha256::sha256_file(&daemon_path) {
-            if h.to_lowercase() == embedded_daemon_hash {
-                gui_ver.clone()
-            } else {
-                "Instalado".to_string()
-            }
-        } else {
-            "Instalado".to_string()
-        }
-    } else {
-        "Não instalado".to_string()
-    };
+    let daemon_version = crate::updater::detect_daemon_version(&daemon_path, "", &gui_ver);
 
     let bridge_path = if s_path.join("chronokeep.dll").exists() {
-        Some(s_path.join("chronokeep.dll"))
+        s_path.join("chronokeep.dll")
     } else if s_path.join("cloud_redirect.dll").exists() {
-        Some(s_path.join("cloud_redirect.dll"))
+        s_path.join("cloud_redirect.dll")
     } else {
-        None
+        s_path.join("chronokeep.dll")
     };
-
-    let dll_version = if let Some(p) = bridge_path {
-        if let Ok(h) = cr_proto::sha256::sha256_file(&p) {
-            if h.to_lowercase() == embedded_bridge_hash {
-                gui_ver.clone()
-            } else {
-                "Instalado".to_string()
-            }
-        } else {
-            "Instalado".to_string()
-        }
-    } else {
-        "Não instalado".to_string()
-    };
+    let dll_version = crate::updater::detect_bridge_version(&bridge_path, "", &gui_ver);
 
     SystemInfoDto {
         steam_dir,

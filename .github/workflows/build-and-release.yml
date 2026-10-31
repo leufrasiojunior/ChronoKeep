@@ -122,12 +122,16 @@ jobs:
             $hashes["bridge"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/chronokeep.dll").Hash.ToLower()
           }
 
-          $verTag = if ("${{ inputs.tag_name }}" -ne "") {
+          # Obtem versao semantica do Cargo.toml para nunca usar "latest" no manifesto
+          $cargoToml = Get-Content "rust-workspace/crates/cr-gui/Cargo.toml" -Raw
+          $pkgVer = if ($cargoToml -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $verTag = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
             "${{ inputs.tag_name }}"
           } elseif ($env:GITHUB_REF -like "refs/tags/*") {
             $env:GITHUB_REF_NAME
           } else {
-            "latest"
+            $pkgVer
           }
 
           # Carrega versions.json existente se houver para preservar componentes nao reconstruidos
@@ -156,6 +160,7 @@ jobs:
 
           if (Test-Path "release-artifacts/ChronoKeep.exe") {
             $guiObj = [PSCustomObject]@{
+              version = $verTag
               filename = "ChronoKeep.exe"
               sha256 = $hashes["gui"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
@@ -164,6 +169,7 @@ jobs:
           }
           if (Test-Path "release-artifacts/chrono-daemon.exe") {
             $daemonObj = [PSCustomObject]@{
+              version = $verTag
               filename = "chrono-daemon.exe"
               sha256 = $hashes["daemon"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
@@ -172,6 +178,7 @@ jobs:
           }
           if (Test-Path "release-artifacts/chronokeep.dll") {
             $bridgeObj = [PSCustomObject]@{
+              version = $verTag
               filename = "chronokeep.dll"
               sha256 = $hashes["bridge"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
@@ -210,12 +217,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tagName = if ("${{ inputs.tag_name }}" -ne "") {
+          $cargoToml = Get-Content "rust-workspace/crates/cr-gui/Cargo.toml" -Raw
+          $pkgVer = if ($cargoToml -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $tagName = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
             "${{ inputs.tag_name }}"
           } elseif ($env:GITHUB_REF -like "refs/tags/*") {
             $env:GITHUB_REF_NAME
           } else {
-            "latest"
+            $pkgVer
           }
 
           $relTitle = if ($tagName -like "v*") { "ChronoKeep $tagName" } else { "ChronoKeep Latest Build" }

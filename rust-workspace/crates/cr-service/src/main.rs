@@ -37,6 +37,11 @@ fn main() {
         idx += 1;
     }
 
+    if args.len() >= 2 && (args[1].eq_ignore_ascii_case("version") || args[1] == "--version" || args[1] == "-v") {
+        println!("v{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     if args.len() >= 2 && args[1].eq_ignore_ascii_case("status") {
         println!("=== ChronoKeep Daemon (chrono-daemon) ===");
         println!("Porta configurada : 127.0.0.1:{}", cfg.port);
