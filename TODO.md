@@ -38,4 +38,12 @@ Este documento lista tarefas, melhorias arquiteturais e recursos planejados para
     - Botão de upload/sincronização imediata.
     - Botão de restauração (download do save da nuvem para a pasta local da Steam).
 
+### 4. Melhorias de Resiliência e Conectividade (Revisão de Código)
+* **Contexto**: Pontos identificados na revisão automatizada para refinamento em versões futuras.
+* **Proposta de Melhoria**:
+  - [ ] **Reabrir Steam em caso de falha de instalação (`commands.rs`)**: Se o Steam estava em execução e a implantação de DLL falhar (ex: falta de permissão), garantir que o `steam.exe` seja relançado mesmo no caminho de erro.
+  - [ ] **Ajuste de Timeouts WinHTTP para Uploads Grandes (`http.rs`)**: Elevar os timeouts de envio (`nSendTimeout`) e resposta (`nReceiveTimeout`) do cliente WinHTTP de 5s para 60s ou 120s para prevenir que conexões lentas abortem uploads de saves volumosos.
+  - [ ] **Expiração de Placeholders no Cache da Steam Store (`commands.rs`)**: Não persistir fallbacks temporários (`AppID <id>`) no cache em disco quando a Steam Store estiver indisponível, permitindo tentar resolver o nome novamente na próxima varredura.
+
+
 

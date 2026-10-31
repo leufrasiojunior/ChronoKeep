@@ -179,6 +179,7 @@ pub fn https_request(
         if h_session.is_null() {
             return None;
         }
+        // TODO: Ajustar timeouts de envio e resposta para uploads maiores de saves em uplinks lentos (ex: 60s ou 120s)
         WinHttpSetTimeouts(h_session, 3000, 3000, 5000, 5000);
 
         let host_w = to_wide(host);

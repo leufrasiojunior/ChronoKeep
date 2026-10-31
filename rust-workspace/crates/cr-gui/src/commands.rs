@@ -362,6 +362,7 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     );
 
     if !dll_ok || !daemon_ok {
+        // TODO: Relaunch steam if it was running before returning error (steam_was_running)
         return OperationResult {
             success: false,
             message: "Falha ao copiar arquivos para a pasta da Steam. Verifique permissões de gravação.".to_string(),
@@ -664,6 +665,8 @@ fn load_app_names_cache() -> HashMap<u32, String> {
     HashMap::new()
 }
 
+// TODO: Filtrar placeholders temporarios ("AppID <id>") antes de persistir o cache em disco,
+// permitindo tentar buscar novamente o nome real na Steam Store em varreduras futuras.
 fn save_app_names_cache(cache: &HashMap<u32, String>) {
     let p = get_app_names_cache_path();
     if let Ok(content) = serde_json::to_string_pretty(cache) {
