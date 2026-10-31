@@ -675,6 +675,49 @@
           Varre os diretórios locais do Steam userdata e do Cofre para catalogar saves existentes que ainda não foram sincronizados com o Google Drive.
         </div>
 
+        <!-- Barra de Abas: Tools (Padrão), Steam Oficial, Todos -->
+        <div class="saves-tabs-bar">
+          <div class="saves-tab-buttons">
+            <button class="saves-tab-btn active" id="tab-btn-tools" data-tab="tools">
+              <span>🎮 Tools</span>
+              <span class="tab-badge" id="count-tools">0</span>
+            </button>
+            <button class="saves-tab-btn" id="tab-btn-official" data-tab="official">
+              <span>🛡️ Steam Oficial</span>
+              <span class="tab-badge" id="count-official">0</span>
+            </button>
+            <button class="saves-tab-btn" id="tab-btn-all" data-tab="all">
+              <span>📂 Todos</span>
+              <span class="tab-badge" id="count-all">0</span>
+            </button>
+          </div>
+
+          <div class="saves-search-wrapper">
+            <div class="search-box">
+              <span class="search-icon">🔍</span>
+              <input type="text" id="input-search-saves" placeholder="Filtrar por nome ou AppID...">
+            </div>
+          </div>
+        </div>
+
+        <!-- Card de Legenda e Referência Fluent -->
+        <div class="saves-legend-card">
+          <div class="legend-header">
+            <span class="legend-icon">ℹ️</span>
+            <strong>Entenda as origens dos jogos e o papel do ChronoKeep:</strong>
+          </div>
+          <div class="legend-grid">
+            <div class="legend-item">
+              <span class="badge badge-tools">Tools</span>
+              <span class="legend-desc"><strong>SteamTools / GreenLuma:</strong> A nuvem da Valve não suporta esses títulos. O ChronoKeep é a <em>nuvem principal</em> e sincroniza seus saves com o Google Drive e Cofre local.</span>
+            </div>
+            <div class="legend-item">
+              <span class="badge badge-official">Steam Oficial</span>
+              <span class="legend-desc"><strong>Biblioteca Oficial Steam:</strong> A <em>Valve Steam Cloud</em> opera com prioridade total. O ChronoKeep atua como <em>backup de redundância</em> seguro caso deseje manter cópias extras.</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Barra de Progresso de Sincronização Fluent -->
         <div id="sync-progress-card" class="sync-progress-card" style="display: none;">
           <div class="progress-info-row">
@@ -699,18 +742,19 @@
                 <th style="width: 40px; text-align: center;">
                   <input type="checkbox" id="check-all-orphans" title="Selecionar todos">
                 </th>
-                <th>AppID</th>
+                <th style="width: 85px;">AppID</th>
                 <th>Jogo</th>
-                <th>Arquivos</th>
-                <th>Tamanho</th>
-                <th>No Cofre / Local</th>
-                <th>Na Nuvem</th>
-                <th>Ações</th>
+                <th style="width: 140px;">Origem</th>
+                <th style="width: 110px;">Arquivos</th>
+                <th style="width: 110px;">Tamanho</th>
+                <th style="width: 150px;">No Cofre / Local</th>
+                <th style="width: 130px;">Na Nuvem</th>
+                <th style="width: 120px; text-align: center;">Ações</th>
               </tr>
             </thead>
             <tbody id="tbody-saves">
               <tr>
-                <td colspan="8" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
+                <td colspan="9" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
               </tr>
             </tbody>
           </table>

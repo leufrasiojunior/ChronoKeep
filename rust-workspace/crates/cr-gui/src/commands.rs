@@ -77,6 +77,8 @@ pub struct GameSaveItemDto {
     pub source: String,
     pub in_local: bool,
     pub in_cloud: bool,
+    pub origin: String,
+    pub origin_label: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -825,6 +827,64 @@ fn resolve_game_names_batch(
     }
 }
 
+fn scan_local_tool_apps(steam_path: &Path) -> HashMap<u32, &'static str> {
+    let mut tool_apps = HashMap::new();
+
+    // 1. Scan config/stplug-in
+    let st_dir = steam_path.join("config").join("stplug-in");
+    if let Ok(entries) = fs::read_dir(st_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "SteamTools");
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Scan config/lua
+    let lua_dir = steam_path.join("config").join("lua");
+    if let Ok(entries) = fs::read_dir(lua_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "SteamTools");
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Scan AppList (GreenLuma)
+    let applist_dir = steam_path.join("AppList");
+    if let Ok(entries) = fs::read_dir(applist_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "GreenLuma");
+                    }
+                }
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(app_id) = content.trim().parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "GreenLuma");
+                    }
+                }
+            }
+        }
+    }
+
+    tool_apps
+}
+
 #[tauri::command]
 pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<GameSaveItemDto> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -927,6 +987,7 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
         }
 
         let libraries = get_steam_library_folders(steam_path);
+        let tool_apps = scan_local_tool_apps(steam_path);
         let mut cache = load_app_names_cache();
 
         let all_app_ids: Vec<u32> = map.keys().map(|(_, app_id)| *app_id).collect();
@@ -935,6 +996,15 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
         let items: Vec<GameSaveItemDto> = map.into_iter()
             .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
                 let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
+                let is_in_steam = source.contains("Steam");
+                let (origin, origin_label) = if let Some(&tool_name) = tool_apps.get(&app_id) {
+                    ("tools".to_string(), tool_name.to_string())
+                } else if is_in_steam {
+                    ("official".to_string(), "Steam Oficial".to_string())
+                } else {
+                    ("vault_only".to_string(), "Arquivado".to_string())
+                };
+
                 GameSaveItemDto {
                     account_id,
                     app_id,
@@ -945,6 +1015,8 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
                     source,
                     in_local: true,
                     in_cloud,
+                    origin,
+                    origin_label,
                 }
             })
             .collect();
