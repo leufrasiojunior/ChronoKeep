@@ -113,9 +113,11 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
     }
     let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONO_DAEMON).to_lowercase();
     if !cur_hash.is_empty() && cur_hash == embedded_hash {
-        return format!("v{}", env!("CARGO_PKG_VERSION"));
+        return "v0.1.8".to_string();
     }
     match cur_hash.as_str() {
+        "737f94f094f83385d6cc51a6ccfda32432b989eef25d3c57f667facff0993328" => "v0.1.8".to_string(),
+        "4952f719b17bb13a90322524a64d400748d999ba34c7abfe9bdfff22ea6e037a" => "v0.1.7".to_string(),
         "bd3e9c3e9e16dbd6207dbd1bf66ac13aa8fd2c6a28f155ffa4bf006d1288b2bc" => "v0.1.6".to_string(),
         "67adff9ae4589b8060a9cd17d0a6046e7a1907ab71b59f2527ed5f6427e5a850" => "v0.1.5".to_string(),
         "24de7fd18a865a3b2b3c6a3220d511ed12b16d2011139a88acd0454860461e48" => "v0.1.5".to_string(),
@@ -136,9 +138,11 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
     }
     let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
     if !cur_hash.is_empty() && cur_hash == embedded_hash {
-        return format!("v{}", env!("CARGO_PKG_VERSION"));
+        return "v0.1.8".to_string();
     }
     match cur_hash.as_str() {
+        "6f1e2585b9f3d9505879799929208bed3b7d98dabe4b10912354d596964f1f46" => "v0.1.8".to_string(),
+        "a7afdbd1b5d20005387d82b4cf55795c4c728b932f8ea766e0bce8e00fa6872a" => "v0.1.7".to_string(),
         "cd56c1520b8f0326c67e154ed7ab7099ccd843edd9a4ef5a56bca278960f51ec" => "v0.1.6".to_string(),
         "1a5767db4161aace8be0f7be7c05518575bafa40914b4301cac106d5e7c14e21" => "v0.1.5".to_string(),
         "8433a409012ef36ac17e48f29b1e5591793b563ed5316f0724d7da724fbf56ff" => "v0.1.5".to_string(),

@@ -9,16 +9,16 @@
       "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.9/ChronoKeep.exe"
     },
     "daemon": {
-      "version": "v0.1.9",
+      "version": "v0.1.8",
       "filename": "chrono-daemon.exe",
-      "sha256": "491525e6446ed256cc4b06abddafcc19e544be9ddbb5b12f46b231811fd3cf12",
-      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.9/chrono-daemon.exe"
+      "sha256": "737f94f094f83385d6cc51a6ccfda32432b989eef25d3c57f667facff0993328",
+      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.8/chrono-daemon.exe"
     },
     "bridge_dll": {
-      "version": "v0.1.9",
+      "version": "v0.1.8",
       "filename": "chronokeep.dll",
-      "sha256": "b2fc9f5877d8b7a1a03a90c618db39f1ea3480cfde2eed6c52cbc1d257738ae8",
-      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.9/chronokeep.dll"
+      "sha256": "6f1e2585b9f3d9505879799929208bed3b7d98dabe4b10912354d596964f1f46",
+      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.8/chronokeep.dll"
     }
   }
 }

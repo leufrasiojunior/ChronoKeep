@@ -120,19 +120,25 @@ jobs:
             $hashes["bridge"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/chronokeep.dll").Hash.ToLower()
           }
 
-          # Obtem versao semantica do Cargo.toml para nunca usar "latest" no manifesto
-          $cargoToml = Get-Content "rust-workspace/crates/cr-gui/Cargo.toml" -Raw
-          $pkgVer = if ($cargoToml -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+          # Obtem versoes semanticas individuais de cada Cargo.toml
+          $cargoTomlGui = Get-Content "rust-workspace/crates/cr-gui/Cargo.toml" -Raw
+          $pkgVerGui = if ($cargoTomlGui -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $cargoTomlDaemon = Get-Content "rust-workspace/crates/cr-service/Cargo.toml" -Raw
+          $pkgVerDaemon = if ($cargoTomlDaemon -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $cargoTomlBridge = Get-Content "rust-workspace/crates/cr-bridge-dll/Cargo.toml" -Raw
+          $pkgVerBridge = if ($cargoTomlBridge -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
 
           $verTag = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
             "${{ inputs.tag_name }}"
           } elseif ($env:GITHUB_REF -like "refs/tags/*") {
             $env:GITHUB_REF_NAME
           } else {
-            $pkgVer
+            $pkgVerGui
           }
 
-          # Carrega versions.json existente se houver para preservar componentes nao reconstruidos
+          # Carrega versions.json existente se houver para preservar componentes nao alterados
           $manifestObj = $null
           if (Test-Path "versions.json") {
             try {
@@ -156,27 +162,35 @@ jobs:
             }
           }
 
-          if (Test-Path "release-artifacts/ChronoKeep.exe") {
+          # Atualiza GUI se for solicitado explicitamente, se comp='all' ou se a versao no Cargo.toml mudou
+          $updateGui = ($comp -eq "gui") -or ($null -eq $manifestObj.components.gui) -or ($manifestObj.components.gui.version -ne $pkgVerGui)
+          if ($updateGui -and (Test-Path "release-artifacts/ChronoKeep.exe")) {
             $guiObj = [PSCustomObject]@{
-              version = $verTag
+              version = $pkgVerGui
               filename = "ChronoKeep.exe"
               sha256 = $hashes["gui"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
             }
             $manifestObj.components | Add-Member -NotePropertyName "gui" -NotePropertyValue $guiObj -Force
           }
-          if (Test-Path "release-artifacts/chrono-daemon.exe") {
+
+          # Atualiza DAEMON apenas se for solicitado explicitamente OU se a sua versao no Cargo.toml mudou
+          $updateDaemon = ($comp -eq "daemon") -or ($null -eq $manifestObj.components.daemon) -or ($manifestObj.components.daemon.version -ne $pkgVerDaemon)
+          if ($updateDaemon -and (Test-Path "release-artifacts/chrono-daemon.exe")) {
             $daemonObj = [PSCustomObject]@{
-              version = $verTag
+              version = $pkgVerDaemon
               filename = "chrono-daemon.exe"
               sha256 = $hashes["daemon"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
             }
             $manifestObj.components | Add-Member -NotePropertyName "daemon" -NotePropertyValue $daemonObj -Force
           }
-          if (Test-Path "release-artifacts/chronokeep.dll") {
+
+          # Atualiza BRIDGE DLL apenas se for solicitado explicitamente OU se a sua versao no Cargo.toml mudou
+          $updateBridge = ($comp -eq "bridge") -or ($null -eq $manifestObj.components.bridge_dll) -or ($manifestObj.components.bridge_dll.version -ne $pkgVerBridge)
+          if ($updateBridge -and (Test-Path "release-artifacts/chronokeep.dll")) {
             $bridgeObj = [PSCustomObject]@{
-              version = $verTag
+              version = $pkgVerBridge
               filename = "chronokeep.dll"
               sha256 = $hashes["bridge"]
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
