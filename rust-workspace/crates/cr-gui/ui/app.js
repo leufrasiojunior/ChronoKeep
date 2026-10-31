@@ -89,40 +89,58 @@ function ensureDisclaimerAccepted(onAccepted) {
 // --------------------------------------------------------------------------
 // Navigation (NavigationView)
 // --------------------------------------------------------------------------
-function setupNavigation() {
+function navigateToPage(pageId, targetElementId = null) {
   const navItems = document.querySelectorAll(".nav-item[data-page]");
   const pages = document.querySelectorAll(".page");
+  const targetBtn = document.querySelector(`.nav-item[data-page="${pageId}"]`);
 
-  const activatePage = (btn, pageId) => {
-    navItems.forEach((i) => i.classList.remove("active"));
-    btn.classList.add("active");
-
-    // Remove o badge de novidade ao clicar na aba correspondente
-    const badge = btn.querySelector(".badge-pill");
+  navItems.forEach((i) => i.classList.remove("active"));
+  if (targetBtn) {
+    targetBtn.classList.add("active");
+    const badge = targetBtn.querySelector(".badge-pill");
     if (badge) {
       badge.remove();
       try {
         localStorage.setItem(`seen_badge_${pageId}`, "true");
       } catch (_) {}
     }
+  }
 
-    pages.forEach((p) => {
-      if (p.id === `page-${pageId}`) {
-        p.classList.add("active");
-      } else {
-        p.classList.remove("active");
-      }
-    });
-
-    if (pageId === "logs") {
-      loadLogs();
-    } else if (pageId === "cloud-saves") {
-      scanSaves();
-    } else if (pageId === "about") {
-      if (!lastUpdateCheckResult) {
-        checkForUpdates(false);
-      }
+  pages.forEach((p) => {
+    if (p.id === `page-${pageId}`) {
+      p.classList.add("active");
+    } else {
+      p.classList.remove("active");
     }
+  });
+
+  if (pageId === "logs") {
+    loadLogs();
+  } else if (pageId === "cloud-saves") {
+    scanSaves();
+  } else if (pageId === "about") {
+    if (!lastUpdateCheckResult) {
+      checkForUpdates(false);
+    }
+  }
+
+  if (targetElementId) {
+    setTimeout(() => {
+      const target = document.getElementById(targetElementId);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        target.classList.add("highlight-card");
+        setTimeout(() => target.classList.remove("highlight-card"), 2000);
+      }
+    }, 120);
+  }
+}
+
+function setupNavigation() {
+  const navItems = document.querySelectorAll(".nav-item[data-page]");
+
+  const activatePage = (btn, pageId) => {
+    navigateToPage(pageId);
   };
 
   navItems.forEach((btn) => {
@@ -331,6 +349,9 @@ async function loadInitialData() {
     }
 
     await checkDaemon();
+
+    // Verificação proativa de atualizações em segundo plano ao abrir o aplicativo
+    checkForUpdates(false).catch((e) => console.warn("Auto-check updates on startup:", e));
   } catch (err) {
     console.error("Erro ao carregar dados iniciais:", err);
   }
@@ -557,6 +578,12 @@ function setupActionHandlers() {
   });
 
   // Updates actions
+  document.getElementById("btn-home-check-updates")?.addEventListener("click", () => {
+    navigateToPage("settings", "card-updates");
+    if (!lastUpdateCheckResult) {
+      checkForUpdates(true);
+    }
+  });
   document.getElementById("btn-check-updates")?.addEventListener("click", () => checkForUpdates(true));
   document.getElementById("btn-update-all")?.addEventListener("click", updateAllComponents);
   document.getElementById("btn-update-gui")?.addEventListener("click", () => updateComponent("gui"));
@@ -1082,6 +1109,21 @@ async function checkForUpdates(showUserToast = false) {
         banner.style.display = "flex";
         banner.innerHTML = `<span>✓</span><span>Todos os componentes do ChronoKeep estão atualizados (${res.release_tag || "Versão mais recente"}).</span>`;
         if (btnUpdateAll) btnUpdateAll.style.display = "none";
+      }
+    }
+
+    // Sincroniza o banner de atualização da tela Início
+    const homeBanner = document.getElementById("home-update-banner");
+    const homeDesc = document.getElementById("home-update-desc");
+    if (homeBanner) {
+      if (res.has_updates) {
+        homeBanner.style.display = "flex";
+        if (homeDesc) {
+          const compCount = res.components?.filter(c => c.status === "update_available").length || 1;
+          homeDesc.textContent = `${compCount} componente(s) com atualização disponível (${res.release_tag || "Nova versão"}). Clique em conferir para atualizar.`;
+        }
+      } else {
+        homeBanner.style.display = "none";
       }
     }
 
