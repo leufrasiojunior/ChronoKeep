@@ -40,6 +40,31 @@ pub fn kill_process_and_wait(proc_name: &str, max_wait_ms: u64) {
     }
 }
 
+pub fn close_steam_and_wait(steam_dir: &Path, max_wait_ms: u64) {
+    if !is_process_running("steam.exe") {
+        return;
+    }
+    let steam_exe = steam_dir.join("steam.exe");
+    if steam_exe.exists() {
+        let mut cmd = std::process::Command::new(&steam_exe);
+        cmd.arg("-shutdown");
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.spawn();
+    }
+
+    let start = std::time::Instant::now();
+    let graceful_limit = std::time::Duration::from_millis(max_wait_ms.min(3000));
+    while start.elapsed() < graceful_limit {
+        if !is_process_running("steam.exe") {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    kill_process_and_wait("steam.exe", max_wait_ms.saturating_sub(3000).max(2000));
+}
+
 pub fn launch_steam(steam_dir: &Path) {
     let steam_exe = steam_dir.join("steam.exe");
     if steam_exe.exists() {

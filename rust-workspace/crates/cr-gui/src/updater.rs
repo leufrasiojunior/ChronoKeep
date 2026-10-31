@@ -2,7 +2,10 @@
 //! Supports decoupled updates of ChronoKeep (GUI), chrono-daemon, and chronokeep.dll.
 
 use crate::installer::deploy_bytes_safe;
-use crate::service_mgr::{is_process_running, kill_process_and_wait, start_service_from_gui, stop_service_from_gui};
+use crate::service_mgr::{
+    close_steam_and_wait, is_process_running, kill_process_and_wait, launch_steam,
+    start_service_from_gui, stop_service_from_gui,
+};
 use cr_common::config::resolve_service_port;
 use cr_common::http::https_download_url;
 use cr_proto::sha256::{sha256_file, sha256_hex};
@@ -297,7 +300,12 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
     }
 }
 
-pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyResult, String> {
+pub fn apply_update(
+    component_id: &str,
+    steam_dir: &Path,
+    steam_was_running_override: Option<bool>,
+    reopen_steam: bool,
+) -> Result<UpdateApplyResult, String> {
     let manifest = fetch_remote_manifest()?;
 
     match component_id {
@@ -317,6 +325,13 @@ pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyR
                 return Err(format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename));
             }
 
+            let steam_currently_running = is_process_running("steam.exe");
+            let steam_was_running = steam_was_running_override.unwrap_or(steam_currently_running);
+
+            if steam_currently_running {
+                close_steam_and_wait(steam_dir, 5000);
+            }
+
             let port = resolve_service_port(&steam_dir.to_string_lossy());
             stop_service_from_gui(port);
             kill_process_and_wait("chrono-daemon.exe", 2000);
@@ -328,13 +343,23 @@ pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyR
 
             let restarted = start_service_from_gui(steam_dir, port);
 
+            if steam_was_running && reopen_steam {
+                launch_steam(steam_dir);
+            }
+
+            let msg = if steam_was_running && reopen_steam {
+                "chrono-daemon.exe atualizado! A Steam foi reiniciada.".to_string()
+            } else if steam_was_running {
+                "chrono-daemon.exe atualizado com sucesso!".to_string()
+            } else if restarted {
+                "chrono-daemon.exe atualizado e reiniciado com sucesso!".to_string()
+            } else {
+                "chrono-daemon.exe atualizado com sucesso!".to_string()
+            };
+
             Ok(UpdateApplyResult {
                 success: true,
-                message: if restarted {
-                    "chrono-daemon.exe atualizado e reiniciado com sucesso!".to_string()
-                } else {
-                    "chrono-daemon.exe atualizado com sucesso!".to_string()
-                },
+                message: msg,
                 component_id: "daemon".to_string(),
                 restart_required: false,
             })
@@ -356,7 +381,12 @@ pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyR
                 return Err(format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename));
             }
 
-            let steam_running = is_process_running("steam.exe");
+            let steam_currently_running = is_process_running("steam.exe");
+            let steam_was_running = steam_was_running_override.unwrap_or(steam_currently_running);
+
+            if steam_currently_running {
+                close_steam_and_wait(steam_dir, 5000);
+            }
 
             let dst_chronokeep = steam_dir.join("chronokeep.dll");
             let dst_redirect = steam_dir.join("cloud_redirect.dll");
@@ -368,8 +398,12 @@ pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyR
                 return Err("Falha ao gravar chronokeep.dll no diretório da Steam.".to_string());
             }
 
-            let msg = if steam_running {
-                "chronokeep.dll atualizada! Reinicie a Steam para carregar a nova versão.".to_string()
+            if steam_was_running && reopen_steam {
+                launch_steam(steam_dir);
+            }
+
+            let msg = if steam_was_running && reopen_steam {
+                "chronokeep.dll atualizada! A Steam foi reiniciada.".to_string()
             } else {
                 "chronokeep.dll atualizada com sucesso!".to_string()
             };
@@ -378,7 +412,7 @@ pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyR
                 success: true,
                 message: msg,
                 component_id: "bridge".to_string(),
-                restart_required: steam_running,
+                restart_required: false,
             })
         }
         "gui" => {

@@ -1148,7 +1148,7 @@ async function checkForUpdates(showUserToast = false) {
   }
 }
 
-async function updateComponent(componentId) {
+async function updateComponent(componentId, reopenSteam = true, steamWasRunning = null) {
   if (isUpdatingComponent) return;
   isUpdatingComponent = true;
 
@@ -1159,10 +1159,25 @@ async function updateComponent(componentId) {
     btn.textContent = "Atualizando...";
   }
 
+  // Verifica se a Steam está aberta para atualizar daemon ou bridge DLL quando chamado individualmente
+  let isSteamOpen = steamWasRunning;
+  if ((componentId === "daemon" || componentId === "bridge") && steamWasRunning === null) {
+    try {
+      isSteamOpen = await invokeBackend("is_steam_running");
+      if (isSteamOpen) {
+        showToast("Steam aberta detectada: ela será encerrada para aplicar a atualização e reaberta automaticamente ao finalizar.", 6000);
+      }
+    } catch (_) {}
+  }
+
   showToast(`Baixando e aplicando atualização de ${componentId}...`, 5000);
 
   try {
-    const res = await invokeBackend("update_component", { component: componentId });
+    const res = await invokeBackend("update_component", {
+      component: componentId,
+      reopenSteam: reopenSteam !== false,
+      steamWasRunning: isSteamOpen !== null ? isSteamOpen : null,
+    });
     if (res && res.success) {
       showToast(res.message, 6000);
       if (res.restart_required && componentId === "gui") {
@@ -1205,8 +1220,35 @@ async function updateAllComponents() {
   const order = ["daemon", "bridge", "gui"];
   const sorted = available.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 
-  for (const comp of sorted) {
-    await updateComponent(comp.id);
+  const hasSteamComponent = sorted.some(c => c.id === "daemon" || c.id === "bridge");
+  let steamWasRunning = false;
+  if (hasSteamComponent) {
+    try {
+      steamWasRunning = await invokeBackend("is_steam_running");
+      if (steamWasRunning) {
+        showToast("Steam aberta detectada: ela será encerrada durante as atualizações e reaberta automaticamente ao finalizar.", 7000);
+      }
+    } catch (_) {}
+  }
+
+  try {
+    for (let i = 0; i < sorted.length; i++) {
+      const comp = sorted[i];
+      // Se houver mais algum componente que utilize a Steam depois deste, não reabre ainda
+      const nextHasSteam = sorted.slice(i + 1).some(c => c.id === "daemon" || c.id === "bridge");
+      const shouldReopen = steamWasRunning && !nextHasSteam;
+      await updateComponent(comp.id, shouldReopen, steamWasRunning);
+    }
+  } catch (err) {
+    showToast(`Erro durante atualização em lote: ${err}`);
+    if (steamWasRunning) {
+      try {
+        const stillRunning = await invokeBackend("is_steam_running");
+        if (!stillRunning) {
+          await invokeBackend("launch_steam");
+        }
+      } catch (_) {}
+    }
   }
 }
 

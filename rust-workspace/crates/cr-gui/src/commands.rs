@@ -4,7 +4,7 @@ use crate::installer::{
     deploy_component, ensure_opensteamtool_cloud_enabled, is_opensteamtool_cloud_disabled,
 };
 use crate::service_mgr::{
-    is_process_running, kill_process_and_wait, launch_steam, start_service_from_gui,
+    is_process_running, kill_process_and_wait, start_service_from_gui,
     stop_service_from_gui,
 };
 use cr_common::config::{
@@ -427,7 +427,7 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     // Relança a Steam se estava aberta antes da instalação
     if steam_was_running {
         std::thread::sleep(Duration::from_millis(600));
-        launch_steam(s_path);
+        crate::service_mgr::launch_steam(s_path);
     }
 
     OperationResult {
@@ -1074,6 +1074,21 @@ pub fn open_url(url: String) -> OperationResult {
 }
 
 #[tauri::command]
+pub fn is_steam_running() -> bool {
+    crate::service_mgr::is_process_running("steam.exe")
+}
+
+#[tauri::command]
+pub fn launch_steam() -> OperationResult {
+    let steam_dir = load_preferred_steam_dir();
+    crate::service_mgr::launch_steam(Path::new(&steam_dir));
+    OperationResult {
+        success: true,
+        message: "Steam iniciada com sucesso.".to_string(),
+    }
+}
+
+#[tauri::command]
 pub async fn check_for_updates() -> crate::updater::UpdateCheckResult {
     let steam_dir = load_preferred_steam_dir();
     let s_path = PathBuf::from(&steam_dir);
@@ -1089,11 +1104,18 @@ pub async fn check_for_updates() -> crate::updater::UpdateCheckResult {
 }
 
 #[tauri::command]
-pub async fn update_component(component: String) -> Result<crate::updater::UpdateApplyResult, String> {
+pub async fn update_component(
+    component: String,
+    reopen_steam: Option<bool>,
+    steam_was_running: Option<bool>,
+) -> Result<crate::updater::UpdateApplyResult, String> {
     let steam_dir = load_preferred_steam_dir();
     let s_path = PathBuf::from(&steam_dir);
-    tauri::async_runtime::spawn_blocking(move || crate::updater::apply_update(&component, &s_path))
-        .await
-        .map_err(|e| format!("Erro na tarefa de atualização: {}", e))?
+    let should_reopen = reopen_steam.unwrap_or(true);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::updater::apply_update(&component, &s_path, steam_was_running, should_reopen)
+    })
+    .await
+    .map_err(|e| format!("Erro na tarefa de atualização: {}", e))?
 }
 

@@ -64,6 +64,8 @@ fn main() {
             clear_log,
             open_directory,
             open_url,
+            is_steam_running,
+            launch_steam,
             check_for_updates,
             update_component,
         ])
