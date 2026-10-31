@@ -153,6 +153,22 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
     }
 }
 
+fn parse_version_tuple(v: &str) -> (u32, u32, u32) {
+    let clean = v.trim().trim_start_matches('v').trim_start_matches('V');
+    let mut parts = clean.split('.').filter_map(|s| s.parse::<u32>().ok());
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
+fn is_remote_newer(current: &str, remote: &str) -> bool {
+    let cur = parse_version_tuple(current);
+    let rem = parse_version_tuple(remote);
+    rem > cur
+}
+
 pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
     let manifest = match fetch_remote_manifest() {
         Ok(m) => m,
@@ -183,12 +199,15 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
             .unwrap_or_default()
             .to_lowercase();
 
+        let cur_ver = format!("v{}", env!("CARGO_PKG_VERSION"));
         let status = if current_hash.is_empty() {
             "error".to_string()
         } else if current_hash == remote_hash {
             "up_to_date".to_string()
-        } else {
+        } else if is_remote_newer(&cur_ver, &gui_latest_ver) {
             "update_available".to_string()
+        } else {
+            "up_to_date".to_string()
         };
 
         (current_hash, status, m.download_url.clone(), m.filename.clone())
@@ -219,12 +238,18 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         let remote_hash = m.sha256.to_lowercase();
         if daemon_path.exists() {
             let current_hash = sha256_file(&daemon_path).unwrap_or_default().to_lowercase();
+            let ver = detect_daemon_version(&daemon_path, &remote_hash, &daemon_latest_ver);
             let status = if current_hash == remote_hash {
+                "up_to_date".to_string()
+            } else if is_remote_newer(&ver, &daemon_latest_ver) {
+                "update_available".to_string()
+            } else if ver == daemon_latest_ver {
+                "up_to_date".to_string()
+            } else if !is_remote_newer(&ver, &daemon_latest_ver) && ver.starts_with('v') {
                 "up_to_date".to_string()
             } else {
                 "update_available".to_string()
             };
-            let ver = detect_daemon_version(&daemon_path, &remote_hash, &daemon_latest_ver);
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
             (String::new(), "not_installed".to_string(), "Não instalado".to_string(), m.download_url.clone(), m.filename.clone())
@@ -263,12 +288,18 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         let remote_hash = m.sha256.to_lowercase();
         if bridge_path.exists() {
             let current_hash = sha256_file(&bridge_path).unwrap_or_default().to_lowercase();
+            let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver);
             let status = if current_hash == remote_hash {
+                "up_to_date".to_string()
+            } else if is_remote_newer(&ver, &bridge_latest_ver) {
+                "update_available".to_string()
+            } else if ver == bridge_latest_ver {
+                "up_to_date".to_string()
+            } else if !is_remote_newer(&ver, &bridge_latest_ver) && ver.starts_with('v') {
                 "up_to_date".to_string()
             } else {
                 "update_available".to_string()
             };
-            let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver);
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
             (String::new(), "not_installed".to_string(), "Não instalado".to_string(), m.download_url.clone(), m.filename.clone())

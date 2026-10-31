@@ -646,6 +646,23 @@
             </div>
           </div>
         </div>
+
+        <!-- Settings Group: Desinstalação / Zona de Perigo -->
+        <div class="settings-group" style="margin-top: 28px;">
+          <h2 class="group-title" style="color: var(--error-color);">Zona de Desinstalação</h2>
+
+          <div class="settings-card" style="border-color: rgba(255, 99, 132, 0.3);">
+            <div class="card-left">
+              <div class="card-title">Desinstalar ChronoKeep da Steam</div>
+              <div class="card-desc">Remove as DLLs, o serviço de sincronização e desativa os redirecionamentos. Seus saves no Cofre local e no Google Drive são preservados.</div>
+            </div>
+            <div class="card-right">
+              <button class="btn btn-secondary" id="btn-open-uninstall-modal" style="color: var(--error-color); border-color: rgba(255, 99, 132, 0.4);">
+                Desinstalar ChronoKeep...
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- PAGE 3: SAVES ÓRFÃOS -->
@@ -907,6 +924,56 @@
       <div class="dialog-footer">
         <button id="btn-steam-restart-cancel" class="btn btn-secondary">Cancelar</button>
         <button id="btn-steam-restart-confirm" class="btn btn-primary">Continuar e Reiniciar Steam</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ContentDialog: Confirmação de Desinstalação -->
+  <div id="uninstall-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="uninstall-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="uninstall-title" class="dialog-title">Desinstalar ChronoKeep da Steam</h2>
+        <p class="dialog-subtitle">Remoção de componentes e restauração de arquivos</p>
+      </div>
+
+      <div class="dialog-body">
+        <div class="dialog-callout safe">
+          <div class="callout-icon">🛡️</div>
+          <div class="callout-text">
+            <strong>Seus saves estão protegidos:</strong>
+            <p>Todos os seus arquivos de save salvos no <strong>Cofre Local (Vault)</strong> e no <strong>Google Drive</strong> serão <strong>mantidos intactos</strong> e não serão apagados.</p>
+          </div>
+        </div>
+
+        <div class="dialog-callout warning">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-text">
+            <strong>O que acontecerá:</strong>
+            <p>1. A Steam será temporariamente encerrada para descarregar as DLLs.</p>
+            <p>2. Os arquivos <code>chronokeep.dll</code>, <code>cloud_redirect.dll</code> e <code>chrono-daemon.exe</code> serão excluídos da pasta da Steam.</p>
+            <p>3. Todos os redirecionamentos de nuvem serão desativados e a Steam voltará ao estado original da Valve.</p>
+          </div>
+        </div>
+
+        <div style="margin: 16px 0; padding: 14px; background: var(--bg-subtle); border-radius: var(--radius-sm); border: 1px solid var(--card-border);">
+          <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px;">
+            <input type="checkbox" id="check-restore-saves-on-uninstall" checked style="margin-top: 3px; accent-color: var(--accent-color);">
+            <div>
+              <strong>Importar / Restaurar saves do Cofre para a Steam local (userdata)</strong>
+              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;">Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\userdata\...\remote</code> para que você continue com seu progresso na Steam local.</p>
+            </div>
+          </label>
+        </div>
+
+        <p class="dialog-highlight-choice" style="color: var(--error-color);">Tem certeza de que deseja desinstalar o ChronoKeep da Steam?</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-uninstall-cancel" class="btn btn-secondary">Cancelar</button>
+        <button id="btn-uninstall-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;">Sim, Desinstalar ChronoKeep</button>
       </div>
     </div>
   </div>

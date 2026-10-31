@@ -86,6 +86,56 @@ function ensureDisclaimerAccepted(onAccepted) {
   };
 }
 
+function openUninstallModal() {
+  const modal = document.getElementById("uninstall-modal");
+  const btnCancel = document.getElementById("btn-uninstall-cancel");
+  const btnConfirm = document.getElementById("btn-uninstall-confirm");
+  const checkRestore = document.getElementById("check-restore-saves-on-uninstall");
+  if (!modal || !btnCancel || !btnConfirm) return;
+
+  modal.style.display = "flex";
+
+  const closeModal = () => {
+    modal.style.display = "none";
+    btnCancel.onclick = null;
+    btnConfirm.onclick = null;
+    btnConfirm.disabled = false;
+    btnConfirm.textContent = "Sim, Desinstalar ChronoKeep";
+  };
+
+  btnCancel.onclick = closeModal;
+
+  btnConfirm.onclick = async () => {
+    btnConfirm.disabled = true;
+    btnConfirm.textContent = "Desinstalando e restaurando...";
+    const restoreSaves = checkRestore ? checkRestore.checked : true;
+
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const vaultDir = inputVault || appConfig.vault_dir;
+
+      const res = await invokeBackend("uninstall_chronokeep", {
+        restoreToSteam: restoreSaves,
+        steamDir: steamDir || null,
+        vaultDir: vaultDir || null,
+      });
+
+      closeModal();
+      if (res && res.success) {
+        showToast(res.message, 8000);
+        checkDaemon();
+      } else {
+        showToast(`Erro na desinstalação: ${res ? res.message : "Falha desconhecida"}`);
+      }
+    } catch (e) {
+      closeModal();
+      showToast(`Erro ao desinstalar: ${e}`);
+    }
+  };
+}
+
 // --------------------------------------------------------------------------
 // Navigation (NavigationView)
 // --------------------------------------------------------------------------
@@ -610,6 +660,9 @@ function setupActionHandlers() {
   document.getElementById("btn-update-gui")?.addEventListener("click", () => updateComponent("gui"));
   document.getElementById("btn-update-daemon")?.addEventListener("click", () => updateComponent("daemon"));
   document.getElementById("btn-update-bridge")?.addEventListener("click", () => updateComponent("bridge"));
+
+  // Uninstall Action
+  document.getElementById("btn-open-uninstall-modal")?.addEventListener("click", openUninstallModal);
 }
 
 // --------------------------------------------------------------------------
@@ -1446,6 +1499,16 @@ document.addEventListener("DOMContentLoaded", () => {
   setupNavigation();
   setupActionHandlers();
   loadInitialData();
+
+  // Se iniciado como desinstalador (ChronoKeepUninstall.exe ou --uninstall)
+  invokeBackend("get_launch_mode")
+    .then((mode) => {
+      if (mode === "uninstall") {
+        navigateToPage("settings");
+        openUninstallModal();
+      }
+    })
+    .catch(() => {});
 
   // Background daemon poller every 3.5 seconds
   setInterval(() => {
