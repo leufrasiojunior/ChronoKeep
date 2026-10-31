@@ -25,6 +25,8 @@ pub struct ManifestComponent {
     pub filename: String,
     pub sha256: String,
     pub download_url: String,
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -89,6 +91,67 @@ pub fn fetch_remote_manifest() -> Result<RemoteManifest, String> {
         .map_err(|e| format!("Falha ao decodificar manifesto de versões: {}", e))
 }
 
+pub fn sanitize_windows_path(path: &Path) -> String {
+    let s = path.to_string_lossy().to_string();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        s
+    }
+}
+
+pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: &str) -> String {
+    if !daemon_path.exists() {
+        return "Não instalado".to_string();
+    }
+    let cur_hash = sha256_file(daemon_path).unwrap_or_default().to_lowercase();
+    if !cur_hash.is_empty() && !remote_hash.is_empty() && cur_hash == remote_hash {
+        return target_ver.to_string();
+    }
+    let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONO_DAEMON).to_lowercase();
+    if !cur_hash.is_empty() && cur_hash == embedded_hash {
+        return format!("v{}", env!("CARGO_PKG_VERSION"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = std::process::Command::new(daemon_path);
+        cmd.arg("version");
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = cmd.output() {
+            let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if ver.starts_with("v") && ver.len() <= 10 {
+                return ver;
+            }
+        }
+    }
+    match cur_hash.as_str() {
+        "011328eac03fd39a6fa1500649552499c717d27692868c77969fd179d7adbeb3" => "v0.1.4".to_string(),
+        "2e11a572a133710fb7a550072d1171a79f18efa96a46d1961bc1eb222fca4b94" => "v0.1.4".to_string(),
+        "d7c6a8dd046aaf50d6ffa4cb4935c4b32e110c435eafabd4c318470fa462f57e" => "v0.1.3".to_string(),
+        _ => "v0.1.2".to_string(),
+    }
+}
+
+pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: &str) -> String {
+    if !bridge_path.exists() {
+        return "Não instalado".to_string();
+    }
+    let cur_hash = sha256_file(bridge_path).unwrap_or_default().to_lowercase();
+    if !cur_hash.is_empty() && !remote_hash.is_empty() && cur_hash == remote_hash {
+        return target_ver.to_string();
+    }
+    let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
+    if !cur_hash.is_empty() && cur_hash == embedded_hash {
+        return format!("v{}", env!("CARGO_PKG_VERSION"));
+    }
+    match cur_hash.as_str() {
+        "9a883c9e39592e4934dac08c7b5aa1099116369e7b686b2bbeb674c84609a988" => "v0.1.4".to_string(),
+        "daf4c9e79183632d97adeae7ea432eddf600b91197c8a2c5c51c42a2a0cd56aa" => "v0.1.4".to_string(),
+        "ec4fb0630a74624d782a211846cf070e06a0e48fa8ca6e7ca0d43c620931943f" => "v0.1.3".to_string(),
+        _ => "v0.1.2".to_string(),
+    }
+}
+
 pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
     let manifest = match fetch_remote_manifest() {
         Ok(m) => m,
@@ -107,6 +170,10 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
 
     // 1. ChronoKeep (GUI)
     let gui_manifest = manifest.components.get("gui");
+    let gui_latest_ver = gui_manifest
+        .and_then(|m| m.version.clone())
+        .unwrap_or_else(|| manifest.release_version.clone());
+
     let (gui_hash, gui_status, gui_dl, gui_filename) = if let Some(m) = gui_manifest {
         let remote_hash = m.sha256.to_lowercase();
         let current_hash = std::env::current_exe()
@@ -132,7 +199,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         id: "gui".to_string(),
         name: "ChronoKeep (Painel)".to_string(),
         current_version: format!("v{}", env!("CARGO_PKG_VERSION")),
-        latest_version: manifest.release_version.clone(),
+        latest_version: gui_latest_ver,
         current_hash: gui_hash,
         latest_hash: gui_manifest.map(|m| m.sha256.to_lowercase()).unwrap_or_default(),
         status: gui_status,
@@ -143,21 +210,20 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
     // 2. chrono-daemon (Serviço)
     let daemon_manifest = manifest.components.get("daemon");
     let daemon_path = steam_dir.join("chrono-daemon.exe");
+    let daemon_latest_ver = daemon_manifest
+        .and_then(|m| m.version.clone())
+        .unwrap_or_else(|| manifest.release_version.clone());
+
     let (daemon_hash, daemon_status, daemon_ver, daemon_dl, daemon_filename) = if let Some(m) = daemon_manifest {
         let remote_hash = m.sha256.to_lowercase();
         if daemon_path.exists() {
             let current_hash = sha256_file(&daemon_path).unwrap_or_default().to_lowercase();
-            let (status, ver) = if current_hash == remote_hash {
-                ("up_to_date".to_string(), manifest.release_version.clone())
+            let status = if current_hash == remote_hash {
+                "up_to_date".to_string()
             } else {
-                let embedded_daemon_hash = sha256_hex(crate::commands::EMBEDDED_CHRONO_DAEMON).to_lowercase();
-                let ver = if current_hash == embedded_daemon_hash {
-                    format!("v{}", env!("CARGO_PKG_VERSION"))
-                } else {
-                    "Desatualizado".to_string()
-                };
-                ("update_available".to_string(), ver)
+                "update_available".to_string()
             };
+            let ver = detect_daemon_version(&daemon_path, &remote_hash, &daemon_latest_ver);
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
             (String::new(), "not_installed".to_string(), "Não instalado".to_string(), m.download_url.clone(), m.filename.clone())
@@ -170,7 +236,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         id: "daemon".to_string(),
         name: "chrono-daemon (Serviço)".to_string(),
         current_version: daemon_ver,
-        latest_version: manifest.release_version.clone(),
+        latest_version: daemon_latest_ver,
         current_hash: daemon_hash,
         latest_hash: daemon_manifest.map(|m| m.sha256.to_lowercase()).unwrap_or_default(),
         status: daemon_status,
@@ -181,22 +247,27 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
     // 3. chronokeep.dll (Bridge Steam Cloud)
     let bridge_manifest = manifest.components.get("bridge")
         .or_else(|| manifest.components.get("bridge_dll"));
-    let bridge_path = steam_dir.join("chronokeep.dll");
+    let bridge_path = if steam_dir.join("chronokeep.dll").exists() {
+        steam_dir.join("chronokeep.dll")
+    } else if steam_dir.join("cloud_redirect.dll").exists() {
+        steam_dir.join("cloud_redirect.dll")
+    } else {
+        steam_dir.join("chronokeep.dll")
+    };
+    let bridge_latest_ver = bridge_manifest
+        .and_then(|m| m.version.clone())
+        .unwrap_or_else(|| manifest.release_version.clone());
+
     let (bridge_hash, bridge_status, bridge_ver, bridge_dl, bridge_filename) = if let Some(m) = bridge_manifest {
         let remote_hash = m.sha256.to_lowercase();
         if bridge_path.exists() {
             let current_hash = sha256_file(&bridge_path).unwrap_or_default().to_lowercase();
-            let (status, ver) = if current_hash == remote_hash {
-                ("up_to_date".to_string(), manifest.release_version.clone())
+            let status = if current_hash == remote_hash {
+                "up_to_date".to_string()
             } else {
-                let embedded_bridge_hash = sha256_hex(crate::commands::EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
-                let ver = if current_hash == embedded_bridge_hash {
-                    format!("v{}", env!("CARGO_PKG_VERSION"))
-                } else {
-                    "Desatualizado".to_string()
-                };
-                ("update_available".to_string(), ver)
+                "update_available".to_string()
             };
+            let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver);
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
             (String::new(), "not_installed".to_string(), "Não instalado".to_string(), m.download_url.clone(), m.filename.clone())
@@ -209,7 +280,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         id: "bridge".to_string(),
         name: "chronokeep.dll (Bridge Steam Cloud)".to_string(),
         current_version: bridge_ver,
-        latest_version: manifest.release_version.clone(),
+        latest_version: bridge_latest_ver,
         current_hash: bridge_hash,
         latest_hash: bridge_manifest.map(|m| m.sha256.to_lowercase()).unwrap_or_default(),
         status: bridge_status,
@@ -341,20 +412,42 @@ pub fn apply_update(component_id: &str, steam_dir: &Path) -> Result<UpdateApplyR
 
             #[cfg(target_os = "windows")]
             {
-                let cur_str = cur_exe.to_string_lossy().to_string();
-                let new_str = new_exe.to_string_lossy().to_string();
-                let batch_cmd = format!(
-                    "ping 127.0.0.1 -n 3 >nul & del /f /q \"{}\" & move /y \"{}\" \"{}\" & start \"\" \"{}\"",
-                    cur_str, new_str, cur_str, cur_str
-                );
-                let mut cmd = std::process::Command::new("cmd.exe");
-                cmd.args(&["/c", &batch_cmd]);
-                cmd.creation_flags(CREATE_NO_WINDOW);
-                let _ = cmd.spawn();
+                let cur_str = sanitize_windows_path(&cur_exe);
+                let new_str = sanitize_windows_path(&new_exe);
+                let pid = std::process::id();
+                let bat_path = std::env::temp_dir().join(format!("chronokeep_swap_{}.bat", pid));
 
-                // Encerra processo atual após 1.5 segundo para liberar o arquivo para troca
+                let bat_script = format!(
+                    "@echo off\r\n\
+                    chcp 65001 >nul\r\n\
+                    timeout /t 2 /nobreak >nul\r\n\
+                    :retry_del\r\n\
+                    del /f /q \"{cur}\" >nul 2>&1\r\n\
+                    if exist \"{cur}\" (\r\n\
+                        timeout /t 1 /nobreak >nul\r\n\
+                        goto retry_del\r\n\
+                    )\r\n\
+                    move /y \"{new}\" \"{cur}\" >nul 2>&1\r\n\
+                    start \"\" \"{cur}\"\r\n\
+                    (goto) 2>nul & del \"%~f0\"\r\n",
+                    cur = cur_str,
+                    new = new_str
+                );
+
+                if let Err(e) = std::fs::write(&bat_path, bat_script) {
+                    return Err(format!("Falha ao criar script de atualização: {}", e));
+                }
+
+                let mut cmd = std::process::Command::new("cmd.exe");
+                cmd.args(&["/c", &bat_path.to_string_lossy().to_string()]);
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                if let Err(e) = cmd.spawn() {
+                    return Err(format!("Falha ao executar script de atualização: {}", e));
+                }
+
+                // Encerra processo atual após 300ms para liberar o executável para substituição
                 std::thread::spawn(|| {
-                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    std::thread::sleep(std::time::Duration::from_millis(300));
                     std::process::exit(0);
                 });
             }

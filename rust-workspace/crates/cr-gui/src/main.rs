@@ -30,6 +30,14 @@ fn main() {
         }
     }
 
+    // Limpa eventuais binarios temporarios de atualizacoes anteriores (.new.exe)
+    if let Ok(cur_exe) = std::env::current_exe() {
+        let new_exe = cur_exe.with_extension("new.exe");
+        if new_exe.exists() {
+            let _ = std::fs::remove_file(&new_exe);
+        }
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             #[cfg(target_os = "windows")]
