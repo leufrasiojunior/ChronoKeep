@@ -1,0 +1,7 @@
+[package]
+name = "cr-common"
+version = "0.1.3"
+edition = "2021"
+
+[dependencies]
+cr-proto = { path = "../cr-proto" }

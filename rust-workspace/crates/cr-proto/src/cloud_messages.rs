@@ -56,17 +56,23 @@ pub fn extract_app_id(method: &str, fields: &[ProtoField<'_>]) -> u32 {
 }
 
 /// Splits a Steam Cloud path like `%WinAppDataLocal%MyGame/save.dat` into
-/// `(Some("%WinAppDataLocal%"), "MyGame/save.dat")`.
+/// `("%WinAppDataLocal%", "MyGame/save.dat")`. Strips repeated/nested tokens cleanly.
 pub fn split_root_token(raw_filename: &str) -> (String, String) {
-    let normalized = raw_filename.replace('\\', "/");
-    if let Some(rest) = normalized.strip_prefix('%') {
-        if let Some(end_idx) = rest.find('%') {
-            let token = format!("%{}%", &rest[..end_idx]);
-            let after = rest[end_idx + 1..].trim_start_matches('/');
-            return (token, sanitize_rel_path(after));
+    let mut normalized = raw_filename.replace('\\', "/");
+    let mut token = String::new();
+    while normalized.starts_with('%') {
+        if let Some(rest) = normalized.strip_prefix('%') {
+            if let Some(end_idx) = rest.find('%') {
+                if token.is_empty() {
+                    token = format!("%{}%", &rest[..end_idx]);
+                }
+                normalized = rest[end_idx + 1..].trim_start_matches('/').to_string();
+                continue;
+            }
         }
+        break;
     }
-    (String::new(), sanitize_rel_path(&normalized))
+    (token, sanitize_rel_path(&normalized))
 }
 
 /// Sanitizes a relative cloud path, stripping leading slashes and rejecting `..` traversal.
@@ -163,8 +169,14 @@ pub fn build_changelist_response(
     body.write_varint(3, if is_only_delta { 1 } else { 0 });
 
     for f in files {
-        let (dir_prefix, leaf) = split_dir_and_leaf(&f.filename);
-        let full_prefix = format!("{}{}", f.root_token, dir_prefix);
+        let (extracted_tok, clean_fn) = split_root_token(&f.filename);
+        let effective_tok = if !f.root_token.is_empty() {
+            &f.root_token
+        } else {
+            &extracted_tok
+        };
+        let (dir_prefix, leaf) = split_dir_and_leaf(&clean_fn);
+        let full_prefix = format!("{}{}", effective_tok, dir_prefix);
         let prefix_idx = if let Some(pos) = prefix_list.iter().position(|p| p == &full_prefix) {
             pos as u32
         } else {
@@ -269,4 +281,34 @@ pub fn build_quota_response(
     body.write_varint(3, max_files as u64);
     body.write_varint(4, max_bytes);
     body.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_root_token_clean_path() {
+        let (tok, clean) = split_root_token("preferences_data");
+        assert_eq!(tok, "");
+        assert_eq!(clean, "preferences_data");
+    }
+
+    #[test]
+    fn test_split_root_token_single_token() {
+        let (tok, clean) = split_root_token("%WinMyDocuments%/preferences_data");
+        assert_eq!(tok, "%WinMyDocuments%");
+        assert_eq!(clean, "preferences_data");
+
+        let (tok2, clean2) = split_root_token("%WinMyDocuments%preferences_data");
+        assert_eq!(tok2, "%WinMyDocuments%");
+        assert_eq!(clean2, "preferences_data");
+    }
+
+    #[test]
+    fn test_split_root_token_duplicated_tokens() {
+        let (tok, clean) = split_root_token("%WinMyDocuments%%WinMyDocuments%/preferences_data");
+        assert_eq!(tok, "%WinMyDocuments%");
+        assert_eq!(clean, "preferences_data");
+    }
 }

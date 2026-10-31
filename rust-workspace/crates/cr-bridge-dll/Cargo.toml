@@ -1,6 +1,6 @@
 [package]
 name = "cr-bridge-dll"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 
 [lib]
@@ -9,4 +9,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 cr-proto = { path = "../cr-proto" }
+cr-common = { path = "../cr-common" }
 

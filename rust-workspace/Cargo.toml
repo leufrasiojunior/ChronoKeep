@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/cr-proto",
+    "crates/cr-common",
     "crates/cr-service",
     "crates/cr-bridge-dll",
     "crates/cr-gui",
@@ -10,5 +11,5 @@ members = [
 [profile.release]
 opt-level = 3
 lto = "thin"
-strip = "none"
+strip = "symbols"
 panic = "unwind"
