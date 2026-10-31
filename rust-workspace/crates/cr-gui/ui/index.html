@@ -169,6 +169,24 @@
           </div>
         </div>
 
+        <!-- Banner de Atualização Disponível no Início -->
+        <div class="home-update-banner" id="home-update-banner" style="display: none;">
+          <div class="home-update-content">
+            <div class="home-update-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </div>
+            <div class="home-update-texts">
+              <span class="home-update-title">Atualizações disponíveis</span>
+              <span class="home-update-desc" id="home-update-desc">Novas versões de componentes do ChronoKeep estão prontas para download.</span>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" id="btn-home-check-updates">Conferir</button>
+        </div>
+
         <!-- 2-Column Section (Acesso Rápido & Utilitários) -->
         <div class="two-column-grid">
           <!-- Coluna 1: Acesso Rápido (Tiles) -->
@@ -525,7 +543,7 @@
         <div class="settings-group" style="margin-top: 28px;">
           <h2 class="group-title">Atualizações de Componentes</h2>
 
-          <div class="update-card">
+          <div class="update-card" id="card-updates">
             <div class="update-card-header">
               <div>
                 <h3 class="card-title">Status dos Componentes</h3>
