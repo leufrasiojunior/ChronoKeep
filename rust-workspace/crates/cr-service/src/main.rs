@@ -20,7 +20,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use vault::VaultStorage;
 
+#[no_mangle]
+#[used]
+pub static CHRONOKEEP_DAEMON_VERSION_MARKER: &[u8] =
+    concat!("CK_DAEMON_VER:", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+
 fn main() {
+    let _ = CHRONOKEEP_DAEMON_VERSION_MARKER;
     let args: Vec<String> = env::args().collect();
     let cfg = ServiceConfig::load();
 

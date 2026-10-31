@@ -103,10 +103,46 @@ pub fn sanitize_windows_path(path: &Path) -> String {
     }
 }
 
+fn extract_marker_version(path: &Path, prefix: &[u8]) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    if let Some(pos) = bytes.windows(prefix.len()).position(|w| w == prefix) {
+        let after = &bytes[pos + prefix.len()..];
+        let mut ver_bytes = Vec::new();
+        for &b in after {
+            if b == 0 || b == b'\r' || b == b'\n' || b == b' ' {
+                break;
+            }
+            if b.is_ascii_graphic() {
+                ver_bytes.push(b);
+            } else {
+                break;
+            }
+        }
+        if !ver_bytes.is_empty() {
+            if let Ok(s) = String::from_utf8(ver_bytes) {
+                let clean = s.trim();
+                if !clean.is_empty() {
+                    return Some(if clean.starts_with('v') || clean.starts_with('V') {
+                        clean.to_string()
+                    } else {
+                        format!("v{}", clean)
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: &str) -> String {
     if !daemon_path.exists() {
         return "Não instalado".to_string();
     }
+    // 1. Tenta extrair a versão pelo marcador embutido no binário
+    if let Some(v) = extract_marker_version(daemon_path, b"CK_DAEMON_VER:") {
+        return v;
+    }
+
     let cur_hash = sha256_file(daemon_path).unwrap_or_default().to_lowercase();
     if !cur_hash.is_empty() && !remote_hash.is_empty() && cur_hash == remote_hash {
         return target_ver.to_string();
@@ -116,6 +152,7 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
         return "v0.1.8".to_string();
     }
     match cur_hash.as_str() {
+        "466d7d2b51be232ec37d38dbb96f8809925722940d37ae0c85d9e4ef28a01ab3" => "v0.1.8".to_string(),
         "737f94f094f83385d6cc51a6ccfda32432b989eef25d3c57f667facff0993328" => "v0.1.8".to_string(),
         "4952f719b17bb13a90322524a64d400748d999ba34c7abfe9bdfff22ea6e037a" => "v0.1.7".to_string(),
         "bd3e9c3e9e16dbd6207dbd1bf66ac13aa8fd2c6a28f155ffa4bf006d1288b2bc" => "v0.1.6".to_string(),
@@ -124,7 +161,13 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
         "011328eac03fd39a6fa1500649552499c717d27692868c77969fd179d7adbeb3" => "v0.1.4".to_string(),
         "2e11a572a133710fb7a550072d1171a79f18efa96a46d1961bc1eb222fca4b94" => "v0.1.4".to_string(),
         "d7c6a8dd046aaf50d6ffa4cb4935c4b32e110c435eafabd4c318470fa462f57e" => "v0.1.3".to_string(),
-        _ => "v0.1.2".to_string(),
+        _ => {
+            if !target_ver.is_empty() && target_ver.starts_with('v') {
+                target_ver.to_string()
+            } else {
+                "Instalado".to_string()
+            }
+        }
     }
 }
 
@@ -132,15 +175,22 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
     if !bridge_path.exists() {
         return "Não instalado".to_string();
     }
+    // 1. Tenta extrair a versão pelo marcador embutido no binário
+    if let Some(v) = extract_marker_version(bridge_path, b"CK_BRIDGE_VER:") {
+        return v;
+    }
+
     let cur_hash = sha256_file(bridge_path).unwrap_or_default().to_lowercase();
     if !cur_hash.is_empty() && !remote_hash.is_empty() && cur_hash == remote_hash {
         return target_ver.to_string();
     }
     let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
     if !cur_hash.is_empty() && cur_hash == embedded_hash {
-        return "v0.1.8".to_string();
+        return "v0.1.10".to_string();
     }
     match cur_hash.as_str() {
+        "12831a16d2196a6d288606a28cdcad763f0add737382e62803bf56d6dbcdd94e" => "v0.1.10".to_string(),
+        "57ac95df3db6a2ee315df9e9ceaac756b10664ccce53c29d6c91059d42426c47" => "v0.1.9".to_string(),
         "6f1e2585b9f3d9505879799929208bed3b7d98dabe4b10912354d596964f1f46" => "v0.1.8".to_string(),
         "a7afdbd1b5d20005387d82b4cf55795c4c728b932f8ea766e0bce8e00fa6872a" => "v0.1.7".to_string(),
         "cd56c1520b8f0326c67e154ed7ab7099ccd843edd9a4ef5a56bca278960f51ec" => "v0.1.6".to_string(),
@@ -149,7 +199,13 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
         "9a883c9e39592e4934dac08c7b5aa1099116369e7b686b2bbeb674c84609a988" => "v0.1.4".to_string(),
         "daf4c9e79183632d97adeae7ea432eddf600b91197c8a2c5c51c42a2a0cd56aa" => "v0.1.4".to_string(),
         "ec4fb0630a74624d782a211846cf070e06a0e48fa8ca6e7ca0d43c620931943f" => "v0.1.3".to_string(),
-        _ => "v0.1.2".to_string(),
+        _ => {
+            if !target_ver.is_empty() && target_ver.starts_with('v') {
+                target_ver.to_string()
+            } else {
+                "Instalado".to_string()
+            }
+        }
     }
 }
 
