@@ -66,9 +66,16 @@ pub struct UpdateApplyResult {
 }
 
 pub fn fetch_remote_manifest() -> Result<RemoteManifest, String> {
-    // Tenta URL primária do release
-    let res = https_download_url(PRIMARY_VERSIONS_URL, 15_000)
-        .or_else(|| https_download_url(FALLBACK_VERSIONS_URL, 15_000));
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let primary_url = format!("{}?t={}", PRIMARY_VERSIONS_URL, ts);
+    let fallback_url = format!("{}?t={}", FALLBACK_VERSIONS_URL, ts);
+
+    // Tenta URL primária do release com bypass de cache CDN
+    let res = https_download_url(&primary_url, 15_000)
+        .or_else(|| https_download_url(&fallback_url, 15_000));
 
     let (status, bytes) = res.ok_or_else(|| {
         "Não foi possível conectar ao servidor de versões do GitHub. Verifique sua conexão com a internet.".to_string()

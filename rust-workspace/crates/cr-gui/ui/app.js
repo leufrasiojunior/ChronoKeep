@@ -292,8 +292,11 @@ async function loadInitialData() {
         }
       }
       if (sysInfo.version) {
+        const vStr = sysInfo.version.startsWith("v") ? sysInfo.version : `v${sysInfo.version}`;
         const verEl = document.getElementById("about-version");
-        if (verEl) verEl.textContent = `v${sysInfo.version}`;
+        if (verEl) verEl.textContent = vStr;
+        const heroVerEl = document.getElementById("hero-version") || document.querySelector(".hero-version");
+        if (heroVerEl) heroVerEl.textContent = `${vStr} — Sincronização Steam Cloud Clean-Room`;
       }
       const elGui = document.getElementById("sidebar-ver-gui");
       const elDll = document.getElementById("sidebar-ver-dll");
