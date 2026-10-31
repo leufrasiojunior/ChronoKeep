@@ -20,6 +20,11 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering}
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+#[no_mangle]
+#[used]
+pub static CHRONOKEEP_BRIDGE_VERSION_MARKER: &[u8] =
+    concat!("CK_BRIDGE_VER:", env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+
 #[repr(C)]
 #[allow(non_snake_case)]
 struct SYSTEMTIME {
