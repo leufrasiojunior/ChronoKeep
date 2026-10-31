@@ -86,6 +86,56 @@ function ensureDisclaimerAccepted(onAccepted) {
   };
 }
 
+function openUninstallModal() {
+  const modal = document.getElementById("uninstall-modal");
+  const btnCancel = document.getElementById("btn-uninstall-cancel");
+  const btnConfirm = document.getElementById("btn-uninstall-confirm");
+  const checkRestore = document.getElementById("check-restore-saves-on-uninstall");
+  if (!modal || !btnCancel || !btnConfirm) return;
+
+  modal.style.display = "flex";
+
+  const closeModal = () => {
+    modal.style.display = "none";
+    btnCancel.onclick = null;
+    btnConfirm.onclick = null;
+    btnConfirm.disabled = false;
+    btnConfirm.textContent = "Sim, Desinstalar ChronoKeep";
+  };
+
+  btnCancel.onclick = closeModal;
+
+  btnConfirm.onclick = async () => {
+    btnConfirm.disabled = true;
+    btnConfirm.textContent = "Desinstalando e restaurando...";
+    const restoreSaves = checkRestore ? checkRestore.checked : true;
+
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const vaultDir = inputVault || appConfig.vault_dir;
+
+      const res = await invokeBackend("uninstall_chronokeep", {
+        restoreToSteam: restoreSaves,
+        steamDir: steamDir || null,
+        vaultDir: vaultDir || null,
+      });
+
+      closeModal();
+      if (res && res.success) {
+        showToast(res.message, 8000);
+        checkDaemon();
+      } else {
+        showToast(`Erro na desinstalação: ${res ? res.message : "Falha desconhecida"}`);
+      }
+    } catch (e) {
+      closeModal();
+      showToast(`Erro ao desinstalar: ${e}`);
+    }
+  };
+}
+
 // --------------------------------------------------------------------------
 // Navigation (NavigationView)
 // --------------------------------------------------------------------------
@@ -555,6 +605,25 @@ function setupActionHandlers() {
   document.getElementById("btn-scan-saves")?.addEventListener("click", scanSaves);
   document.getElementById("btn-sync-selected")?.addEventListener("click", syncSelectedSaves);
 
+  // Abas de filtro de saves
+  const setupTab = (tabId, tabKey) => {
+    document.getElementById(tabId)?.addEventListener("click", () => {
+      document.querySelectorAll(".saves-tab-btn").forEach((b) => b.classList.remove("active"));
+      document.getElementById(tabId)?.classList.add("active");
+      currentSavesTab = tabKey;
+      renderSavesTable();
+    });
+  };
+  setupTab("tab-btn-tools", "tools");
+  setupTab("tab-btn-official", "official");
+  setupTab("tab-btn-all", "all");
+
+  // Campo de busca de saves
+  document.getElementById("input-search-saves")?.addEventListener("input", (e) => {
+    savesSearchQuery = e.target.value.trim().toLowerCase();
+    renderSavesTable();
+  });
+
   // GitHub External Links
   const openGitHub = (e) => {
     e?.preventDefault();
@@ -591,11 +660,127 @@ function setupActionHandlers() {
   document.getElementById("btn-update-gui")?.addEventListener("click", () => updateComponent("gui"));
   document.getElementById("btn-update-daemon")?.addEventListener("click", () => updateComponent("daemon"));
   document.getElementById("btn-update-bridge")?.addEventListener("click", () => updateComponent("bridge"));
+
+  // Uninstall Action
+  document.getElementById("btn-open-uninstall-modal")?.addEventListener("click", openUninstallModal);
 }
 
 // --------------------------------------------------------------------------
-// Saves Scanner & Renderer
+// Saves Scanner & Renderer (Tools vs Steam Oficial vs Todos)
 // --------------------------------------------------------------------------
+let cachedSavesList = [];
+let currentSavesTab = "tools"; // Padrão inicial: Tools
+let savesSearchQuery = "";
+
+function getBadgeHtml(item) {
+  if (item.origin === "tools") {
+    return `<span class="badge badge-tools">${escapeHtml(item.origin_label || "Tools")}</span>`;
+  }
+  if (item.origin === "official") {
+    return `<span class="badge badge-official">Steam Oficial</span>`;
+  }
+  return `<span class="badge badge-vault">${escapeHtml(item.origin_label || "Arquivado")}</span>`;
+}
+
+function updateSavesCounts() {
+  const toolsCount = cachedSavesList.filter((i) => i.origin === "tools").length;
+  const officialCount = cachedSavesList.filter((i) => i.origin === "official").length;
+  const allCount = cachedSavesList.length;
+
+  const countToolsEl = document.getElementById("count-tools");
+  const countOfficialEl = document.getElementById("count-official");
+  const countAllEl = document.getElementById("count-all");
+
+  if (countToolsEl) countToolsEl.textContent = toolsCount;
+  if (countOfficialEl) countOfficialEl.textContent = officialCount;
+  if (countAllEl) countAllEl.textContent = allCount;
+}
+
+function renderSavesTable() {
+  const tbody = document.getElementById("tbody-saves");
+  if (!tbody) return;
+
+  if (!cachedSavesList || cachedSavesList.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td></tr>`;
+    bindOrphanCheckboxes();
+    updateSelectionUI();
+    return;
+  }
+
+  // 1. Filtro pela Aba ativa
+  let filtered = cachedSavesList.filter((item) => {
+    if (currentSavesTab === "tools") return item.origin === "tools";
+    if (currentSavesTab === "official") return item.origin === "official";
+    return true; // 'all'
+  });
+
+  // 2. Filtro pela busca por texto
+  if (savesSearchQuery) {
+    const q = savesSearchQuery.toLowerCase();
+    filtered = filtered.filter(
+      (item) =>
+        (item.name && item.name.toLowerCase().includes(q)) ||
+        (item.app_id && item.app_id.toString().includes(q)) ||
+        (item.origin_label && item.origin_label.toLowerCase().includes(q))
+    );
+  }
+
+  if (filtered.length === 0) {
+    let msg = "Nenhum save correspondente ao filtro atual.";
+    if (savesSearchQuery) {
+      msg = `Nenhum save encontrado para "${escapeHtml(savesSearchQuery)}".`;
+    } else if (currentSavesTab === "tools") {
+      msg = "Nenhum save de jogo do SteamTools ou GreenLuma encontrado.";
+    } else if (currentSavesTab === "official") {
+      msg = "Nenhum save de jogo da biblioteca oficial Steam encontrado.";
+    }
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state">${msg}</td></tr>`;
+    bindOrphanCheckboxes();
+    updateSelectionUI();
+    return;
+  }
+
+  tbody.innerHTML = filtered
+    .map(
+      (item) => `
+      <tr data-appid="${item.app_id}" data-accountid="${item.account_id}">
+        <td style="text-align: center;">
+          <input type="checkbox" class="orphan-checkbox" 
+                 data-appid="${item.app_id}" 
+                 data-accountid="${item.account_id}"
+                 data-name="${escapeHtml(item.name)}"
+                 data-bytes="${item.total_bytes}"
+                 data-files="${item.file_count}">
+        </td>
+        <td><strong>${item.app_id}</strong></td>
+        <td><span class="game-title">${escapeHtml(item.name)}</span></td>
+        <td>${getBadgeHtml(item)}</td>
+        <td>${item.file_count} arquivos</td>
+        <td>${item.total_size_formatted}</td>
+        <td>
+          <span class="status-pill active">✓ ${item.source.replace("Vault", "Cofre")}</span>
+        </td>
+        <td>
+          ${
+            item.in_cloud
+              ? `<span class="status-pill active">✓ Na Nuvem</span>`
+              : `<span class="status-pill warning">Pendente</span>`
+          }
+        </td>
+        <td style="text-align: center;">
+          <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this, ${item.total_bytes}, '${escapeHtml(item.name).replace(/'/g, "\\'")}')">
+            Sincronizar
+          </button>
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+
+  bindOrphanCheckboxes();
+  updateSelectionUI();
+}
+
 async function scanSaves() {
   if (!isDisclaimerAccepted()) {
     ensureDisclaimerAccepted(() => scanSaves());
@@ -610,7 +795,7 @@ async function scanSaves() {
     scanBtn.innerHTML = `<span class="fluent-spinner-sm"></span> Escaneando...`;
   }
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div class="fluent-spinner" style="margin: 0 auto 12px auto;"></div>Varrendo pastas de saves locais no PC...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="9" class="empty-state"><div class="fluent-spinner" style="margin: 0 auto 12px auto;"></div>Varrendo pastas de saves locais no PC...</td></tr>`;
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -623,52 +808,11 @@ async function scanSaves() {
       vaultDir: vaultDir || null,
     });
 
-    if (!items || items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-state">Nenhum save local de jogo encontrado nas pastas especificadas.</td></tr>`;
-      updateSelectionUI();
-      return;
-    }
-
-    tbody.innerHTML = items
-      .map(
-        (item) => `
-        <tr data-appid="${item.app_id}" data-accountid="${item.account_id}">
-          <td style="text-align: center;">
-            <input type="checkbox" class="orphan-checkbox" 
-                   data-appid="${item.app_id}" 
-                   data-accountid="${item.account_id}"
-                   data-name="${escapeHtml(item.name)}"
-                   data-bytes="${item.total_bytes}"
-                   data-files="${item.file_count}">
-          </td>
-          <td><strong>${item.app_id}</strong></td>
-          <td><span class="game-title">${escapeHtml(item.name)}</span></td>
-          <td>${item.file_count} arquivos</td>
-          <td>${item.total_size_formatted}</td>
-          <td>
-            <span class="status-pill active">✓ ${item.source.replace("Vault", "Cofre")}</span>
-          </td>
-          <td>
-            ${
-              item.in_cloud
-                ? `<span class="status-pill active">✓ Na Nuvem</span>`
-                : `<span class="status-pill warning">Pendente</span>`
-            }
-          </td>
-          <td>
-            <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this, ${item.total_bytes}, '${escapeHtml(item.name).replace(/'/g, "\\'")}')">
-              Sincronizar
-            </button>
-          </td>
-        </tr>
-      `
-      )
-      .join("");
-
-    bindOrphanCheckboxes();
-    updateSelectionUI();
+    cachedSavesList = items || [];
+    updateSavesCounts();
+    renderSavesTable();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
   } finally {
     if (scanBtn) {
       scanBtn.disabled = false;
@@ -1355,6 +1499,16 @@ document.addEventListener("DOMContentLoaded", () => {
   setupNavigation();
   setupActionHandlers();
   loadInitialData();
+
+  // Se iniciado como desinstalador (ChronoKeepUninstall.exe ou --uninstall)
+  invokeBackend("get_launch_mode")
+    .then((mode) => {
+      if (mode === "uninstall") {
+        navigateToPage("settings");
+        openUninstallModal();
+      }
+    })
+    .catch(() => {});
 
   // Background daemon poller every 3.5 seconds
   setInterval(() => {

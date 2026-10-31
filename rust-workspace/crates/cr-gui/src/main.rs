@@ -68,6 +68,8 @@ fn main() {
             launch_steam,
             check_for_updates,
             update_component,
+            get_launch_mode,
+            uninstall_chronokeep,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ChronoKeep GUI");

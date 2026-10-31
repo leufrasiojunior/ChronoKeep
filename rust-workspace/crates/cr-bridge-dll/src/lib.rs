@@ -161,15 +161,16 @@ pub fn is_namespace_app(app_id: u32) -> bool {
     if !steam_path.is_empty() {
         let base = Path::new(&steam_path);
 
-        // 1. Verifica se existe config\stplug-in\<app_id>.lua ou .st
-        let lua_file = base.join("config").join("stplug-in").join(format!("{}.lua", app_id));
+        // 1. Verifica se existe config\stplug-in\<app_id>.lua ou .st, ou config\lua\<app_id>.lua
+        let lua_file1 = base.join("config").join("stplug-in").join(format!("{}.lua", app_id));
         let st_file = base.join("config").join("stplug-in").join(format!("{}.st", app_id));
-        if lua_file.exists() || st_file.exists() {
+        let lua_file2 = base.join("config").join("lua").join(format!("{}.lua", app_id));
+        if lua_file1.exists() || st_file.exists() || lua_file2.exists() {
             if let Ok(mut guard) = apps_store().lock() {
                 guard.insert(app_id);
             }
             log_line(&format!(
-                "[AutoDetect] AppID {} detectado em stplug-in (*.lua) -> Registrado dinamicamente!",
+                "[AutoDetect] AppID {} detectado em stplug-in/lua (*.lua) -> Registrado dinamicamente!",
                 app_id
             ));
             sync_session_with_service();
@@ -211,26 +212,9 @@ pub fn is_namespace_app(app_id: u32) -> bool {
             }
         }
 
-        // 3. Verifica se existe pasta do app em userdata\<account_id>\<app_id>
-        let userdata_dir = base.join("userdata");
-        if userdata_dir.is_dir() {
-            if let Ok(entries) = fs::read_dir(&userdata_dir) {
-                for entry in entries.flatten() {
-                    let user_folder = entry.path();
-                    if user_folder.is_dir() && user_folder.join(app_id.to_string()).exists() {
-                        if let Ok(mut guard) = apps_store().lock() {
-                            guard.insert(app_id);
-                        }
-                        log_line(&format!(
-                            "[AutoDetect] AppID {} detectado em userdata -> Registrado dinamicamente!",
-                            app_id
-                        ));
-                        sync_session_with_service();
-                        return true;
-                    }
-                }
-            }
-        }
+        // NOTA: Jogos legítimos da Steam (sem stplug-in/AppList) NÃO são interceptados aqui.
+        // Eles passam direto para a Valve Steam Cloud nativa (Passthrough em Slot 4),
+        // garantindo que jogos oficiais mantenham a nuvem oficial da Valve como primária.
     }
 
     false
@@ -281,7 +265,22 @@ fn auto_seed_local_apps(steam_path: &str) {
         }
     }
 
-    // 2. Scan <SteamDir>\AppList\ for GreenLuma-style <index>.txt files containing an AppID
+    // 2. Scan <SteamDir>\config\lua\ for <appId>.lua
+    let lua_dir = Path::new(steam_path).join("config").join("lua");
+    if let Ok(entries) = fs::read_dir(lua_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        discovered.push(app_id);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Scan <SteamDir>\AppList\ for GreenLuma-style <index>.txt files containing an AppID
     let applist_dir = Path::new(steam_path).join("AppList");
     if let Ok(entries) = fs::read_dir(applist_dir) {
         for entry in entries.flatten() {
