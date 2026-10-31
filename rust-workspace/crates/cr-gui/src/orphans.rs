@@ -383,24 +383,29 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
             }
 
             for (rel_name, full_path) in &game.files {
+                let (root_token, clean_filename) = split_root_token(rel_name);
+                if clean_filename.is_empty() {
+                    continue;
+                }
+
                 if let Ok(bytes) = fs::read(full_path) {
                     let ok = sync_orphan_file_to_drive_with_retry(
                         &token,
                         game.account_id,
                         game.app_id,
-                        rel_name,
+                        &clean_filename,
                         &bytes,
                     );
                     if ok {
                         total_files_uploaded += 1;
                     }
 
-                    // Salva copia local no Vault
+                    // Salva copia local no Vault sempre com caminho canônico e sem token na pasta física
                     let vault_file = vault_dir
                         .join(game.account_id.to_string())
                         .join(game.app_id.to_string())
                         .join("files")
-                        .join(rel_name);
+                        .join(&clean_filename);
                     if let Some(parent) = vault_file.parent() {
                         let _ = fs::create_dir_all(parent);
                     }
@@ -413,12 +418,20 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
-                    let (root_token, clean_filename) = split_root_token(rel_name);
+
+                    let effective_token = if !root_token.is_empty() {
+                        root_token
+                    } else if !manifest_data.default_root_token.is_empty() {
+                        manifest_data.default_root_token.clone()
+                    } else {
+                        "%WinMyDocuments%".to_string()
+                    };
+
                     manifest_data.files.insert(
                         clean_filename.clone(),
                         ManifestFileRecord {
                             filename: clean_filename,
-                            root_token,
+                            root_token: effective_token,
                             sha1: sha,
                             timestamp: file_ts,
                             raw_size: bytes.len() as u64,
@@ -530,8 +543,10 @@ pub fn upload_single_game_save(
             let mut found = Vec::new();
             collect_files_recursive(&remote_dir, &remote_dir, &mut found);
             for (rel, p) in found {
-                let norm = format!("%WinMyDocuments%/{}", rel.replace('\\', "/"));
-                files_to_sync.push((norm, p));
+                let norm = rel.replace('\\', "/");
+                if !files_to_sync.iter().any(|(r, _)| r == &norm) {
+                    files_to_sync.push((norm, p));
+                }
             }
         }
         let files_dir = userdata_app.join("files");
@@ -596,7 +611,12 @@ pub fn upload_single_game_save(
     let mut oversized_count = 0;
 
     for (rel_name, full_path) in &valid_files {
-        let vault_dest = vault_app_files.join(rel_name);
+        let (root_token, clean_filename) = split_root_token(rel_name);
+        if clean_filename.is_empty() {
+            continue;
+        }
+
+        let vault_dest = vault_app_files.join(&clean_filename);
         if let Some(parent) = vault_dest.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -613,7 +633,7 @@ pub fn upload_single_game_save(
             // Guarda sempre no Cofre local para preservação do save
             let _ = fs::write(&vault_dest, &bytes);
 
-            let ok = sync_orphan_file_to_drive_with_retry(&token, account_id, app_id, rel_name, &bytes);
+            let ok = sync_orphan_file_to_drive_with_retry(&token, account_id, app_id, &clean_filename, &bytes);
             if ok {
                 uploaded_count += 1;
 
@@ -624,12 +644,20 @@ pub fn upload_single_game_save(
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                let (root_token, clean_filename) = split_root_token(rel_name);
+
+                let effective_token = if !root_token.is_empty() {
+                    root_token
+                } else if !manifest_data.default_root_token.is_empty() {
+                    manifest_data.default_root_token.clone()
+                } else {
+                    "%WinMyDocuments%".to_string()
+                };
+
                 manifest_data.files.insert(
                     clean_filename.clone(),
                     ManifestFileRecord {
                         filename: clean_filename,
-                        root_token,
+                        root_token: effective_token,
                         sha1: sha,
                         timestamp: file_ts,
                         raw_size: bytes.len() as u64,

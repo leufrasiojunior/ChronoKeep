@@ -282,3 +282,33 @@ pub fn build_quota_response(
     body.write_varint(4, max_bytes);
     body.into_bytes()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_root_token_clean_path() {
+        let (tok, clean) = split_root_token("preferences_data");
+        assert_eq!(tok, "");
+        assert_eq!(clean, "preferences_data");
+    }
+
+    #[test]
+    fn test_split_root_token_single_token() {
+        let (tok, clean) = split_root_token("%WinMyDocuments%/preferences_data");
+        assert_eq!(tok, "%WinMyDocuments%");
+        assert_eq!(clean, "preferences_data");
+
+        let (tok2, clean2) = split_root_token("%WinMyDocuments%preferences_data");
+        assert_eq!(tok2, "%WinMyDocuments%");
+        assert_eq!(clean2, "preferences_data");
+    }
+
+    #[test]
+    fn test_split_root_token_duplicated_tokens() {
+        let (tok, clean) = split_root_token("%WinMyDocuments%%WinMyDocuments%/preferences_data");
+        assert_eq!(tok, "%WinMyDocuments%");
+        assert_eq!(clean, "preferences_data");
+    }
+}
