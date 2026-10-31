@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Local save scanner and Google Drive batch upload orchestrator.
 
 use crate::win32::*;
@@ -456,4 +457,236 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
             MessageBoxW(hwnd_val, to_wide(&done_text).as_ptr(), cap.as_ptr(), MB_OK | MB_ICONINFORMATION);
         }
     });
+}
+
+pub fn find_or_create_gdrive_token_file(steam_dir: &Path) -> Option<PathBuf> {
+    let cand1 = steam_dir.join("chronokeep_gdrive.json");
+    if cand1.exists() {
+        return Some(cand1);
+    }
+    if let Ok(cur) = env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            let cand2 = parent.join("chronokeep_gdrive.json");
+            if cand2.exists() {
+                return Some(cand2);
+            }
+        }
+    }
+    let ini_path = steam_dir.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for l in content.lines() {
+            if let Some((k, v)) = l.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("gdrive_refresh_token") && !v.trim().is_empty() {
+                    let json = format!(r#"{{"refresh_token":"{}"}}"#, v.trim());
+                    let _ = fs::write(&cand1, &json);
+                    return Some(cand1);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn load_max_upload_mb(steam_dir: &Path) -> u64 {
+    let ini_path = steam_dir.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("max_upload_mb") {
+                    if let Ok(mb) = v.trim().parse::<u64>() {
+                        if mb > 0 {
+                            return mb;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    512
+}
+
+pub fn upload_single_game_save(
+    steam_dir: &Path,
+    vault_dir: &Path,
+    app_id: u32,
+    account_id: u32,
+) -> Result<usize, String> {
+    let token_path = find_or_create_gdrive_token_file(steam_dir)
+        .ok_or_else(|| "Conta Google Drive não conectada. Conecte sua conta antes de sincronizar.".to_string())?;
+
+    let token = refresh_access_token(&token_path)
+        .ok_or_else(|| "Falha ao renovar token de acesso do Google Drive. Refaça o login nas configurações.".to_string())?;
+
+    let mut files_to_sync: Vec<(String, PathBuf)> = Vec::new();
+
+    let userdata_app = steam_dir
+        .join("userdata")
+        .join(account_id.to_string())
+        .join(app_id.to_string());
+
+    if userdata_app.exists() {
+        let remote_dir = userdata_app.join("remote");
+        if remote_dir.exists() {
+            let mut found = Vec::new();
+            collect_files_recursive(&remote_dir, &remote_dir, &mut found);
+            for (rel, p) in found {
+                let norm = format!("%WinMyDocuments%/{}", rel.replace('\\', "/"));
+                files_to_sync.push((norm, p));
+            }
+        }
+        let files_dir = userdata_app.join("files");
+        if files_dir.exists() {
+            let mut found = Vec::new();
+            collect_files_recursive(&files_dir, &files_dir, &mut found);
+            for (rel, p) in found {
+                let norm = rel.replace('\\', "/");
+                if !files_to_sync.iter().any(|(r, _)| r == &norm) {
+                    files_to_sync.push((norm, p));
+                }
+            }
+        }
+    }
+
+    let vault_app_files = vault_dir
+        .join(account_id.to_string())
+        .join(app_id.to_string())
+        .join("files");
+    if vault_app_files.exists() {
+        let mut found = Vec::new();
+        collect_files_recursive(&vault_app_files, &vault_app_files, &mut found);
+        for (rel, p) in found {
+            let norm = rel.replace('\\', "/");
+            if !files_to_sync.iter().any(|(r, _)| r == &norm) {
+                files_to_sync.push((norm, p));
+            }
+        }
+    }
+
+    let valid_files: Vec<(String, PathBuf)> = files_to_sync
+        .into_iter()
+        .filter(|(rel, _)| {
+            let l = rel.to_lowercase();
+            !l.starts_with('.') && !l.ends_with(".tmp") && !l.contains(".cloudredirect") && l != "manifest.tsv"
+        })
+        .collect();
+
+    if valid_files.is_empty() {
+        return Ok(0);
+    }
+
+    let manifest_file = vault_dir
+        .join(account_id.to_string())
+        .join(app_id.to_string())
+        .join("manifest.tsv");
+
+    let mut manifest_data = if let Ok(prev) = fs::read_to_string(&manifest_file) {
+        parse_manifest(&prev)
+    } else {
+        ManifestData::default()
+    };
+    if manifest_data.change_number == 0 {
+        manifest_data.change_number = 1;
+    } else {
+        manifest_data.change_number += 1;
+    }
+
+    let max_mb = load_max_upload_mb(steam_dir);
+    let max_bytes = max_mb * 1024 * 1024;
+    let mut uploaded_count = 0;
+    let mut oversized_count = 0;
+
+    for (rel_name, full_path) in &valid_files {
+        let vault_dest = vault_app_files.join(rel_name);
+        if let Some(parent) = vault_dest.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        let file_len = fs::metadata(full_path).map(|m| m.len()).unwrap_or(0);
+        // Verifica o limite de upload configurado na UI antes de carregar o arquivo na RAM
+        if file_len > max_bytes {
+            let _ = fs::copy(full_path, &vault_dest);
+            oversized_count += 1;
+            continue;
+        }
+
+        if let Ok(bytes) = fs::read(full_path) {
+            // Guarda sempre no Cofre local para preservação do save
+            let _ = fs::write(&vault_dest, &bytes);
+
+            let ok = sync_orphan_file_to_drive_with_retry(&token, account_id, app_id, rel_name, &bytes);
+            if ok {
+                uploaded_count += 1;
+
+                let sha = sha1_digest(&bytes);
+                let file_ts = fs::metadata(full_path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let (root_token, clean_filename) = split_root_token(rel_name);
+                manifest_data.files.insert(
+                    clean_filename.clone(),
+                    ManifestFileRecord {
+                        filename: clean_filename,
+                        root_token,
+                        sha1: sha,
+                        timestamp: file_ts,
+                        raw_size: bytes.len() as u64,
+                        platforms_to_sync: 0xFFFF_FFFF,
+                    },
+                );
+            }
+        }
+    }
+
+    if uploaded_count == 0 {
+        if oversized_count > 0 {
+            return Err(format!(
+                "Nenhum arquivo enviado à nuvem: todos os {} arquivo(s) do AppID {} excedem o limite de upload manual ({} MB) e foram preservados apenas no Cofre local.",
+                valid_files.len(),
+                app_id,
+                max_mb
+            ));
+        } else {
+            return Err(format!(
+                "Falha ao enviar os {} arquivo(s) do AppID {} para o Google Drive. Verifique a conexão com a internet ou permissões da conta.",
+                valid_files.len(),
+                app_id
+            ));
+        }
+    }
+
+    let manifest_content = serialize_manifest(&manifest_data);
+
+    let manifest_ok = sync_orphan_file_to_drive_with_retry(
+        &token,
+        account_id,
+        app_id,
+        "manifest.tsv",
+        manifest_content.as_bytes(),
+    );
+    if !manifest_ok {
+        return Err(format!(
+            "Os arquivos de save do AppID {} foram enviados, mas houve falha ao sincronizar o índice 'manifest.tsv' com o Google Drive.",
+            app_id
+        ));
+    }
+
+    if let Some(parent) = manifest_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&manifest_file, manifest_content.as_bytes());
+
+    let target_upload_count = valid_files.len().saturating_sub(oversized_count);
+    if uploaded_count < target_upload_count {
+        return Err(format!(
+            "Sincronização parcial: apenas {} de {} arquivo(s) do AppID {} foram enviados ao Google Drive com sucesso.",
+            uploaded_count,
+            target_upload_count,
+            app_id
+        ));
+    }
+
+    Ok(uploaded_count)
 }

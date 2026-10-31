@@ -70,8 +70,9 @@ fn main() {
     log_msg(
         &cfg.log_path,
         &format!(
-            "Servidor iniciado em 127.0.0.1:{} | Vault={}",
+            "Servidor iniciado em 127.0.0.1:{} (Limite Upload: {}MB) | Vault={}",
             actual_port,
+            cfg.max_upload_mb,
             cfg.vault_dir.display()
         ),
     );
@@ -92,6 +93,7 @@ fn main() {
         ensure_parent_watcher(parent_pid, Arc::clone(&log_path));
     }
 
+    let max_upload_mb = cfg.max_upload_mb;
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
@@ -99,7 +101,7 @@ fn main() {
         let eng = Arc::clone(&engine);
         let lp = Arc::clone(&log_path);
         thread::spawn(move || {
-            handle_connection(stream, eng, lp);
+            handle_connection(stream, eng, lp, max_upload_mb);
         });
     }
 }

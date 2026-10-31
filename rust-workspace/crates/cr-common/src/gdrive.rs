@@ -31,6 +31,12 @@ pub fn clear_folder_cache() {
     }
 }
 
+pub fn clear_token_cache() {
+    if let Ok(mut guard) = TOKEN_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 pub fn refresh_access_token(token_file: &Path) -> Option<String> {
     let content = fs::read_to_string(token_file).ok()?;
     let refresh_token = extract_json_str(&content, "refresh_token")?;

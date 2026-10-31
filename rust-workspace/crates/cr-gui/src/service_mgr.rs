@@ -82,3 +82,13 @@ pub fn start_service_from_gui(steam_dir: &Path, port: u16) -> bool {
     }
     check_service_online(port)
 }
+
+pub fn stop_service_from_gui(port: u16) -> bool {
+    use std::io::Write;
+    use std::net::TcpStream;
+    if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+        let _ = stream.write_all(b"POST /v1/shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    }
+    kill_process_and_wait("chrono-daemon.exe", 1500);
+    !check_service_online(port)
+}

@@ -1,22 +1,16 @@
 #![windows_subsystem = "windows"]
-//! Native Win32 GUI Installer & Configurator (`ChronoKeepSetup.exe`).
-//! Installs the Bridge DLL (`chronokeep.dll` + optional host loader compatibility),
-//! deploys `chrono-daemon.exe`, configures the Vault path, and provides 1-Click
-//! Google Drive OAuth2 Browser Login using the pre-verified Desktop OAuth client.
 
+mod commands;
 mod installer;
 mod oauth_flow;
 mod orphans;
 mod service_mgr;
 mod win32;
-mod window;
 
-use cr_common::http::to_wide;
+use commands::*;
 use installer::run_silent_install;
 use std::env;
-use std::ptr::{null, null_mut};
-use win32::*;
-use window::wnd_proc;
+use tauri::Manager;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -35,61 +29,33 @@ fn main() {
         }
     }
 
-    unsafe {
-        let h_instance = GetModuleHandleW(null());
-        let class_name = to_wide("ChronoKeepSetupWnd");
-        let window_title = to_wide("ChronoKeep — Instalador e Configurador Cloud Save");
-
-        let h_app_icon = LoadIconW(h_instance, 1 as *const u16);
-
-        let wc = WNDCLASSEXW {
-            cb_size: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: 0,
-            lpfn_wnd_proc: wnd_proc,
-            cb_cls_extra: 0,
-            cb_wnd_extra: 0,
-            h_instance,
-            h_icon: h_app_icon,
-            h_cursor: LoadCursorW(0, 32512 as *const u16), // IDC_ARROW
-            hbr_background: (COLOR_WINDOW + 1) as HBRUSH,
-            lpsz_menu_name: null(),
-            lpsz_class_name: class_name.as_ptr(),
-            h_icon_sm: h_app_icon,
-        };
-
-        RegisterClassExW(&wc);
-
-        let hwnd = CreateWindowExW(
-            0,
-            class_name.as_ptr(),
-            window_title.as_ptr(),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
-            200,
-            120,
-            635,
-            445,
-            0,
-            0,
-            h_instance,
-            null_mut(),
-        );
-
-        if hwnd == 0 {
-            return;
-        }
-
-        if h_app_icon != 0 {
-            SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_app_icon as LPARAM);
-            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_app_icon as LPARAM);
-        }
-
-        ShowWindow(hwnd, SW_SHOWNORMAL);
-        UpdateWindow(hwnd);
-
-        let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, 0, 0, 0) > 0 {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
+    tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window_vibrancy::apply_mica(&window, None);
+                }
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_system_info,
+            get_config,
+            save_config,
+            get_service_status,
+            start_service,
+            stop_service,
+            install_chronokeep,
+            start_google_login,
+            disconnect_google,
+            scan_saves,
+            upload_game_save,
+            get_logs,
+            clear_log,
+            open_directory,
+            open_url,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running ChronoKeep GUI");
 }

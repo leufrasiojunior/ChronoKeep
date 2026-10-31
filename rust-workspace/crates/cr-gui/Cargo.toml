@@ -10,4 +10,10 @@ path = "src/main.rs"
 [dependencies]
 cr-proto = { path = "../cr-proto" }
 cr-common = { path = "../cr-common" }
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+window-vibrancy = "0.8"
 
+[build-dependencies]
+tauri-build = "2"

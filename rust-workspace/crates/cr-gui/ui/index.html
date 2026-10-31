@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configurações do ChronoKeep</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="mica-bg">
+  <!-- Top App Header / Integrated Titlebar -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="app-logo">
+        <img src="app-logo.png" alt="ChronoKeep Logo" class="app-logo-img">
+      </div>
+      <span class="app-title">Configurações do ChronoKeep</span>
+    </div>
+
+    <div class="header-center">
+      <div class="search-box">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="global-search" placeholder="Pesquisar por configurações" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="header-right">
+      <!-- Window controls handled by OS decorations -->
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <!-- Left Navigation Rail (NavigationView) -->
+    <nav class="nav-rail">
+      <div class="nav-group top-group">
+        <button class="nav-item active" data-page="home">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+          <span class="nav-label">Início</span>
+        </button>
+
+        <button class="nav-item" data-page="settings">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span class="nav-label">Geral & Pastas</span>
+        </button>
+
+        <button class="nav-item" data-page="cloud-saves">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+          </svg>
+          <span class="nav-label">Saves Órfãos</span>
+          <span class="badge-pill">NOVO</span>
+        </button>
+
+        <button class="nav-item" data-page="games">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <path d="M6 12h4m-2-2v4m7-3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path>
+          </svg>
+          <span class="nav-label">Jogos & Nuvem</span>
+        </button>
+
+        <button class="nav-item" data-page="logs">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          <span class="nav-label">Logs do Sistema</span>
+        </button>
+
+        <button class="nav-item" data-page="about">
+          <div class="nav-indicator"></div>
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <span class="nav-label">Sobre</span>
+        </button>
+      </div>
+
+      <div class="nav-group bottom-group">
+        <a href="https://github.com/leufrasiojunior/ChronoKeep" id="nav-github-link" class="nav-item external">
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+          </svg>
+          <span class="nav-label">Repositório GitHub</span>
+        </a>
+
+        <div class="nav-item" id="nav-system-status">
+          <div class="status-dot online" id="global-status-dot"></div>
+          <span class="nav-label" id="global-status-text">Daemon Ativo</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content Viewport -->
+    <main class="content-viewport">
+      <!-- PAGE 1: INÍCIO (Home) -->
+      <section class="page active" id="page-home">
+        <div class="page-title-row">
+          <h1 class="page-title">Início</h1>
+        </div>
+
+        <!-- Hero / Banner Row -->
+        <div class="hero-card">
+          <div class="hero-left">
+            <div class="hero-icon-box">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+                <path d="M2 12h20"></path>
+              </svg>
+            </div>
+            <div class="hero-info">
+              <h3 class="hero-title">ChronoKeep Cloud Save</h3>
+              <p class="hero-version">v0.1.2 — Sincronização Steam Cloud Clean-Room</p>
+            </div>
+          </div>
+
+          <div class="hero-badges">
+            <div class="status-badge" id="hero-daemon-badge">
+              <span class="badge-dot online"></span>
+              <span class="badge-text" id="hero-daemon-text">Daemon Online</span>
+            </div>
+            <div class="status-badge" id="hero-gdrive-badge">
+              <span class="badge-dot offline"></span>
+              <span class="badge-text" id="hero-gdrive-text">Google Drive Conectado</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2-Column Section (Acesso Rápido & Utilitários) -->
+        <div class="two-column-grid">
+          <!-- Coluna 1: Acesso Rápido (Tiles) -->
+          <div class="column-block">
+            <h2 class="section-title">Acesso rápido</h2>
+            <div class="quick-access-grid">
+              <div class="quick-tile" id="tile-install">
+                <div class="tile-icon-box blue">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                </div>
+                <span class="tile-label">Instalar na Steam</span>
+              </div>
+
+              <div class="quick-tile" id="tile-daemon">
+                <div class="tile-icon-box purple">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                  </svg>
+                </div>
+                <span class="tile-label" id="tile-daemon-label">Iniciar Daemon</span>
+              </div>
+
+              <div class="quick-tile" id="tile-open-vault">
+                <div class="tile-icon-box cyan">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </div>
+                <span class="tile-label">Abrir Vault</span>
+              </div>
+
+              <div class="quick-tile" id="tile-open-steam">
+                <div class="tile-icon-box teal">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polygon points="10 8 16 12 10 16 10 8"></polygon>
+                  </svg>
+                </div>
+                <span class="tile-label">Pasta Steam</span>
+              </div>
+
+              <div class="quick-tile" id="tile-gdrive-login">
+                <div class="tile-icon-box orange">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                  </svg>
+                </div>
+                <span class="tile-label" id="tile-gdrive-label">Conectar Drive</span>
+              </div>
+
+              <div class="quick-tile" id="tile-view-logs">
+                <div class="tile-icon-box green">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                  </svg>
+                </div>
+                <span class="tile-label">Ver Logs</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Coluna 2: Utilitários (SettingsCard list) -->
+          <div class="column-block">
+            <div class="section-header-row">
+              <h2 class="section-title">Utilitários e Serviços</h2>
+            </div>
+
+            <div class="settings-card-list">
+              <!-- Card 1: ChronoKeep Daemon Service -->
+              <div class="settings-card">
+                <div class="card-left">
+                  <div class="card-icon-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                      <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                      <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                      <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                    </svg>
+                  </div>
+                  <div class="card-text">
+                    <div class="card-name">ChronoKeep Daemon</div>
+                    <div class="card-desc" id="card-desc-daemon">Serviço de sincronização HTTP local (Porta 39771)</div>
+                  </div>
+                </div>
+                <div class="card-right">
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-daemon">
+                    <span class="slider"></span>
+                  </label>
+                  <button class="card-chevron" id="btn-restart-daemon" title="Reiniciar Daemon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Card 2: OpenSteamTool Cloud Mode -->
+              <div class="settings-card">
+                <div class="card-left">
+                  <div class="card-icon-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                    </svg>
+                  </div>
+                  <div class="card-text">
+                    <div class="card-name">Redirecionamento OpenSteamTool</div>
+                    <div class="card-desc" id="card-desc-ost">Habilitação do recurso [cloud] no opensteamtool.toml</div>
+                  </div>
+                </div>
+                <div class="card-right">
+                  <span class="status-pill active" id="ost-status-pill">Ativo</span>
+                </div>
+              </div>
+
+              <!-- Card 3: Google Drive Sincronização -->
+              <div class="settings-card">
+                <div class="card-left">
+                  <div class="card-icon-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                    </svg>
+                  </div>
+                  <div class="card-text">
+                    <div class="card-name">Google Drive Sincronização</div>
+                    <div class="card-desc" id="card-desc-gdrive">Upload multipart e verificação incremental MD5</div>
+                  </div>
+                </div>
+                <div class="card-right">
+                  <button class="btn btn-secondary" id="btn-gdrive-action">Conectar</button>
+                </div>
+              </div>
+
+              <!-- Card 4: Salvaguardas Steam Cloud -->
+              <div class="settings-card">
+                <div class="card-left">
+                  <div class="card-icon-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <polyline points="12 6 12 12 14 14"></polyline>
+                    </svg>
+                  </div>
+                  <div class="card-text">
+                    <div class="card-name">Salvaguardas do Sistema Steam</div>
+                    <div class="card-desc">Filtros de integridade e monotonicidade de versão ativos</div>
+                  </div>
+                </div>
+                <div class="card-right">
+                  <span class="status-pill active">Protegido</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 2: GERAL & CONFIGURAÇÃO -->
+      <section class="page" id="page-settings">
+        <div class="page-title-row">
+          <h1 class="page-title">Geral & Pastas</h1>
+        </div>
+
+        <div class="settings-group">
+          <h2 class="group-title">Diretórios do Sistema</h2>
+
+          <!-- Steam Path -->
+          <div class="settings-card">
+            <div class="card-left">
+              <div class="card-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polygon points="10 8 16 12 10 16 10 8"></polygon>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name">Pasta de Instalação da Steam</div>
+                <div class="card-desc">Local onde se encontra o executável steam.exe e a bridge DLL</div>
+              </div>
+            </div>
+            <div class="card-right input-group">
+              <input type="text" id="input-steam-dir" class="text-input" placeholder="C:\Program Files (x86)\Steam">
+              <button class="btn btn-icon" id="btn-explore-steam" title="Abrir pasta no Explorer">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Vault/Cofre Path -->
+          <div class="settings-card">
+            <div class="card-left">
+              <div class="card-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name">Pasta do Cofre Local</div>
+                <div class="card-desc">Diretório local onde cópias dos saves e manifestos são preservados</div>
+              </div>
+            </div>
+            <div class="card-right input-group">
+              <input type="text" id="input-vault-dir" class="text-input" placeholder="C:\SteamVault">
+              <button class="btn btn-icon" id="btn-explore-vault" title="Abrir pasta no Explorer">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-left">
+              <div class="card-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name">Limite de Upload Manual por Arquivo</div>
+                <div class="card-desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
+              </div>
+            </div>
+            <div class="card-right">
+              <select id="select-max-upload" class="select-input">
+                <option value="128">128 MB</option>
+                <option value="256">256 MB</option>
+                <option value="512" selected>512 MB (Padrão)</option>
+                <option value="1024">1024 MB (1 GB)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-left">
+              <div class="card-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="5"></circle>
+                  <line x1="12" y1="1" x2="12" y2="3"></line>
+                  <line x1="12" y1="21" x2="12" y2="23"></line>
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                  <line x1="1" y1="12" x2="3" y2="12"></line>
+                  <line x1="21" y1="12" x2="23" y2="12"></line>
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name">Tema da Interface</div>
+                <div class="card-desc">Ajuste de cores e contraste do Fluent Design</div>
+              </div>
+            </div>
+            <div class="card-right">
+              <select id="select-theme" class="select-input">
+                <option value="system">Seguir Sistema</option>
+                <option value="dark" selected>Modo Escuro (Dark)</option>
+                <option value="light">Modo Claro (Light)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-actions-row">
+            <button class="btn btn-primary" id="btn-save-config">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              Salvar Configurações
+            </button>
+            <span class="action-feedback" id="config-feedback"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 3: SAVES ÓRFÃOS -->
+      <section class="page" id="page-cloud-saves">
+        <div class="page-title-row">
+          <h1 class="page-title">Saves Órfãos</h1>
+          <div class="page-actions">
+            <button class="btn btn-secondary" id="btn-sync-selected" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Sincronizar Selecionados (<span id="selected-count">0</span>)
+            </button>
+            <button class="btn btn-primary" id="btn-scan-saves">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              Escanear Saves no PC
+            </button>
+          </div>
+        </div>
+
+        <div class="sub-header-desc">
+          Varre os diretórios locais do Steam userdata e do Cofre para catalogar saves existentes que ainda não foram sincronizados com o Google Drive.
+        </div>
+
+        <div class="saves-table-container">
+          <table class="fluent-table" id="table-saves">
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;">
+                  <input type="checkbox" id="check-all-orphans" title="Selecionar todos">
+                </th>
+                <th>AppID</th>
+                <th>Jogo</th>
+                <th>Arquivos</th>
+                <th>Tamanho</th>
+                <th>No Cofre / Local</th>
+                <th>Na Nuvem</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-saves">
+              <tr>
+                <td colspan="8" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PAGE: JOGOS & NUVEM (EM CONSTRUÇÃO) -->
+      <section class="page" id="page-games">
+        <div class="page-title-row">
+          <h1 class="page-title">Jogos & Nuvem</h1>
+        </div>
+        <div class="construction-container">
+          <div class="construction-card">
+            <div class="construction-icon">🎮</div>
+            <h2>Em construção</h2>
+            <p>Esta seção exibirá todos os seus jogos identificados, capas oficiais, AppIDs, status detalhado de saves locais e na nuvem, com opção de habilitar ou pausar o backup individual de cada título.</p>
+            <span class="status-pill active">Em breve no ChronoKeep</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 4: LOGS DO SISTEMA -->
+      <section class="page" id="page-logs">
+        <div class="page-title-row">
+          <h1 class="page-title">Logs do Sistema</h1>
+          <div class="page-actions">
+            <select id="select-log-target" class="select-input">
+              <option value="daemon" selected>chrono_daemon.log (Serviço)</option>
+              <option value="bridge">chronokeep_bridge.log (DLL Bridge)</option>
+            </select>
+            <button class="btn btn-secondary" id="btn-refresh-log">Atualizar</button>
+            <button class="btn btn-secondary" id="btn-clear-log">Limpar</button>
+          </div>
+        </div>
+
+        <div class="terminal-container">
+          <pre id="log-output" class="terminal-body">Carregando logs...</pre>
+        </div>
+      </section>
+
+      <!-- PAGE 5: SOBRE -->
+      <section class="page" id="page-about">
+        <div class="page-title-row">
+          <h1 class="page-title">Sobre o ChronoKeep</h1>
+        </div>
+
+        <div class="about-card">
+          <div class="about-header">
+            <div class="app-logo large">
+              <img src="app-logo.png" alt="ChronoKeep Logo" class="app-logo-img">
+            </div>
+            <div>
+              <h2 class="about-name">ChronoKeep Manager</h2>
+              <p class="about-desc">v0.1.2 — Solução Clean-Room de Preservação e Sincronização Steam Cloud</p>
+            </div>
+          </div>
+
+          <div class="about-section">
+            <h3>Salvaguardas de Integridade Ativas:</h3>
+            <ul class="features-list">
+              <li>✅ <strong>Isolamento de Processos de Sistema</strong>: Módulos internos da Steam protegidos contra sincronização indevida.</li>
+              <li>✅ <strong>Monotonicidade de Change Number (CN)</strong>: Saves locais nunca são sobrescritos se o CN da nuvem for inferior.</li>
+              <li>✅ <strong>Prevenção de Corrupção por Token Recursivo</strong>: Higienização de tokens <code>%WinMyDocuments%</code> duplicados.</li>
+              <li>✅ <strong>Controle de Concorrência RAII</strong>: Bloqueio estrito de downloads concorrentes simultâneos do mesmo AppID.</li>
+              <li>✅ <strong>Acoplamento ao Ciclo de Vida Steam</strong>: O daemon encerra instantaneamente quando o processo <code>steam.exe</code> for finalizado.</li>
+            </ul>
+          </div>
+
+          <div class="about-footer">
+            <span>Desenvolvido em Rust puro com interface moderna Windows 11 Fluent Design.</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Notification Toast Container -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

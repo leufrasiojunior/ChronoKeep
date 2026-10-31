@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Installation, deployment of embedded binaries, and configuration persistence.
 
 use crate::service_mgr::{check_service_online, is_process_running, kill_process_and_wait, launch_steam, start_service_from_gui};

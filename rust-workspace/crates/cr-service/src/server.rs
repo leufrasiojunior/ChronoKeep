@@ -16,11 +16,12 @@ pub fn handle_connection(
     mut stream: TcpStream,
     engine: Arc<Mutex<RpcEngine>>,
     log_path: Arc<PathBuf>,
+    max_upload_mb: u64,
 ) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
     let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
 
-    let Some((method, path, body)) = read_http_request(&mut stream, &log_path) else {
+    let Some((method, path, body)) = read_http_request(&mut stream, &log_path, max_upload_mb) else {
         return;
     };
 
@@ -299,6 +300,7 @@ fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {
 fn read_http_request(
     stream: &mut TcpStream,
     log_path: &Path,
+    _max_upload_mb: u64,
 ) -> Option<(String, String, Vec<u8>)> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0u8; 4096];
@@ -354,18 +356,23 @@ fn read_http_request(
         let _ = stream.flush();
     }
 
-    if content_length > 512 * 1024 * 1024 {
+    // Sincronização automática interceptada da Steam via daemon:
+    // Não impõe limite restritivo; sincroniza independente do tamanho.
+    // Mantém uma trava técnica de segurança contra transbordamento ou exaustão de memória (1GB).
+    const MAX_SAFE_DAEMON_PAYLOAD: usize = 1024 * 1024 * 1024;
+    if content_length > MAX_SAFE_DAEMON_PAYLOAD {
         log_msg(
             log_path,
             &format!(
-                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de 512MB",
+                "[HTTP] {} {} -> Rejeitado: Content-Length {} excede limite maximo de seguranca (1GB)",
                 method, path, content_length
             ),
         );
         return None;
     }
 
-    let mut body = Vec::with_capacity(content_length);
+    // Inicializa com capacidade moderada para evitar alocação excessiva imediata de memória
+    let mut body = Vec::with_capacity(content_length.min(16 * 1024 * 1024));
     if buf.len() > header_end {
         body.extend_from_slice(&buf[header_end..]);
     }
