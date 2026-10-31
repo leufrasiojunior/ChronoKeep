@@ -501,9 +501,20 @@ body {
   transition: all 0.12s ease;
 }
 
+.settings-card.highlight-card {
+  border-color: rgba(96, 205, 255, 0.3);
+  background: var(--card-bg);
+}
+
 .settings-card:hover {
   background: var(--card-bg-hover);
   border-color: var(--card-border-strong);
+}
+
+.provider-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .card-left {
@@ -524,6 +535,10 @@ body {
   justify-content: center;
   flex-shrink: 0;
 }
+
+.card-icon-box.orange { background: rgba(245, 158, 11, 0.18); color: #FBBF24; }
+.card-icon-box.cyan { background: rgba(0, 180, 216, 0.18); color: #48CAE4; }
+.card-icon-box.accent { background: rgba(96, 205, 255, 0.18); color: var(--accent-color); }
 
 .card-name {
   font-size: 13px;
@@ -561,9 +576,13 @@ body {
 
 /* Status Pill */
 .status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
-  padding: 3px 8px;
+  padding: 3px 10px;
   border-radius: 12px;
   background: var(--bg-subtle-hover);
   color: var(--text-secondary);
@@ -668,6 +687,11 @@ input:checked + .slider:before {
   background: var(--card-bg-hover);
 }
 
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
 .btn-icon {
   background: var(--card-bg);
   color: var(--text-primary);
@@ -739,19 +763,126 @@ input:checked + .slider:before {
 }
 
 /* ==========================================================================
+   Fluent Progress Card & Bar
+   ========================================================================== */
+.sync-progress-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.progress-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Windows 11 Fluent Circular Progress Ring / Spinner */
+.fluent-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid var(--card-border-strong);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: fluent-spin 0.75s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  flex-shrink: 0;
+}
+
+.fluent-spinner-sm {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: fluent-spin 0.75s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+@keyframes fluent-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.progress-text-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.progress-status-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.progress-status-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.progress-percent-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-bg);
+  background: rgba(96, 205, 255, 0.12);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.fluent-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-subtle-hover);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.fluent-progress-bar {
+  height: 100%;
+  background: var(--accent-bg);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ==========================================================================
    Tables (Fluent DataGrid)
    ========================================================================== */
 .saves-table-container {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
-  overflow: hidden;
   max-height: 480px;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .fluent-table {
   width: 100%;
+  min-width: 720px;
   border-collapse: collapse;
   font-size: 12px;
   text-align: left;
@@ -763,12 +894,19 @@ input:checked + .slider:before {
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--card-border);
+  white-space: nowrap;
 }
 
 .fluent-table td {
   padding: 10px 14px;
   border-bottom: 1px solid var(--card-border);
   color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.fluent-table td:nth-child(3) {
+  white-space: normal;
+  min-width: 140px;
 }
 
 .fluent-table tr:hover td {

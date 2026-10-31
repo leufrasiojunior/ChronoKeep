@@ -46,6 +46,12 @@ pub struct ConfigDto {
     pub gdrive_connected: bool,
     pub max_upload_mb: u64,
     pub theme: String,
+    #[serde(default = "default_backup_provider")]
+    pub backup_provider: String,
+}
+
+fn default_backup_provider() -> String {
+    "gdrive".to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -161,6 +167,7 @@ pub fn get_config() -> ConfigDto {
     let mut port = DEFAULT_SERVICE_PORT;
     let mut max_upload_mb = 512;
     let mut theme = "system".to_string();
+    let mut backup_provider = "gdrive".to_string();
 
     let ini_path = s_path.join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -177,6 +184,7 @@ pub fn get_config() -> ConfigDto {
                     "port" => port = v.parse().unwrap_or(DEFAULT_SERVICE_PORT),
                     "max_upload_mb" => max_upload_mb = v.parse().unwrap_or(512),
                     "theme" => theme = v.to_string(),
+                    "backup_provider" if !v.is_empty() => backup_provider = v.to_string(),
                     _ => {}
                 }
             }
@@ -192,6 +200,7 @@ pub fn get_config() -> ConfigDto {
         gdrive_connected,
         max_upload_mb,
         theme,
+        backup_provider,
     }
 }
 
@@ -233,6 +242,7 @@ pub fn save_config(cfg: ConfigDto) -> OperationResult {
     lines.push("dll_name=chronokeep.dll".to_string());
     lines.push(format!("max_upload_mb={}", cfg.max_upload_mb));
     lines.push(format!("theme={}", cfg.theme));
+    lines.push(format!("backup_provider={}", cfg.backup_provider));
 
     if !refresh_token.is_empty() {
         lines.push(format!("gdrive_refresh_token={}", refresh_token));
@@ -618,27 +628,34 @@ pub fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
 }
 
 #[tauri::command]
-pub fn upload_game_save(
+pub async fn upload_game_save(
     app_id: u32,
     account_id: u32,
     steam_dir: Option<String>,
     vault_dir: Option<String>,
 ) -> OperationResult {
-    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
-    let steam_path = Path::new(&s_dir);
-    let vault_path = Path::new(&v_dir);
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
 
-    match crate::orphans::upload_single_game_save(steam_path, vault_path, app_id, account_id) {
-        Ok(count) => OperationResult {
-            success: true,
-            message: format!("Sucesso! {} arquivo(s) do AppID {} sincronizados com o Google Drive.", count, app_id),
-        },
-        Err(err) => OperationResult {
-            success: false,
-            message: err,
-        },
-    }
+        match crate::orphans::upload_single_game_save(steam_path, vault_path, app_id, account_id) {
+            Ok(count) => OperationResult {
+                success: true,
+                message: format!("Sucesso! {} arquivo(s) do AppID {} sincronizados com o Google Drive.", count, app_id),
+            },
+            Err(err) => OperationResult {
+                success: false,
+                message: err,
+            },
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Erro interno na execução do upload: {}", e),
+    })
 }
 
 fn get_app_names_cache_path() -> PathBuf {
@@ -787,130 +804,134 @@ fn resolve_game_names_batch(
 }
 
 #[tauri::command]
-pub fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<GameSaveItemDto> {
-    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
-    let steam_path = Path::new(&s_dir);
-    let vault_path = Path::new(&v_dir);
+pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<GameSaveItemDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
 
-    // Map: (account_id, app_id) -> (file_count, total_bytes, source, in_cloud)
-    let mut map: BTreeMap<(u32, u32), (usize, u64, String, bool)> = BTreeMap::new();
+        // Map: (account_id, app_id) -> (file_count, total_bytes, source, in_cloud)
+        let mut map: BTreeMap<(u32, u32), (usize, u64, String, bool)> = BTreeMap::new();
 
-    // 1. Escanear Steam userdata
-    let userdata_dir = steam_path.join("userdata");
-    if userdata_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&userdata_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if !p.is_dir() { continue; }
-                let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
-                let Ok(account_id) = acct_str.parse::<u32>() else { continue };
-                if account_id == 0 { continue; }
+        // 1. Escanear Steam userdata
+        let userdata_dir = steam_path.join("userdata");
+        if userdata_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&userdata_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(account_id) = acct_str.parse::<u32>() else { continue };
+                    if account_id == 0 { continue; }
 
-                if let Ok(apps) = fs::read_dir(&p) {
-                    for app_entry in apps.flatten() {
-                        let app_path = app_entry.path();
-                        if !app_path.is_dir() { continue; }
-                        let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
-                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
-                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
-                            continue;
-                        }
+                    if let Ok(apps) = fs::read_dir(&p) {
+                        for app_entry in apps.flatten() {
+                            let app_path = app_entry.path();
+                            if !app_path.is_dir() { continue; }
+                            let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                            let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                            if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                                continue;
+                            }
 
-                        let remote_dir = app_path.join("remote");
-                        let mut files: Vec<(String, PathBuf)> = Vec::new();
-                        if remote_dir.exists() {
-                            collect_files_recursive(&remote_dir, &remote_dir, &mut files);
-                        }
-                        if !files.is_empty() {
-                            let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
-                            map.insert((account_id, app_id), (files.len(), total_bytes, "Steam Userdata".to_string(), false));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Escanear Cofre (Vault)
-    if vault_path.exists() {
-        if let Ok(entries) = fs::read_dir(vault_path) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if !p.is_dir() { continue; }
-                let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
-                let Ok(account_id) = acct_str.parse::<u32>() else { continue };
-
-                if let Ok(apps) = fs::read_dir(&p) {
-                    for app_entry in apps.flatten() {
-                        let app_path = app_entry.path();
-                        if !app_path.is_dir() { continue; }
-                        let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
-                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
-                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
-                            continue;
-                        }
-
-                        let manifest_p = app_path.join("manifest.tsv");
-                        let in_cloud = if manifest_p.exists() {
-                            fs::read_to_string(&manifest_p)
-                                .map(|c| {
-                                    let m = parse_manifest(&c);
-                                    m.change_number > 0 && !m.files.is_empty()
-                                })
-                                .unwrap_or(false)
-                        } else {
-                            false
-                        };
-
-                        let files_dir = app_path.join("files");
-                        let scan_target = if files_dir.exists() { &files_dir } else { &app_path };
-                        let mut files: Vec<(String, PathBuf)> = Vec::new();
-                        collect_files_recursive(scan_target, scan_target, &mut files);
-                        files.retain(|(rel, _)| rel != "manifest.tsv");
-
-                        if !files.is_empty() {
-                            let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
-                            map.entry((account_id, app_id))
-                                .and_modify(|e| {
-                                    e.0 = e.0.max(files.len());
-                                    e.1 = e.1.max(total_bytes);
-                                    e.2 = "Steam + Cofre".to_string();
-                                    e.3 = e.3 || in_cloud;
-                                })
-                                .or_insert((files.len(), total_bytes, "Cofre Local".to_string(), in_cloud));
+                            let remote_dir = app_path.join("remote");
+                            let mut files: Vec<(String, PathBuf)> = Vec::new();
+                            if remote_dir.exists() {
+                                collect_files_recursive(&remote_dir, &remote_dir, &mut files);
+                            }
+                            if !files.is_empty() {
+                                let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                                map.insert((account_id, app_id), (files.len(), total_bytes, "Steam Userdata".to_string(), false));
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    let libraries = get_steam_library_folders(steam_path);
-    let mut cache = load_app_names_cache();
+        // 2. Escanear Cofre (Vault)
+        if vault_path.exists() {
+            if let Ok(entries) = fs::read_dir(vault_path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(account_id) = acct_str.parse::<u32>() else { continue };
 
-    let all_app_ids: Vec<u32> = map.keys().map(|(_, app_id)| *app_id).collect();
-    resolve_game_names_batch(&all_app_ids, &libraries, &mut cache);
+                    if let Ok(apps) = fs::read_dir(&p) {
+                        for app_entry in apps.flatten() {
+                            let app_path = app_entry.path();
+                            if !app_path.is_dir() { continue; }
+                            let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                            let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                            if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                                continue;
+                            }
 
-    let items: Vec<GameSaveItemDto> = map.into_iter()
-        .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
-            let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
-            GameSaveItemDto {
-                account_id,
-                app_id,
-                name,
-                file_count,
-                total_bytes,
-                total_size_formatted: format_size(total_bytes),
-                source,
-                in_local: true,
-                in_cloud,
+                            let manifest_p = app_path.join("manifest.tsv");
+                            let in_cloud = if manifest_p.exists() {
+                                fs::read_to_string(&manifest_p)
+                                    .map(|c| {
+                                        let m = parse_manifest(&c);
+                                        m.change_number > 0 && !m.files.is_empty()
+                                    })
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            };
+
+                            let files_dir = app_path.join("files");
+                            let scan_target = if files_dir.exists() { &files_dir } else { &app_path };
+                            let mut files: Vec<(String, PathBuf)> = Vec::new();
+                            collect_files_recursive(scan_target, scan_target, &mut files);
+                            files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                            if !files.is_empty() {
+                                let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                                map.entry((account_id, app_id))
+                                    .and_modify(|e| {
+                                        e.0 = e.0.max(files.len());
+                                        e.1 = e.1.max(total_bytes);
+                                        e.2 = "Steam + Cofre".to_string();
+                                        e.3 = e.3 || in_cloud;
+                                    })
+                                    .or_insert((files.len(), total_bytes, "Cofre Local".to_string(), in_cloud));
+                            }
+                        }
+                    }
+                }
             }
-        })
-        .collect();
+        }
 
-    save_app_names_cache(&cache);
-    items
+        let libraries = get_steam_library_folders(steam_path);
+        let mut cache = load_app_names_cache();
+
+        let all_app_ids: Vec<u32> = map.keys().map(|(_, app_id)| *app_id).collect();
+        resolve_game_names_batch(&all_app_ids, &libraries, &mut cache);
+
+        let items: Vec<GameSaveItemDto> = map.into_iter()
+            .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
+                let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
+                GameSaveItemDto {
+                    account_id,
+                    app_id,
+                    name,
+                    file_count,
+                    total_bytes,
+                    total_size_formatted: format_size(total_bytes),
+                    source,
+                    in_local: true,
+                    in_cloud,
+                }
+            })
+            .collect();
+
+        save_app_names_cache(&cache);
+        items
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
