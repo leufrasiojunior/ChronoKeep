@@ -77,6 +77,8 @@ pub struct GameSaveItemDto {
     pub source: String,
     pub in_local: bool,
     pub in_cloud: bool,
+    pub origin: String,
+    pub origin_label: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -433,6 +435,128 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     OperationResult {
         success: true,
         message: "ChronoKeep instalado na Steam com sucesso! O serviço daemon foi iniciado.".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn get_launch_mode() -> String {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--uninstall") {
+        return "uninstall".to_string();
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(name) = cur.file_name().and_then(|n| n.to_str()) {
+            if name.to_ascii_lowercase().contains("uninstall") {
+                return "uninstall".to_string();
+            }
+        }
+    }
+    "normal".to_string()
+}
+
+#[tauri::command]
+pub fn uninstall_chronokeep(
+    restore_to_steam: bool,
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+    let steam_path = Path::new(&s_dir);
+    let vault_path = Path::new(&v_dir);
+
+    if !steam_path.exists() {
+        return OperationResult {
+            success: false,
+            message: "A pasta da Steam especificada não foi encontrada.".to_string(),
+        };
+    }
+
+    // 1. Encerra Steam se estiver em execução para descarregar a DLL
+    let steam_was_running = crate::service_mgr::is_process_running("steam.exe");
+    if steam_was_running {
+        crate::service_mgr::kill_process_and_wait("steam.exe", 5000);
+    }
+
+    // 2. Encerra o daemon
+    let port = resolve_service_port(&s_dir);
+    crate::service_mgr::stop_service_from_gui(port);
+    crate::service_mgr::kill_process_and_wait("chrono-daemon.exe", 2000);
+
+    // 3. Se solicitado, restaura os saves mais recentes do Cofre local para a pasta Steam userdata
+    let mut restored_count = 0;
+    if restore_to_steam && vault_path.exists() {
+        if let Ok(entries) = fs::read_dir(vault_path) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if !p.is_dir() { continue; }
+                let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                let Ok(account_id) = acct_str.parse::<u32>() else { continue };
+                if account_id == 0 { continue; }
+
+                if let Ok(apps) = fs::read_dir(&p) {
+                    for app_entry in apps.flatten() {
+                        let app_p = app_entry.path();
+                        if !app_p.is_dir() { continue; }
+                        let Some(app_str) = app_p.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                            continue;
+                        }
+
+                        let files_dir = if app_p.join("files").exists() {
+                            app_p.join("files")
+                        } else {
+                            app_p.clone()
+                        };
+
+                        let steam_remote = steam_path
+                            .join("userdata")
+                            .join(account_id.to_string())
+                            .join(app_id.to_string())
+                            .join("remote");
+
+                        let mut files: Vec<(String, PathBuf)> = Vec::new();
+                        collect_files_recursive(&files_dir, &files_dir, &mut files);
+                        files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                        for (rel_path, src_file) in files {
+                            let dst_file = steam_remote.join(&rel_path);
+                            if let Some(parent) = dst_file.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            if fs::copy(&src_file, &dst_file).is_ok() {
+                                restored_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Deletar os binários do ChronoKeep da pasta da Steam
+    let _ = fs::remove_file(steam_path.join("chronokeep.dll"));
+    let _ = fs::remove_file(steam_path.join("cloud_redirect.dll"));
+    let _ = fs::remove_file(steam_path.join("chrono-daemon.exe"));
+    let _ = fs::remove_file(steam_path.join("chronokeep_bridge.log"));
+    let _ = fs::remove_file(steam_path.join("cloud_redirect.log"));
+    let _ = fs::remove_file(steam_path.join("chrono_daemon.log"));
+
+    // 5. Se a Steam estava rodando, reabre-a
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        crate::service_mgr::launch_steam(steam_path);
+    }
+
+    let mut msg = "ChronoKeep desinstalado da pasta da Steam com sucesso! Todos os redirecionamentos foram desativados.".to_string();
+    if restore_to_steam {
+        msg = format!("{} Foram copiados {} arquivo(s) de save do Cofre para a pasta local da Steam (userdata).", msg, restored_count);
+    }
+
+    OperationResult {
+        success: true,
+        message: msg,
     }
 }
 
@@ -825,6 +949,64 @@ fn resolve_game_names_batch(
     }
 }
 
+fn scan_local_tool_apps(steam_path: &Path) -> HashMap<u32, &'static str> {
+    let mut tool_apps = HashMap::new();
+
+    // 1. Scan config/stplug-in
+    let st_dir = steam_path.join("config").join("stplug-in");
+    if let Ok(entries) = fs::read_dir(st_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "SteamTools");
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Scan config/lua
+    let lua_dir = steam_path.join("config").join("lua");
+    if let Ok(entries) = fs::read_dir(lua_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "SteamTools");
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Scan AppList (GreenLuma)
+    let applist_dir = steam_path.join("AppList");
+    if let Ok(entries) = fs::read_dir(applist_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "GreenLuma");
+                    }
+                }
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(app_id) = content.trim().parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "GreenLuma");
+                    }
+                }
+            }
+        }
+    }
+
+    tool_apps
+}
+
 #[tauri::command]
 pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<GameSaveItemDto> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -927,6 +1109,7 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
         }
 
         let libraries = get_steam_library_folders(steam_path);
+        let tool_apps = scan_local_tool_apps(steam_path);
         let mut cache = load_app_names_cache();
 
         let all_app_ids: Vec<u32> = map.keys().map(|(_, app_id)| *app_id).collect();
@@ -935,6 +1118,15 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
         let items: Vec<GameSaveItemDto> = map.into_iter()
             .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
                 let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
+                let is_in_steam = source.contains("Steam");
+                let (origin, origin_label) = if let Some(&tool_name) = tool_apps.get(&app_id) {
+                    ("tools".to_string(), tool_name.to_string())
+                } else if is_in_steam {
+                    ("official".to_string(), "Steam Oficial".to_string())
+                } else {
+                    ("vault_only".to_string(), "Arquivado".to_string())
+                };
+
                 GameSaveItemDto {
                     account_id,
                     app_id,
@@ -945,6 +1137,8 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
                     source,
                     in_local: true,
                     in_cloud,
+                    origin,
+                    origin_label,
                 }
             })
             .collect();
