@@ -7,6 +7,21 @@ on:
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      component:
+        description: 'Componente a compilar e publicar'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'daemon'
+          - 'bridge'
+          - 'gui'
+      tag_name:
+        description: 'Tag de destino no GitHub Release (ex: v0.2.0 ou latest)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -15,7 +30,7 @@ jobs:
   build:
     name: Build Windows Release Binaries
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -30,37 +45,60 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Build Core Daemon & Bridge DLL
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'daemon' || inputs.component == 'bridge' || inputs.component == 'gui' }}
         shell: pwsh
         run: |
-          cargo build --manifest-path rust-workspace/Cargo.toml --release -p cr-service -p cr-bridge-dll
+          $comp = "${{ inputs.component }}"
+          if ($comp -eq "daemon") {
+            cargo build --manifest-path rust-workspace/Cargo.toml --release -p cr-service
+          } elseif ($comp -eq "bridge") {
+            cargo build --manifest-path rust-workspace/Cargo.toml --release -p cr-bridge-dll
+          } else {
+            cargo build --manifest-path rust-workspace/Cargo.toml --release -p cr-service -p cr-bridge-dll
+          }
 
       - name: Update Embedded Binaries for Installer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path rust-workspace/crates/cr-gui/embedded
           $binDir = if (Test-Path "rust-workspace/target/release/chrono-daemon.exe") { "rust-workspace/target/release" } else { "rust-workspace/target/x86_64-pc-windows-msvc/release" }
-          Copy-Item -Force "$binDir/chrono-daemon.exe" rust-workspace/crates/cr-gui/embedded/
-          Copy-Item -Force "$binDir/chronokeep.dll" rust-workspace/crates/cr-gui/embedded/
+          if (Test-Path "$binDir/chrono-daemon.exe") {
+            Copy-Item -Force "$binDir/chrono-daemon.exe" rust-workspace/crates/cr-gui/embedded/
+          }
+          if (Test-Path "$binDir/chronokeep.dll") {
+            Copy-Item -Force "$binDir/chronokeep.dll" rust-workspace/crates/cr-gui/embedded/
+          }
           if (Test-Path dist/chronokeep.ini) {
             Copy-Item -Force dist/chronokeep.ini rust-workspace/crates/cr-gui/embedded/
           }
 
-      - name: Build All-In-One GUI Installer (ChronoKeepSetup.exe)
+      - name: Build ChronoKeep Desktop App (ChronoKeep.exe)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
         shell: pwsh
         run: |
           cd rust-workspace
           cargo rustc --release -p cr-gui -- -C link-arg=crates/cr-gui/assets/app.res
           cd ..
 
-      - name: Assemble Release Assets
+      - name: Assemble Release Assets & Generate versions.json
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-artifacts
-          $binDir = if (Test-Path "rust-workspace/target/release/ChronoKeepSetup.exe") { "rust-workspace/target/release" } else { "rust-workspace/target/x86_64-pc-windows-msvc/release" }
-          Copy-Item -Force "$binDir/ChronoKeepSetup.exe" release-artifacts/
-          Copy-Item -Force "$binDir/chrono-daemon.exe" release-artifacts/
-          Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/
-          Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/cloud_redirect.dll
+          $binDir = if (Test-Path "rust-workspace/target/release/ChronoKeep.exe") { "rust-workspace/target/release" } else { "rust-workspace/target/x86_64-pc-windows-msvc/release" }
+          
+          if (Test-Path "$binDir/ChronoKeep.exe") {
+            Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/
+            # Mantem compatibilidade com scripts legados
+            Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/ChronoKeepSetup.exe
+          }
+          if (Test-Path "$binDir/chrono-daemon.exe") {
+            Copy-Item -Force "$binDir/chrono-daemon.exe" release-artifacts/
+          }
+          if (Test-Path "$binDir/chronokeep.dll") {
+            Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/
+            Copy-Item -Force "$binDir/chronokeep.dll" release-artifacts/cloud_redirect.dll
+          }
           if (Test-Path dist/chronokeep.ini) {
             Copy-Item -Force dist/chronokeep.ini release-artifacts/
           }
@@ -73,18 +111,63 @@ jobs:
           if (Test-Path GUIA_GOOGLE_CLOUD_OAUTH.md) {
             Copy-Item -Force GUIA_GOOGLE_CLOUD_OAUTH.md release-artifacts/
           }
-          # Cria o arquivo ZIP fora da pasta para evitar loop infinito de auto-inclusão
-          Compress-Archive -Path release-artifacts/* -DestinationPath ChronoKeep-Windows-x64.zip -Force
-          Get-ChildItem -Path release-artifacts
-          Get-Item ChronoKeep-Windows-x64.zip
 
-      - name: Upload Build Artifacts
+          # Calcula hashes SHA256 para versions.json
+          $hashes = @{}
+          if (Test-Path "release-artifacts/ChronoKeep.exe") {
+            $hashes["gui"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/ChronoKeep.exe").Hash.ToLower()
+          }
+          if (Test-Path "release-artifacts/chrono-daemon.exe") {
+            $hashes["daemon"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/chrono-daemon.exe").Hash.ToLower()
+          }
+          if (Test-Path "release-artifacts/chronokeep.dll") {
+            $hashes["bridge"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/chronokeep.dll").Hash.ToLower()
+          }
+
+          $verTag = if ("${{ inputs.tag_name }}" -ne "") {
+            "${{ inputs.tag_name }}"
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            $env:GITHUB_REF_NAME
+          } else {
+            "latest"
+          }
+
+          $manifestObj = @{
+            release_version = $verTag
+            published_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            components = @{
+              gui = @{
+                filename = "ChronoKeep.exe"
+                sha256 = $hashes["gui"]
+                download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
+              }
+              daemon = @{
+                filename = "chrono-daemon.exe"
+                sha256 = $hashes["daemon"]
+                download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
+              }
+              bridge_dll = @{
+                filename = "chronokeep.dll"
+                sha256 = $hashes["bridge"]
+                download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
+              }
+            }
+          }
+
+          $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -Path "release-artifacts/versions.json" -Encoding UTF8
+
+          # Cria o arquivo ZIP completo se todos os binarios estiverem presentes
+          if ((Test-Path "release-artifacts/ChronoKeep.exe") -and (Test-Path "release-artifacts/chrono-daemon.exe") -and (Test-Path "release-artifacts/chronokeep.dll")) {
+            Compress-Archive -Path release-artifacts/* -DestinationPath ChronoKeep-Windows-x64.zip -Force
+          }
+
+          Get-ChildItem -Path release-artifacts
+
+      - name: Upload Build Artifacts to Workflow
         uses: actions/upload-artifact@v4
         with:
           name: ChronoKeep-Windows-x64
-          path: |
-            release-artifacts/ChronoKeepSetup.exe
-            ChronoKeep-Windows-x64.zip
+          path: release-artifacts/*
 
       - name: Create or Update GitHub Release
         if: github.event_name != 'pull_request'
@@ -92,11 +175,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tagName = if ($env:GITHUB_REF -like "refs/tags/*") { $env:GITHUB_REF_NAME } else { "latest" }
-          $relTitle = if ($env:GITHUB_REF -like "refs/tags/*") { "ChronoKeep $env:GITHUB_REF_NAME" } else { "ChronoKeep Latest Build" }
+          $tagName = if ("${{ inputs.tag_name }}" -ne "") {
+            "${{ inputs.tag_name }}"
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            $env:GITHUB_REF_NAME
+          } else {
+            "latest"
+          }
+
+          $relTitle = if ($tagName -like "v*") { "ChronoKeep $tagName" } else { "ChronoKeep Latest Build" }
+
+          $assetsToUpload = Get-ChildItem -Path release-artifacts/* | ForEach-Object { $_.FullName }
+          if (Test-Path "ChronoKeep-Windows-x64.zip") {
+            $assetsToUpload += (Get-Item "ChronoKeep-Windows-x64.zip").FullName
+          }
+
           $null = gh release view $tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --clobber
+            gh release upload $tagName @assetsToUpload --clobber
           } else {
-            gh release create $tagName release-artifacts/ChronoKeepSetup.exe ChronoKeep-Windows-x64.zip --title $relTitle --notes "ChronoKeep Release Assets"
+            gh release create $tagName @assetsToUpload --title $relTitle --notes "ChronoKeep Release Assets ($tagName)"
           }

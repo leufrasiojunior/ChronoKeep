@@ -5,6 +5,7 @@ mod installer;
 mod oauth_flow;
 mod orphans;
 mod service_mgr;
+mod updater;
 mod win32;
 
 use commands::*;
@@ -55,6 +56,8 @@ fn main() {
             clear_log,
             open_directory,
             open_url,
+            check_for_updates,
+            update_component,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ChronoKeep GUI");

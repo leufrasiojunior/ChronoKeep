@@ -118,6 +118,10 @@ function setupNavigation() {
       loadLogs();
     } else if (pageId === "cloud-saves") {
       scanSaves();
+    } else if (pageId === "about") {
+      if (!lastUpdateCheckResult) {
+        checkForUpdates(false);
+      }
     }
   };
 
@@ -542,6 +546,13 @@ function setupActionHandlers() {
     showToast(res ? res.message : "Log limpo.");
     loadLogs();
   });
+
+  // Updates actions
+  document.getElementById("btn-check-updates")?.addEventListener("click", () => checkForUpdates(true));
+  document.getElementById("btn-update-all")?.addEventListener("click", updateAllComponents);
+  document.getElementById("btn-update-gui")?.addEventListener("click", () => updateComponent("gui"));
+  document.getElementById("btn-update-daemon")?.addEventListener("click", () => updateComponent("daemon"));
+  document.getElementById("btn-update-bridge")?.addEventListener("click", () => updateComponent("bridge"));
 }
 
 // --------------------------------------------------------------------------
@@ -959,6 +970,180 @@ async function syncGameSave(appId, accountId, btn, totalBytes = 0, gameName = ""
   }
 }
 window.syncGameSave = syncGameSave;
+
+// --------------------------------------------------------------------------
+// Component Updater Controller
+// --------------------------------------------------------------------------
+let lastUpdateCheckResult = null;
+let isUpdatingComponent = false;
+
+function renderUpdateBadge(badgeEl, status) {
+  if (!badgeEl) return;
+  badgeEl.className = "badge-tag";
+  if (status === "up_to_date") {
+    badgeEl.classList.add("up-to-date");
+    badgeEl.textContent = "Atualizado";
+  } else if (status === "update_available") {
+    badgeEl.classList.add("update-available");
+    badgeEl.textContent = "Disponível";
+  } else if (status === "not_installed") {
+    badgeEl.classList.add("not-installed");
+    badgeEl.textContent = "Não Instalado";
+  } else if (status === "error") {
+    badgeEl.classList.add("error");
+    badgeEl.textContent = "Erro";
+  } else {
+    badgeEl.classList.add("neutral");
+    badgeEl.textContent = "Não Verificado";
+  }
+}
+
+async function checkForUpdates(showUserToast = false) {
+  const btn = document.getElementById("btn-check-updates");
+  const icon = document.getElementById("icon-check-updates");
+  const text = document.getElementById("text-check-updates");
+  const banner = document.getElementById("update-status-banner");
+  const btnUpdateAll = document.getElementById("btn-update-all");
+
+  if (btn) btn.disabled = true;
+  if (icon) icon.classList.add("spin-icon");
+  if (text) text.textContent = "Verificando...";
+
+  try {
+    const res = await invokeBackend("check_for_updates");
+    lastUpdateCheckResult = res;
+
+    if (!res || !res.success) {
+      if (banner) {
+        banner.className = "update-banner error";
+        banner.style.display = "flex";
+        banner.innerHTML = `<span>⚠️</span><span>${(res && res.message) ? res.message : "Falha ao verificar atualizações."}</span>`;
+      }
+      if (showUserToast) {
+        showToast((res && res.message) ? res.message : "Falha ao verificar atualizações.");
+      }
+      return;
+    }
+
+    // Process components
+    if (res.components && Array.isArray(res.components)) {
+      for (const comp of res.components) {
+        const id = comp.id;
+        const curEl = document.getElementById(`meta-${id}-cur`);
+        const latestEl = document.getElementById(`meta-${id}-latest`);
+        const badgeEl = document.getElementById(`badge-${id}`);
+        const updateBtn = document.getElementById(`btn-update-${id}`);
+
+        if (curEl) curEl.textContent = comp.current_version || "-";
+        if (latestEl) latestEl.textContent = comp.latest_version || "-";
+        if (badgeEl) renderUpdateBadge(badgeEl, comp.status);
+
+        if (updateBtn) {
+          if (comp.status === "update_available") {
+            updateBtn.style.display = "inline-flex";
+            updateBtn.disabled = false;
+            updateBtn.textContent = "Atualizar";
+          } else {
+            updateBtn.style.display = "none";
+          }
+        }
+      }
+    }
+
+    if (banner) {
+      if (res.has_updates) {
+        banner.className = "update-banner info";
+        banner.style.display = "flex";
+        banner.innerHTML = `<span>🚀</span><span>Atualizações disponíveis no GitHub Release (${res.release_tag})!</span>`;
+        if (btnUpdateAll) btnUpdateAll.style.display = "inline-flex";
+      } else {
+        banner.className = "update-banner success";
+        banner.style.display = "flex";
+        banner.innerHTML = `<span>✓</span><span>Todos os componentes do ChronoKeep estão atualizados (${res.release_tag || "Versão mais recente"}).</span>`;
+        if (btnUpdateAll) btnUpdateAll.style.display = "none";
+      }
+    }
+
+    if (showUserToast) {
+      showToast(res.message);
+    }
+  } catch (err) {
+    if (banner) {
+      banner.className = "update-banner error";
+      banner.style.display = "flex";
+      banner.innerHTML = `<span>⚠️</span><span>Erro ao consultar atualizações: ${err}</span>`;
+    }
+    if (showUserToast) {
+      showToast(`Erro ao verificar atualizações: ${err}`);
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+    if (icon) icon.classList.remove("spin-icon");
+    if (text) text.textContent = "Verificar Atualizações";
+  }
+}
+
+async function updateComponent(componentId) {
+  if (isUpdatingComponent) return;
+  isUpdatingComponent = true;
+
+  const btn = document.getElementById(`btn-update-${componentId}`);
+  const originalText = btn ? btn.textContent : "Atualizar";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Atualizando...";
+  }
+
+  showToast(`Baixando e aplicando atualização de ${componentId}...`, 5000);
+
+  try {
+    const res = await invokeBackend("update_component", { component: componentId });
+    if (res && res.success) {
+      showToast(res.message, 6000);
+      if (res.restart_required && componentId === "gui") {
+        const banner = document.getElementById("update-status-banner");
+        if (banner) {
+          banner.className = "update-banner success";
+          banner.style.display = "flex";
+          banner.innerHTML = `<span>🔄</span><span>ChronoKeep atualizado! Reiniciando aplicativo...</span>`;
+        }
+      } else {
+        await checkForUpdates(false);
+      }
+    } else {
+      showToast(`Erro ao atualizar: ${(res && res.message) ? res.message : "Falha na operação."}`);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+  } catch (err) {
+    showToast(`Erro ao atualizar componente: ${err}`);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  } finally {
+    isUpdatingComponent = false;
+  }
+}
+
+async function updateAllComponents() {
+  if (isUpdatingComponent || !lastUpdateCheckResult) return;
+  const available = (lastUpdateCheckResult.components || []).filter(c => c.status === "update_available");
+  if (available.length === 0) {
+    showToast("Nenhum componente pendente de atualização.");
+    return;
+  }
+
+  // Atualiza primeiro o daemon, depois a bridge dll, e por último a interface (pois reinicia o app)
+  const order = ["daemon", "bridge", "gui"];
+  const sorted = available.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+
+  for (const comp of sorted) {
+    await updateComponent(comp.id);
+  }
+}
 
 // --------------------------------------------------------------------------
 // Logs Loader

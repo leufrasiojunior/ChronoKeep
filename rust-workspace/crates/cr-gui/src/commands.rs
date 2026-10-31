@@ -332,7 +332,7 @@ pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
 // TODO: Possibilidade de atualizar individualmente o daemon, a dll e o executavel:
 // - Atualizar somente o daemon (chrono-daemon.exe) sem reiniciar o Steam se a DLL nao mudou.
 // - Atualizar somente a DLL (chronokeep.dll / cloud_redirect.dll).
-// - Auto-atualizacao do proprio executavel do painel (ChronoKeepSetup.exe).
+// - Auto-atualizacao do proprio executavel do painel (ChronoKeep.exe).
 #[tauri::command]
 pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResult {
     let s_path = Path::new(&steam_dir);
@@ -1050,3 +1050,18 @@ pub fn open_url(url: String) -> OperationResult {
         message: "Link aberto no navegador.".to_string(),
     }
 }
+
+#[tauri::command]
+pub fn check_for_updates() -> crate::updater::UpdateCheckResult {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = PathBuf::from(&steam_dir);
+    crate::updater::check_updates(&s_path)
+}
+
+#[tauri::command]
+pub fn update_component(component: String) -> Result<crate::updater::UpdateApplyResult, String> {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = PathBuf::from(&steam_dir);
+    crate::updater::apply_update(&component, &s_path)
+}
+

@@ -1,6 +1,7 @@
 //! WinHTTP-based secure HTTPS client and text/URL/JSON utilities.
 
 use std::ffi::c_void;
+#[cfg(target_os = "windows")]
 use std::ptr::{null, null_mut};
 
 pub type DWORD = u32;
@@ -15,7 +16,10 @@ pub const WINHTTP_FLAG_SECURE: DWORD = 0x0080_0000;
 pub const WINHTTP_FLAG_ESCAPE_DISABLE: DWORD = 0x0000_0040;
 pub const WINHTTP_ADDREQ_FLAG_ADD: DWORD = 0x2000_0000;
 pub const WINHTTP_QUERY_STATUS_CODE: DWORD = 19;
+pub const WINHTTP_QUERY_LOCATION: DWORD = 33;
 pub const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x2000_0000;
+pub const WINHTTP_OPTION_REDIRECT_POLICY: DWORD = 88;
+pub const WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS: DWORD = 2;
 
 #[cfg(target_os = "windows")]
 #[link(name = "winhttp")]
@@ -82,6 +86,12 @@ extern "system" {
         n_connect_timeout: i32,
         n_send_timeout: i32,
         n_receive_timeout: i32,
+    ) -> BOOL;
+    fn WinHttpSetOption(
+        h_internet: HINTERNET,
+        dw_option: DWORD,
+        lp_buffer: *const c_void,
+        dw_buffer_length: DWORD,
     ) -> BOOL;
     fn WinHttpCloseHandle(h_internet: HINTERNET) -> BOOL;
 }
@@ -159,13 +169,36 @@ pub fn extract_json_str(json: &str, key: &str) -> Option<String> {
     None
 }
 
-#[cfg(target_os = "windows")]
+pub fn parse_url(url: &str) -> Option<(String, String)> {
+    let stripped = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    if let Some(idx) = stripped.find('/') {
+        Some((stripped[..idx].to_string(), stripped[idx..].to_string()))
+    } else {
+        Some((stripped.to_string(), "/".to_string()))
+    }
+}
+
 pub fn https_request(
     method: &str,
     host: &str,
     path: &str,
     headers: &[String],
     body: &[u8],
+) -> Option<(u32, Vec<u8>)> {
+    https_request_with_timeout(method, host, path, headers, body, 5000)
+}
+
+#[cfg(target_os = "windows")]
+pub fn https_request_with_timeout(
+    method: &str,
+    host: &str,
+    path: &str,
+    headers: &[String],
+    body: &[u8],
+    timeout_ms: u32,
 ) -> Option<(u32, Vec<u8>)> {
     unsafe {
         let agent = to_wide("ChronoKeep/1.0");
@@ -179,8 +212,8 @@ pub fn https_request(
         if h_session.is_null() {
             return None;
         }
-        // TODO: Ajustar timeouts de envio e resposta para uploads maiores de saves em uplinks lentos (ex: 60s ou 120s)
-        WinHttpSetTimeouts(h_session, 3000, 3000, 5000, 5000);
+        let t = timeout_ms as i32;
+        WinHttpSetTimeouts(h_session, 5000, 5000, t, t);
 
         let host_w = to_wide(host);
         let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -205,6 +238,14 @@ pub fn https_request(
             WinHttpCloseHandle(h_session);
             return None;
         }
+
+        let redirect_policy: DWORD = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+        WinHttpSetOption(
+            h_req,
+            WINHTTP_OPTION_REDIRECT_POLICY,
+            &redirect_policy as *const _ as *const c_void,
+            std::mem::size_of::<DWORD>() as DWORD,
+        );
 
         for hdr in headers {
             let hdr_w = to_wide(hdr);
@@ -238,6 +279,37 @@ pub fn https_request(
             null_mut(),
         );
 
+        // Se redirecionado e precisamos capturar Location explicitamente
+        if (300..400).contains(&status_code) {
+            let mut loc_len: DWORD = 0;
+            WinHttpQueryHeaders(
+                h_req,
+                WINHTTP_QUERY_LOCATION,
+                null(),
+                null_mut(),
+                &mut loc_len,
+                null_mut(),
+            );
+            if loc_len > 0 {
+                let mut loc_buf = vec![0u16; (loc_len / 2) as usize];
+                if WinHttpQueryHeaders(
+                    h_req,
+                    WINHTTP_QUERY_LOCATION,
+                    null(),
+                    loc_buf.as_mut_ptr() as *mut c_void,
+                    &mut loc_len,
+                    null_mut(),
+                ) != 0 {
+                    let loc_str = String::from_utf16_lossy(&loc_buf);
+                    let trimmed = loc_str.trim_matches('\0').trim();
+                    WinHttpCloseHandle(h_req);
+                    WinHttpCloseHandle(h_conn);
+                    WinHttpCloseHandle(h_session);
+                    return Some((status_code, trimmed.as_bytes().to_vec()));
+                }
+            }
+        }
+
         let mut resp_bytes = Vec::new();
         loop {
             let mut avail: DWORD = 0;
@@ -267,12 +339,56 @@ pub fn https_request(
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn https_request(
+pub fn https_request_with_timeout(
     _method: &str,
     _host: &str,
     _path: &str,
     _headers: &[String],
     _body: &[u8],
+    _timeout_ms: u32,
 ) -> Option<(u32, Vec<u8>)> {
     None
 }
+
+pub fn https_download_url(url: &str, timeout_ms: u32) -> Option<(u32, Vec<u8>)> {
+    let mut current_url = url.to_string();
+    for _ in 0..5 {
+        let (host, path) = parse_url(&current_url)?;
+        let headers = vec![
+            "User-Agent: ChronoKeep-Updater/1.0".to_string(),
+            "Accept: */*".to_string(),
+        ];
+        let (status, data) = https_request_with_timeout("GET", &host, &path, &headers, &[], timeout_ms)?;
+        if (300..400).contains(&status) {
+            let loc = String::from_utf8_lossy(&data);
+            let trimmed = loc.trim();
+            if !trimmed.is_empty() {
+                current_url = if trimmed.starts_with('/') {
+                    format!("https://{}{}", host, trimmed)
+                } else {
+                    trimmed.to_string()
+                };
+                continue;
+            }
+        }
+        return Some((status, data));
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_url() {
+        let (host, path) = parse_url("https://github.com/leufrasiojunior/ChronoKeep/releases").unwrap();
+        assert_eq!(host, "github.com");
+        assert_eq!(path, "/leufrasiojunior/ChronoKeep/releases");
+
+        let (host2, path2) = parse_url("http://raw.githubusercontent.com/test.json").unwrap();
+        assert_eq!(host2, "raw.githubusercontent.com");
+        assert_eq!(path2, "/test.json");
+    }
+}
+
