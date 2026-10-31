@@ -295,6 +295,12 @@ async function loadInitialData() {
         const verEl = document.getElementById("about-version");
         if (verEl) verEl.textContent = `v${sysInfo.version}`;
       }
+      const elGui = document.getElementById("sidebar-ver-gui");
+      const elDll = document.getElementById("sidebar-ver-dll");
+      const elDaemon = document.getElementById("sidebar-ver-daemon");
+      if (elGui && sysInfo.gui_version) elGui.textContent = sysInfo.gui_version;
+      if (elDll && sysInfo.dll_version) elDll.textContent = sysInfo.dll_version;
+      if (elDaemon && sysInfo.daemon_version) elDaemon.textContent = sysInfo.daemon_version;
     }
 
     const cfg = await invokeBackend("get_config");
@@ -1038,6 +1044,18 @@ async function checkForUpdates(showUserToast = false) {
         if (latestEl) latestEl.textContent = comp.latest_version || "-";
         if (badgeEl) renderUpdateBadge(badgeEl, comp.status);
 
+        // Atualiza os indicadores de versão na barra lateral
+        if (id === "gui") {
+          const el = document.getElementById("sidebar-ver-gui");
+          if (el && comp.current_version) el.textContent = comp.current_version;
+        } else if (id === "bridge") {
+          const el = document.getElementById("sidebar-ver-dll");
+          if (el && comp.current_version) el.textContent = comp.current_version;
+        } else if (id === "daemon") {
+          const el = document.getElementById("sidebar-ver-daemon");
+          if (el && comp.current_version) el.textContent = comp.current_version;
+        }
+
         if (updateBtn) {
           if (comp.status === "update_available") {
             updateBtn.style.display = "inline-flex";
@@ -1054,7 +1072,7 @@ async function checkForUpdates(showUserToast = false) {
       if (res.has_updates) {
         banner.className = "update-banner info";
         banner.style.display = "flex";
-        banner.innerHTML = `<span>🚀</span><span>Atualizações disponíveis no GitHub Release (${res.release_tag})!</span>`;
+        banner.innerHTML = `<span>🚀</span><span>Atualizações disponíveis.</span>`;
         if (btnUpdateAll) btnUpdateAll.style.display = "inline-flex";
       } else {
         banner.className = "update-banner success";
