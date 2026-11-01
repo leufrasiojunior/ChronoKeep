@@ -62,6 +62,10 @@ impl VaultStorage {
         self.app_dir(account_id, app_id).join("manifest.tsv")
     }
 
+    pub fn cloud_manifest_path(&self, account_id: u32, app_id: u32) -> PathBuf {
+        self.app_dir(account_id, app_id).join("cloud_manifest.tsv")
+    }
+
     pub fn resolve_file_disk_path(
         &self,
         account_id: u32,
@@ -154,6 +158,16 @@ impl VaultStorage {
     ) -> String {
         let (_, clean_name) = cr_proto::cloud_messages::split_root_token(clean_filename);
         let safe_rel = sanitize_rel_path(&clean_name);
+        if let Some(cloud_m) = self.load_cloud_manifest(account_id, app_id) {
+            if let Some(entry) = cloud_m.files.get(&safe_rel) {
+                if !entry.root_token.is_empty() {
+                    return entry.root_token.clone();
+                }
+            }
+            if !cloud_m.default_root_token.is_empty() {
+                return cloud_m.default_root_token;
+            }
+        }
         let manifest_raw = self.load_manifest_raw(account_id, app_id);
         if let Some(entry) = manifest_raw.files.get(&safe_rel) {
             if !entry.root_token.is_empty() {
@@ -588,12 +602,8 @@ impl VaultStorage {
         (cn_opt, files_meta)
     }
 
-    fn load_manifest_raw(&self, account_id: u32, app_id: u32) -> AppManifest {
-        let path = self.manifest_path(account_id, app_id);
-        let Ok(content) = fs::read_to_string(&path) else {
-            return AppManifest::default();
-        };
-        let parsed = cr_common::manifest::parse_manifest(&content);
+    pub fn parse_app_manifest_str(content: &str) -> AppManifest {
+        let parsed = cr_common::manifest::parse_manifest(content);
         AppManifest {
             change_number: parsed.change_number,
             app_build_id: parsed.app_build_id,
@@ -619,17 +629,7 @@ impl VaultStorage {
         }
     }
 
-    pub fn save_manifest(
-        &self,
-        account_id: u32,
-        app_id: u32,
-        manifest: &AppManifest,
-    ) -> std::io::Result<()> {
-        let dir = self.app_dir(account_id, app_id);
-        fs::create_dir_all(&dir)?;
-        let path = self.manifest_path(account_id, app_id);
-        let tmp_path = path.with_extension("tsv.tmp");
-
+    pub fn serialize_app_manifest(manifest: &AppManifest) -> String {
         let data = cr_common::manifest::ManifestData {
             change_number: manifest.change_number,
             app_build_id: manifest.app_build_id,
@@ -661,9 +661,34 @@ impl VaultStorage {
                 })
                 .collect(),
         };
+        cr_common::manifest::serialize_manifest(&data)
+    }
 
-        let out = cr_common::manifest::serialize_manifest(&data);
+    pub fn load_manifest_raw(&self, account_id: u32, app_id: u32) -> AppManifest {
+        let path = self.manifest_path(account_id, app_id);
+        let Ok(content) = fs::read_to_string(&path) else {
+            return AppManifest::default();
+        };
+        Self::parse_app_manifest_str(&content)
+    }
 
+    pub fn load_cloud_manifest(&self, account_id: u32, app_id: u32) -> Option<AppManifest> {
+        let path = self.cloud_manifest_path(account_id, app_id);
+        let content = fs::read_to_string(&path).ok()?;
+        Some(Self::parse_app_manifest_str(&content))
+    }
+
+    pub fn save_cloud_manifest(
+        &self,
+        account_id: u32,
+        app_id: u32,
+        manifest: &AppManifest,
+    ) -> std::io::Result<()> {
+        let dir = self.app_dir(account_id, app_id);
+        fs::create_dir_all(&dir)?;
+        let path = self.cloud_manifest_path(account_id, app_id);
+        let tmp_path = path.with_extension("tsv.tmp");
+        let out = Self::serialize_app_manifest(manifest);
         {
             let mut file = File::create(&tmp_path)?;
             file.write_all(out.as_bytes())?;
@@ -671,6 +696,65 @@ impl VaultStorage {
         }
         fs::rename(&tmp_path, &path)?;
         Ok(())
+    }
+
+    pub fn save_manifest(
+        &self,
+        account_id: u32,
+        app_id: u32,
+        manifest: &AppManifest,
+    ) -> std::io::Result<()> {
+        let dir = self.app_dir(account_id, app_id);
+        fs::create_dir_all(&dir)?;
+        let path = self.manifest_path(account_id, app_id);
+        let tmp_path = path.with_extension("tsv.tmp");
+        let out = Self::serialize_app_manifest(manifest);
+        {
+            let mut file = File::create(&tmp_path)?;
+            file.write_all(out.as_bytes())?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
+    }
+
+    /// Promotes `cloud_manifest.tsv` into local `manifest.tsv` (`local_cn = cloud_cn`) ONLY when
+    /// 100% of files declared in `cloud_manifest` exist on disk in `vault/files/` with matching SHA-1
+    /// (opportunistically seeding from the game's local path if an identical SHA-1 already exists locally).
+    pub fn try_promote_cloud_manifest_if_complete(&self, account_id: u32, app_id: u32) -> bool {
+        let Some(cloud_m) = self.load_cloud_manifest(account_id, app_id) else {
+            return false;
+        };
+        let local_m = self.load_manifest_raw(account_id, app_id);
+        if cloud_m.change_number <= local_m.change_number && self.manifest_path(account_id, app_id).exists() {
+            return false;
+        }
+
+        for (rel_key, rec) in &cloud_m.files {
+            let vault_has_exact = self
+                .read_save_file(account_id, app_id, rel_key)
+                .map(|b| b.len() as u64 == rec.raw_size && sha1_digest(&b) == rec.sha1)
+                .unwrap_or(false);
+
+            if vault_has_exact {
+                continue;
+            }
+
+            // Se o arquivo local do jogo (AutoCloud ou userdata/remote) já tiver exatamente o mesmo SHA-1,
+            // copia para o Vault sem precisar baixar novamente da nuvem.
+            let seeded_from_local = self
+                .resolve_autocloud_local_path(account_id, app_id, &rec.root_token, rel_key)
+                .and_then(|lp| fs::read(lp).ok())
+                .filter(|b| b.len() as u64 == rec.raw_size && sha1_digest(b) == rec.sha1)
+                .and_then(|b| self.write_save_file(account_id, app_id, rel_key, &b).ok())
+                .is_some();
+
+            if !seeded_from_local {
+                return false;
+            }
+        }
+
+        self.save_manifest(account_id, app_id, &cloud_m).is_ok()
     }
 
     pub fn write_save_file(

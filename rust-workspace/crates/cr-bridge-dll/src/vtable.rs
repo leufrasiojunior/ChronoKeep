@@ -2,11 +2,18 @@
 //! Intercepts Slots 4, 5, 7, and 8 to redirect `Cloud.*` RPCs for registered namespace AppIDs
 //! to `cr-service.exe`.
 
-use crate::ipc;
+use crate::ipc::{self, RpcForwardResult};
 use crate::scanner::{resolve_steamclient_symbols, SteamClientSymbols};
 use crate::{get_account_id, get_service_port, get_steam_path, is_namespace_app, log_line, set_account_id};
-use cr_proto::cloud_messages::{extract_app_id, is_handled_cloud_rpc, RPC_EXIT_SYNC};
+use cr_proto::cloud_messages::{
+    extract_app_id, is_handled_cloud_rpc, ERESULT_FAIL, RPC_EXIT_SYNC,
+};
 use cr_proto::wire::{find_field, parse_message};
+
+#[inline]
+fn is_valve_system_app(app_id: u32) -> bool {
+    matches!(app_id, 0 | 7 | 760 | 241100 | 241300)
+}
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -215,8 +222,8 @@ unsafe extern "C" fn hooked_slot4(
 
     let fields = parse_message(&req_bytes);
     let app_id = extract_app_id(method, &fields);
-    if app_id == 0 || !is_namespace_app(app_id) {
-        if app_id != 0 {
+    if is_valve_system_app(app_id) || !is_namespace_app(app_id) {
+        if !is_valve_system_app(app_id) {
             log_line(&format!(
                 "[Slot4] PASSTHROUGH {} app={} (não é namespace app -> enviado para a Valve)",
                 method, app_id
@@ -229,15 +236,26 @@ unsafe extern "C" fn hooked_slot4(
     let port = get_service_port();
     let account_id = get_account_id();
 
-    let Some((eresult, resp_bytes)) =
-        ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes)
-    else {
-        log_line(&format!(
-            "[Slot4] {} app={} falhou ao contatar cr-service -> passthrough",
-            method, app_id
-        ));
-        return orig(thisptr, method_name, req_body, resp_body, flags);
-    };
+    let (eresult, resp_bytes) =
+        match ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes) {
+            RpcForwardResult::Handled(er, bytes) => (er, bytes),
+            RpcForwardResult::UnhandledPassthrough => {
+                return orig(thisptr, method_name, req_body, resp_body, flags);
+            }
+            RpcForwardResult::TransportError => {
+                // Isolamento estrito de namespace: nunca encaminhar AppID gerenciado (stplug-in/lua) à Valve!
+                log_line(&format!(
+                    "[Slot4] ERRO IPC com chrono-daemon em {} app={} -> retornando ERESULT_FAIL local",
+                    method, app_id
+                ));
+                if !flags.is_null() {
+                    *flags.add(2) = 1;
+                    *flags.add(3) = ERESULT_FAIL;
+                    *flags.add(4) = 0;
+                }
+                return true;
+            }
+        };
 
     if !resp_body.is_null() && !resp_bytes.is_empty() {
         if !parse_into_body(resp_body, &resp_bytes) {
@@ -293,8 +311,8 @@ unsafe extern "C" fn hooked_slot5(
 
     let fields = parse_message(&req_bytes);
     let app_id = extract_app_id(method, &fields);
-    if app_id == 0 || !is_namespace_app(app_id) {
-        if app_id != 0 {
+    if is_valve_system_app(app_id) || !is_namespace_app(app_id) {
+        if !is_valve_system_app(app_id) {
             log_line(&format!(
                 "[Slot5] PASSTHROUGH {} app={} (não é namespace app -> enviado para a Valve)",
                 method, app_id
@@ -325,21 +343,27 @@ unsafe extern "C" fn hooked_slot5(
     let port = get_service_port();
     let account_id = get_account_id();
 
-    let Some((eresult, resp_bytes)) =
-        ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes)
-    else {
-        log_line(&format!(
-            "[Slot5] {} app={} falhou ao contatar cr-service -> passthrough",
-            method, app_id
-        ));
-        return orig(thisptr, method_name, request_msg, response_msg, flags);
-    };
-
     let resp_hdr = *((response_msg as usize + 40) as *const *mut std::ffi::c_void);
     let resp_body = *((response_msg as usize + 48) as *const *mut std::ffi::c_void);
     if resp_hdr.is_null() || resp_body.is_null() {
-        return orig(thisptr, method_name, request_msg, response_msg, flags);
+        return false;
     }
+
+    let (eresult, resp_bytes) =
+        match ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes) {
+            RpcForwardResult::Handled(er, bytes) => (er, bytes),
+            RpcForwardResult::UnhandledPassthrough => {
+                return orig(thisptr, method_name, request_msg, response_msg, flags);
+            }
+            RpcForwardResult::TransportError => {
+                // Isolamento estrito de namespace: nunca vazar AppID gerenciado para a Valve!
+                log_line(&format!(
+                    "[Slot5] ERRO IPC com chrono-daemon em {} app={} -> retornando ERESULT_FAIL local",
+                    method, app_id
+                ));
+                (ERESULT_FAIL, Vec::new())
+            }
+        };
 
     if !resp_bytes.is_empty() && !parse_into_body(resp_body, &resp_bytes) {
         log_line(&format!(
@@ -391,7 +415,7 @@ unsafe extern "C" fn hooked_slot7(
     if let Some(bytes) = serialize_body(body_obj) {
         let fields = parse_message(&bytes);
         let app_id = extract_app_id(method, &fields);
-        if app_id != 0 && is_namespace_app(app_id) {
+        if !is_valve_system_app(app_id) && is_namespace_app(app_id) {
             if method == RPC_EXIT_SYNC {
                 return orig(thisptr, method_name, body_obj, flags);
             }
@@ -420,7 +444,7 @@ unsafe extern "C" fn hooked_slot8(
     if let Some(bytes) = serialize_body(body_obj) {
         let fields = parse_message(&bytes);
         let app_id = extract_app_id(method, &fields);
-        if app_id != 0 && is_namespace_app(app_id) {
+        if !is_valve_system_app(app_id) && is_namespace_app(app_id) {
             if method == RPC_EXIT_SYNC {
                 return orig(thisptr, method_name, request_msg);
             }

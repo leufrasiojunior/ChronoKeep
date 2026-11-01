@@ -545,7 +545,7 @@ pub unsafe extern "C" fn CK_DispatchCloudRpc(
         get_account_id()
     };
 
-    let Some((res_code, resp_bytes)) =
+    let ipc::RpcForwardResult::Handled(res_code, resp_bytes) =
         ipc::forward_rpc(port, &steam_path, method_str, app_id, eff_acct, req_slice)
     else {
         return false;
