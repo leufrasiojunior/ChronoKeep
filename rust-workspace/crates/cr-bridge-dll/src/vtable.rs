@@ -236,6 +236,11 @@ unsafe extern "C" fn hooked_slot4(
     let port = get_service_port();
     let account_id = get_account_id();
 
+    crate::log_debug(&format!(
+        "[Slot4] RPC interceptada: method={} app={} acct={} req_bytes={}B",
+        method, app_id, account_id, req_bytes.len()
+    ));
+
     let (eresult, resp_bytes) =
         match ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes) {
             RpcForwardResult::Handled(er, bytes) => (er, bytes),
@@ -343,6 +348,11 @@ unsafe extern "C" fn hooked_slot5(
     let port = get_service_port();
     let account_id = get_account_id();
 
+    crate::log_debug(&format!(
+        "[Slot5] RPC interceptada: method={} app={} acct={} req_bytes={}B",
+        method, app_id, account_id, req_bytes.len()
+    ));
+
     let resp_hdr = *((response_msg as usize + 40) as *const *mut std::ffi::c_void);
     let resp_body = *((response_msg as usize + 48) as *const *mut std::ffi::c_void);
     if resp_hdr.is_null() || resp_body.is_null() {
@@ -416,6 +426,7 @@ unsafe extern "C" fn hooked_slot7(
         let fields = parse_message(&bytes);
         let app_id = extract_app_id(method, &fields);
         if !is_valve_system_app(app_id) && is_namespace_app(app_id) {
+            crate::log_debug(&format!("[Slot7] Cloud RPC bloqueada para a Valve: method={} app={}", method, app_id));
             if method == RPC_EXIT_SYNC {
                 return orig(thisptr, method_name, body_obj, flags);
             }
@@ -445,6 +456,7 @@ unsafe extern "C" fn hooked_slot8(
         let fields = parse_message(&bytes);
         let app_id = extract_app_id(method, &fields);
         if !is_valve_system_app(app_id) && is_namespace_app(app_id) {
+            crate::log_debug(&format!("[Slot8] Cloud RPC bloqueada para a Valve: method={} app={}", method, app_id));
             if method == RPC_EXIT_SYNC {
                 return orig(thisptr, method_name, request_msg);
             }

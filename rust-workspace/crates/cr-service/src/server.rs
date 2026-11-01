@@ -256,7 +256,13 @@ pub fn handle_connection(
             };
 
             if let Ok(mut guard) = engine.lock() {
-                guard.store_uploaded_blob(account_id, app_id, clean_filename, final_bytes);
+                guard.store_uploaded_blob(account_id, app_id, clean_filename.clone(), final_bytes.clone());
+            }
+            if crate::lifecycle::is_debug_mode() {
+                crate::lifecycle::log_debug(
+                    &log_path,
+                    &format!("PUT /upload/ blob gravado no cofre: app={} acct={} file='{}' bytes={}B", app_id, account_id, clean_filename, final_bytes.len()),
+                );
             }
             let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"");
             let _ = stream.shutdown(std::net::Shutdown::Write);
@@ -279,6 +285,20 @@ pub fn handle_connection(
                 app_id,
                 &clean_filename,
             );
+
+            if crate::lifecycle::is_debug_mode() {
+                crate::lifecycle::log_debug(
+                    &log_path,
+                    &format!(
+                        "GET /download/ blob: app={} acct={} file='{}' (encontrado={}, bytes={})",
+                        app_id,
+                        account_id,
+                        clean_filename,
+                        maybe_data.is_some(),
+                        maybe_data.as_ref().map(|d| d.len()).unwrap_or(0)
+                    ),
+                );
+            }
 
             if let Some(data) = maybe_data {
                 log_msg(

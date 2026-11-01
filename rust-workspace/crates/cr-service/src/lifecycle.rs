@@ -135,7 +135,33 @@ pub fn set_debug_mode(enabled: bool) {
 }
 
 pub fn log_msg(log_path: &Path, msg: &str) {
-    let line = format!("[{}][chrono-daemon] {}\r\n", get_local_timestamp_str(), msg);
+    let (tag, clean_msg) = if let Some(rest) = msg.strip_prefix("[DEBUG]") {
+        ("[DEBUG]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[WARN]") {
+        ("[WARN]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[WARNING]") {
+        ("[WARN]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[AVISO]") {
+        ("[WARN]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[ERROR]") {
+        ("[ERROR]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[ERRO]") {
+        ("[ERROR]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[FALHA]") {
+        ("[ERROR]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[INFO]") {
+        ("[INFO]", rest.trim())
+    } else {
+        let lower = msg.to_ascii_lowercase();
+        if lower.contains("aviso") || lower.contains("warn") {
+            ("[WARN]", msg.trim())
+        } else if lower.contains("erro") || lower.contains("falha") || lower.contains("error") {
+            ("[ERROR]", msg.trim())
+        } else {
+            ("[INFO]", msg.trim())
+        }
+    };
+    let line = format!("[{}][chrono-daemon]{} {}\r\n", get_local_timestamp_str(), tag, clean_msg);
     print!("{}", line);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = f.write_all(line.as_bytes());
@@ -145,7 +171,8 @@ pub fn log_msg(log_path: &Path, msg: &str) {
 
 pub fn log_debug(log_path: &Path, msg: &str) {
     if is_debug_mode() {
-        let line = format!("[{}][chrono-daemon][DEBUG] {}\r\n", get_local_timestamp_str(), msg);
+        let clean = msg.strip_prefix("[DEBUG]").map(|s| s.trim()).unwrap_or_else(|| msg.trim());
+        let line = format!("[{}][chrono-daemon][DEBUG] {}\r\n", get_local_timestamp_str(), clean);
         print!("{}", line);
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
             let _ = f.write_all(line.as_bytes());
