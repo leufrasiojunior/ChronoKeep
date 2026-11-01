@@ -403,7 +403,16 @@
                   </svg>
                 </div>
                 <div class="card-text">
-                  <div class="card-name" data-i18n="providers.upload_limit_title">Limite de Upload Manual por Arquivo</div>
+                  <div class="card-name card-name-row">
+                    <span data-i18n="providers.upload_limit_title">Limite de Upload Manual por Arquivo</span>
+                    <button type="button" class="info-help-btn" id="btn-upload-limit-help" data-i18n-title="common.view_details" title="Ver mais detalhes" aria-label="Ver mais detalhes">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                      </svg>
+                    </button>
+                  </div>
                   <div class="card-desc" data-i18n="providers.upload_limit_desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
                 </div>
               </div>
@@ -999,6 +1008,45 @@
       <div class="dialog-footer">
         <button id="btn-uninstall-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
         <button id="btn-uninstall-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;" data-i18n="modal.uninstall_confirm">Sim, Desinstalar ChronoKeep</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ContentDialog: Informações do Limite de Upload Manual -->
+  <div id="upload-limit-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-limit-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="upload-limit-title" class="dialog-title" data-i18n="modal.upload_limit_title">Limite de Upload Manual por Arquivo</h2>
+        <p class="dialog-subtitle" data-i18n="modal.upload_limit_subtitle">Como funciona e para que serve esta configuração</p>
+      </div>
+
+      <div class="dialog-body">
+        <p data-i18n-html="modal.upload_limit_p1_html">Esta configuração define o <strong>tamanho individual máximo</strong> aceito por arquivo durante a sincronização manual e upload de órfãos para a nuvem (Google Drive).</p>
+
+        <div class="dialog-callout safe">
+          <div class="callout-icon">🛡️</div>
+          <div class="callout-text">
+            <strong data-i18n="modal.upload_limit_safe_title">Seus saves locais nunca são perdidos:</strong>
+            <p data-i18n-html="modal.upload_limit_safe_desc_html">Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.</p>
+          </div>
+        </div>
+
+        <div class="dialog-callout warning">
+          <div class="callout-icon">💡</div>
+          <div class="callout-text">
+            <strong data-i18n="modal.upload_limit_why_title">Por que existe este limite?</strong>
+            <p data-i18n="modal.upload_limit_why_desc">Serve como barreira de segurança para evitar que pastas de saves enviem acidentalmente arquivos gigantescos (como mods pesados, texturas 4K, instaladores ou ISOs) que consumiriam todo o espaço do seu Google Drive ou congelariam a rede.</p>
+          </div>
+        </div>
+
+        <p style="margin-top: 4px; font-size: 12px; color: var(--text-secondary); line-height: 1.4;" data-i18n-html="modal.upload_limit_ingame_note_html"><strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-upload-limit-close" class="btn btn-primary" data-i18n="common.understand">Entendi</button>
       </div>
     </div>
   </div>

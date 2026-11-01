@@ -15,6 +15,8 @@ const CHRONO_LOCALES = {
     "common.save_error": "Error saving settings.",
     "common.open_in_explorer": "Open folder in Explorer",
     "common.cancel": "Cancel",
+    "common.view_details": "View details",
+    "common.understand": "Got it",
     "common.installed": "Installed",
     "common.not_installed": "Not installed",
     "common.unknown_error": "Unknown error",
@@ -285,7 +287,18 @@ const CHRONO_LOCALES = {
     "modal.uninstall_restore_desc_html": "Copies the most recent saves preserved in the Vault directly back to <code>Steam\\userdata\\...\\remote</code> so you can keep playing locally on Steam.",
     "modal.uninstall_choice": "Are you sure you want to uninstall ChronoKeep from Steam?",
     "modal.uninstall_confirm": "Yes, Uninstall ChronoKeep",
-    "modal.uninstall_working": "Uninstalling and restoring..."
+    "modal.uninstall_working": "Uninstalling and restoring...",
+
+    "modal.upload_limit_title": "Manual Upload Limit per File",
+    "modal.upload_limit_subtitle": "How this setting works and what it does",
+    "modal.upload_limit_p1_html": "This setting defines the <strong>maximum individual size</strong> accepted for each save file during manual synchronization and orphan save uploads to the cloud (Google Drive).",
+    "modal.upload_limit_safe_title": "Your local saves are never lost:",
+    "modal.upload_limit_safe_desc": "If a save file exceeds the selected limit (e.g. 512 MB), it will <strong>not be discarded or deleted</strong>. It will remain securely stored and preserved on your local drive in the ChronoKeep <strong>Vault</strong>. Only the cloud upload for that specific file is bypassed.",
+    "modal.upload_limit_safe_desc_html": "If a save file exceeds the selected limit (e.g. 512 MB), it will <strong>not be discarded or deleted</strong>. It will remain securely stored and preserved on your local drive in the ChronoKeep <strong>Vault</strong>. Only the cloud upload for that specific file is bypassed.",
+    "modal.upload_limit_why_title": "Why does this limit exist?",
+    "modal.upload_limit_why_desc": "It acts as a safety guard to prevent save folders from accidentally uploading huge unintended files (such as heavy mods, 4K texture packs, installers, or ISOs) that would exhaust your Google Drive storage quota or freeze network queues.",
+    "modal.upload_limit_ingame_note": "Note on games: During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability.",
+    "modal.upload_limit_ingame_note_html": "<strong>Note on games:</strong> During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability."
   },
 
   "pt-BR": {
@@ -298,6 +311,8 @@ const CHRONO_LOCALES = {
     "common.save_error": "Erro ao salvar.",
     "common.open_in_explorer": "Abrir pasta no Explorer",
     "common.cancel": "Cancelar",
+    "common.view_details": "Ver mais detalhes",
+    "common.understand": "Entendi",
     "common.installed": "Instalado",
     "common.not_installed": "Não instalado",
     "common.unknown_error": "Falha desconhecida",
@@ -568,7 +583,18 @@ const CHRONO_LOCALES = {
     "modal.uninstall_restore_desc_html": "Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\\userdata\\...\\remote</code> para que você continue com seu progresso na Steam local.",
     "modal.uninstall_choice": "Tem certeza de que deseja desinstalar o ChronoKeep da Steam?",
     "modal.uninstall_confirm": "Sim, Desinstalar ChronoKeep",
-    "modal.uninstall_working": "Desinstalando e restaurando..."
+    "modal.uninstall_working": "Desinstalando e restaurando...",
+
+    "modal.upload_limit_title": "Limite de Upload Manual por Arquivo",
+    "modal.upload_limit_subtitle": "Como funciona e para que serve esta configuração",
+    "modal.upload_limit_p1_html": "Esta configuração define o <strong>tamanho individual máximo</strong> aceito por arquivo durante a sincronização manual e upload de órfãos para a nuvem (Google Drive).",
+    "modal.upload_limit_safe_title": "Seus saves locais nunca são perdidos:",
+    "modal.upload_limit_safe_desc": "Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.",
+    "modal.upload_limit_safe_desc_html": "Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.",
+    "modal.upload_limit_why_title": "Por que existe este limite?",
+    "modal.upload_limit_why_desc": "Serve como uma barreira de segurança para evitar que pastas de saves enviem acidentalmente arquivos gigantescos (como mods pesados, texturas 4K, instaladores ou ISOs) que consumiriam todo o espaço do seu Google Drive ou congelariam a rede.",
+    "modal.upload_limit_ingame_note": "Nota: Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.",
+    "modal.upload_limit_ingame_note_html": "<strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade."
   }
 };
 
@@ -622,7 +648,14 @@ function applyI18nToDOM() {
 
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
-    if (key) el.textContent = t(key);
+    if (key) {
+      const val = t(key);
+      if (typeof val === "string" && val.includes("<") && val.includes(">")) {
+        el.innerHTML = val;
+      } else {
+        el.textContent = val;
+      }
+    }
   });
 
   document.querySelectorAll("[data-i18n-html]").forEach((el) => {

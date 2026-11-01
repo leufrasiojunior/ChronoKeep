@@ -238,6 +238,42 @@ function openUninstallModal() {
   };
 }
 
+function setupUploadLimitHelpModal() {
+  const btnHelp = document.getElementById("btn-upload-limit-help");
+  const modal = document.getElementById("upload-limit-modal");
+  const btnClose = document.getElementById("btn-upload-limit-close");
+
+  if (!btnHelp || !modal || !btnClose) return;
+
+  const openModal = () => {
+    modal.style.display = "flex";
+  };
+
+  const closeModal = () => {
+    modal.style.display = "none";
+  };
+
+  btnHelp.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openModal();
+  });
+
+  btnClose.addEventListener("click", closeModal);
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && modal.style.display === "flex") {
+      closeModal();
+    }
+  });
+}
+
 // --------------------------------------------------------------------------
 // Navigation (NavigationView)
 // --------------------------------------------------------------------------
@@ -799,6 +835,9 @@ function setupActionHandlers() {
 
   // Uninstall Action
   document.getElementById("btn-open-uninstall-modal")?.addEventListener("click", openUninstallModal);
+
+  // Manual Upload Limit Help Modal
+  setupUploadLimitHelpModal();
 }
 
 // --------------------------------------------------------------------------
