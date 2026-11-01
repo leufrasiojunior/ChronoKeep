@@ -69,7 +69,7 @@ function applyLanguage(pref, refreshDynamic = true) {
     const resolved = window.ChronoI18n.resolveLocale(normalizedPref, osLocale);
     window.ChronoI18n.setLocale(resolved);
     window.ChronoI18n.applyI18nToDOM();
-    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v0.1.15";
+    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v0.1.16";
     const vStr = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
     const heroVerEl = document.getElementById("hero-version");
     if (heroVerEl) heroVerEl.textContent = t("home.hero_version", { version: vStr });
@@ -191,7 +191,16 @@ function openUninstallModal() {
   const btnCancel = document.getElementById("btn-uninstall-cancel");
   const btnConfirm = document.getElementById("btn-uninstall-confirm");
   const checkRestore = document.getElementById("check-restore-saves-on-uninstall");
+  const vaultLocEl = document.getElementById("uninstall-vault-location");
   if (!modal || !btnCancel || !btnConfirm) return;
+
+  if (checkRestore) {
+    checkRestore.checked = false;
+  }
+  if (vaultLocEl) {
+    const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+    vaultLocEl.textContent = inputVault || appConfig.vault_dir || "—";
+  }
 
   btnConfirm.disabled = false;
   btnConfirm.textContent = t("modal.uninstall_confirm");
@@ -210,7 +219,7 @@ function openUninstallModal() {
   btnConfirm.onclick = async () => {
     btnConfirm.disabled = true;
     btnConfirm.textContent = t("modal.uninstall_working");
-    const restoreSaves = checkRestore ? checkRestore.checked : true;
+    const restoreSaves = checkRestore ? checkRestore.checked : false;
 
     try {
       const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -272,6 +281,144 @@ function setupUploadLimitHelpModal() {
       closeModal();
     }
   });
+}
+
+window.openExternalUrl = (url) => {
+  if (url) {
+    invokeBackend("open_url", { url }).catch(() => {});
+  }
+};
+
+let currentDependenciesReport = null;
+
+async function checkAndShowDependenciesModal(onProceed = null) {
+  const modal = document.getElementById("dependencies-modal");
+  const listEl = document.getElementById("dep-items-list");
+  const btnRefresh = document.getElementById("btn-dep-refresh");
+  const btnCancel = document.getElementById("btn-dep-cancel");
+  const btnProceed = document.getElementById("btn-dep-proceed");
+  const bannerCallout = document.getElementById("dep-banner-callout");
+  const bannerIcon = document.getElementById("dep-banner-icon");
+  const bannerTitle = document.getElementById("dep-banner-title");
+  const bannerDesc = document.getElementById("dep-banner-desc");
+
+  if (!modal || !listEl) return;
+
+  const loadReport = async () => {
+    listEl.innerHTML = `<div style="text-align: center; padding: 24px; color: var(--text-secondary);">${t("common.command_sent")}</div>`;
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const report = await invokeBackend("check_system_dependencies", { steamDir: steamDir || null });
+      currentDependenciesReport = report;
+      renderReport(report);
+    } catch (e) {
+      listEl.innerHTML = `<div style="color: var(--error-color); padding: 12px;">Erro ao verificar dependências: ${e}</div>`;
+    }
+  };
+
+  const renderReport = (report) => {
+    if (report.has_missing_required) {
+      bannerCallout.className = "dialog-callout warning";
+      bannerIcon.textContent = "❌";
+      bannerTitle.textContent = t("modal.dep_banner_missing_req_title");
+      bannerDesc.textContent = t("modal.dep_banner_missing_req_desc");
+    } else if (report.has_missing_third_party) {
+      bannerCallout.className = "dialog-callout warning";
+      bannerIcon.textContent = "⚠️";
+      bannerTitle.textContent = t("modal.dep_banner_tp_warn_title");
+      bannerDesc.textContent = t("modal.dep_banner_tp_warn_desc");
+    } else {
+      bannerCallout.className = "dialog-callout safe";
+      bannerIcon.textContent = "✓";
+      bannerTitle.textContent = t("modal.dep_banner_all_ok_title");
+      bannerDesc.textContent = t("modal.dep_banner_all_ok_desc");
+    }
+
+    listEl.innerHTML = report.items.map((item) => {
+      const iconColor = item.is_installed ? "green" : (item.is_required ? "orange" : "cyan");
+      const pillClass = item.is_installed ? "active" : (item.is_required ? "error" : "warning");
+      let actionBtn = "";
+
+      if (item.action_type === "download" || item.action_type === "search") {
+        const btnStyle = item.action_type === "download" ? "btn-primary" : "btn-secondary";
+        actionBtn = `
+          <button type="button" class="btn ${btnStyle} btn-sm" style="margin-top: 8px; font-size: 11.5px; padding: 5px 12px;" onclick="window.openExternalUrl('${item.action_target}')">
+            ${item.action_label}
+          </button>
+        `;
+      }
+
+      const iconPath = item.is_installed
+        ? '<polyline points="20 6 9 17 4 12"></polyline>'
+        : (item.is_required
+          ? '<circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line>'
+          : '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>');
+
+      return `
+        <div class="settings-card" style="padding: 12px 14px; margin: 0; background: var(--bg-subtle); border-radius: var(--radius-sm); border: 1px solid var(--card-border);">
+          <div class="card-left" style="gap: 12px; align-items: flex-start; width: 100%;">
+            <div class="card-icon-box ${iconColor}" style="margin-top: 2px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                ${iconPath}
+              </svg>
+            </div>
+            <div class="card-text" style="flex: 1;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+                <span class="card-name" style="font-weight: 600;">${item.name}</span>
+                <span class="status-pill ${pillClass}">
+                  ${item.status_text}
+                </span>
+              </div>
+              <div class="card-desc" style="margin-top: 4px; line-height: 1.45;">${item.description}</div>
+              ${actionBtn}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    if (onProceed) {
+      btnProceed.style.display = "inline-flex";
+      if (!report.can_install) {
+        btnProceed.disabled = true;
+        btnProceed.title = t("modal.dep_banner_missing_req_desc");
+      } else {
+        btnProceed.disabled = false;
+        btnProceed.title = "";
+      }
+    } else {
+      btnProceed.style.display = "none";
+    }
+  };
+
+  const closeModal = () => {
+    modal.style.display = "none";
+    if (btnRefresh) btnRefresh.onclick = null;
+    if (btnCancel) btnCancel.onclick = null;
+    if (btnProceed) btnProceed.onclick = null;
+  };
+
+  modal.style.display = "flex";
+  await loadReport();
+
+  if (btnRefresh) btnRefresh.onclick = () => loadReport();
+  if (btnCancel) btnCancel.onclick = closeModal;
+
+  if (btnProceed) {
+    btnProceed.onclick = () => {
+      if (currentDependenciesReport && currentDependenciesReport.can_install) {
+        closeModal();
+        if (typeof onProceed === "function") {
+          onProceed();
+        }
+      }
+    };
+  }
+
+  modal.onclick = (e) => {
+    if (e.target === modal) closeModal();
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -587,13 +734,15 @@ function applyTheme(theme) {
 // Actions & Handlers
 // --------------------------------------------------------------------------
 function setupActionHandlers() {
-  // Tile: Install to Steam
-  document.getElementById("tile-install")?.addEventListener("click", () => {
+  // Helper for starting install pipeline after checks
+  const runInstallPipeline = () => {
     ensureDisclaimerAccepted(async () => {
       showToast(t("toast.installing_steam"));
       try {
+        const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+        const steamDir = inputSteam || appConfig.steam_dir;
         const res = await invokeBackend("install_chronokeep", {
-          steamDir: appConfig.steam_dir,
+          steamDir: steamDir,
           vaultDir: appConfig.vault_dir,
         });
         if (res && res.success) {
@@ -606,6 +755,30 @@ function setupActionHandlers() {
         showToast(t("toast.install_error", { error: e }));
       }
     });
+  };
+
+  // Tile: Install to Steam with Pre-flight Dependencies Check
+  document.getElementById("tile-install")?.addEventListener("click", async () => {
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const report = await invokeBackend("check_system_dependencies", { steamDir: steamDir || null });
+
+      if (report && report.all_ok) {
+        // All OK -> Proceed directly
+        runInstallPipeline();
+      } else {
+        // Missing required dependencies or third-party tool warning -> Show Dependencies Dialog
+        checkAndShowDependenciesModal(runInstallPipeline);
+      }
+    } catch (_) {
+      checkAndShowDependenciesModal(runInstallPipeline);
+    }
+  });
+
+  // Home Card: Check Dependencies Button
+  document.getElementById("btn-home-check-deps")?.addEventListener("click", () => {
+    checkAndShowDependenciesModal(runInstallPipeline);
   });
 
   // Toggle Daemon
