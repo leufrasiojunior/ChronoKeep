@@ -118,6 +118,20 @@ static SERVICE_PORT: AtomicU16 = AtomicU16::new(DEFAULT_SERVICE_PORT);
 
 static STEAM_PATH: OnceLock<Mutex<String>> = OnceLock::new();
 static NAMESPACE_APPS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+static LAST_PUSHED_SESSION: OnceLock<Mutex<(String, u32, Vec<u32>, std::time::Instant)>> =
+    OnceLock::new();
+static APPLIST_LOGGED_ONCE: AtomicBool = AtomicBool::new(false);
+
+fn last_session_store() -> &'static Mutex<(String, u32, Vec<u32>, std::time::Instant)> {
+    LAST_PUSHED_SESSION.get_or_init(|| {
+        Mutex::new((
+            String::new(),
+            0,
+            Vec::new(),
+            std::time::Instant::now() - Duration::from_secs(3600),
+        ))
+    })
+}
 
 fn steam_path_store() -> &'static Mutex<String> {
     STEAM_PATH.get_or_init(|| Mutex::new(String::new()))
@@ -313,14 +327,36 @@ fn auto_seed_local_apps(steam_path: &str) {
 }
 
 fn sync_session_with_service() {
+    sync_session_with_service_opts(false);
+}
+
+fn sync_session_with_service_opts(force: bool) {
     let steam_path = get_steam_path();
     let port = get_service_port();
     let acct = get_account_id();
-    let apps: Vec<u32> = apps_store()
+    let mut apps: Vec<u32> = apps_store()
         .lock()
         .map(|g| g.iter().copied().collect())
         .unwrap_or_default();
-    let _ = ipc::push_session_update(port, &steam_path, acct, &apps);
+    apps.sort_unstable();
+
+    if !force {
+        if let Ok(guard) = last_session_store().lock() {
+            if guard.0 == steam_path
+                && guard.1 == acct
+                && guard.2 == apps
+                && guard.3.elapsed() < Duration::from_secs(60)
+            {
+                return;
+            }
+        }
+    }
+
+    if ipc::push_session_update(port, &steam_path, acct, &apps) {
+        if let Ok(mut guard) = last_session_store().lock() {
+            *guard = (steam_path, acct, apps, std::time::Instant::now());
+        }
+    }
 }
 
 unsafe extern "system" fn worker_thread_proc(_param: *mut std::ffi::c_void) -> u32 {
@@ -543,23 +579,27 @@ pub unsafe extern "C" fn CK_RegisterAppList(app_ids: *const u32, count: u32) {
         std::slice::from_raw_parts(app_ids, count as usize)
     };
 
-    let total = if let Ok(mut guard) = apps_store().lock() {
+    let (changed, total) = if let Ok(mut guard) = apps_store().lock() {
+        let before = guard.len();
         for &id in slice {
             if id != 0 {
                 guard.insert(id);
             }
         }
-        guard.len()
+        (guard.len() != before, guard.len())
     } else {
-        0
+        (false, 0)
     };
 
-    log_line(&format!(
-        "[CK_API] AppList atualizada: +{} apps recebidos do loader (total gerenciados={})",
-        slice.len(),
-        total
-    ));
-    sync_session_with_service();
+    let first_log = !APPLIST_LOGGED_ONCE.swap(true, Ordering::AcqRel);
+    if changed || first_log {
+        log_line(&format!(
+            "[CK_API] AppList atualizada: +{} apps recebidos do loader (total gerenciados={})",
+            slice.len(),
+            total
+        ));
+    }
+    sync_session_with_service_opts(changed);
 }
 
 #[no_mangle]

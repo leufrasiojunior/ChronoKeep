@@ -232,7 +232,7 @@ impl RpcEngine {
         // Se o manifesto completo já foi enviado nesta sessão e o CN do cliente coincide com a nuvem,
         // retorna delta vazio (is_only_delta = true, 0 arquivos).
         // Isso confirma a Steam que a nuvem está 100% atualizada sem forçar rechecagem de todos os arquivos.
-        if repeat_call && (synced_cn == 0 || synced_cn >= manifest.change_number) {
+        if repeat_call && synced_cn >= manifest.change_number {
             let machine_name = std::env::var("COMPUTERNAME")
                 .unwrap_or_else(|_| "CHRONOKEEP-PC".to_string());
             let resp = build_changelist_response(
@@ -249,17 +249,16 @@ impl RpcEngine {
 
         let mut list: Vec<CloudFileRecord> = manifest.files.values().cloned().collect();
 
-        // Se o arquivo local no disco tiver exatamente o mesmo conteudo (SHA1) que o registro da nuvem,
-        // alinha o timestamp reportado a Steam com o timestamp do arquivo no disco local.
-        // Isso elimina 100% de falsos conflitos de sincronizacao quando ambos os lados sao identicos.
-        if let Some(ref sp) = self.vault.steam_path {
-            let user_remote = sp
-                .join("userdata")
-                .join(account_id.to_string())
-                .join(app_id.to_string())
-                .join("remote");
-            for f in &mut list {
-                let local_path = user_remote.join(&f.filename);
+        // Se o arquivo local no disco (em userdata/remote ou na pasta AutoCloud correspondente ao root_token)
+        // tiver exatamente o mesmo conteúdo (SHA1) que o registro da nuvem, alinha o timestamp reportado
+        // à Steam com o timestamp do disco local para eliminar falsos conflitos e downloads redundantes.
+        for f in &mut list {
+            if let Some(local_path) = self.vault.resolve_autocloud_local_path(
+                account_id,
+                app_id,
+                &f.root_token,
+                &f.filename,
+            ) {
                 if let Ok(meta) = std::fs::metadata(&local_path) {
                     if let Ok(mtime) = meta.modified() {
                         if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
@@ -473,27 +472,18 @@ impl RpcEngine {
         if let Some(sp) = sp_opt {
             let clean_name_clone = clean_name.clone();
             let bytes_clone = bytes.clone();
-            let m_bytes = std::fs::read(self.vault.manifest_path(account_id, app_id)).ok();
+            let m_path = self.vault.manifest_path(account_id, app_id);
             let lp_clone = self.log_path.clone();
             std::thread::spawn(move || {
-                let _ = crate::gdrive::sync_file_to_gdrive(
+                crate::gdrive::sync_committed_file_and_manifest(
                     &sp,
                     account_id,
                     app_id,
                     &clean_name_clone,
                     &bytes_clone,
+                    &m_path,
                     lp_clone.as_ref(),
                 );
-                if let Some(mb) = m_bytes {
-                    let _ = crate::gdrive::sync_file_to_gdrive(
-                        &sp,
-                        account_id,
-                        app_id,
-                        "manifest.tsv",
-                        &mb,
-                        lp_clone.as_ref(),
-                    );
-                }
             });
         }
 
@@ -540,29 +530,17 @@ impl RpcEngine {
             });
 
             if let Some(sp) = sp_opt {
-                let m_bytes = std::fs::read(self.vault.manifest_path(account_id, app_id)).ok();
+                let m_path = self.vault.manifest_path(account_id, app_id);
                 let lp_clone = self.log_path.clone();
                 std::thread::spawn(move || {
-                    for (rel_name, bytes) in modified {
-                        let _ = crate::gdrive::sync_file_to_gdrive(
-                            &sp,
-                            account_id,
-                            app_id,
-                            &rel_name,
-                            &bytes,
-                            lp_clone.as_ref(),
-                        );
-                    }
-                    if let Some(mb) = m_bytes {
-                        let _ = crate::gdrive::sync_file_to_gdrive(
-                            &sp,
-                            account_id,
-                            app_id,
-                            "manifest.tsv",
-                            &mb,
-                            lp_clone.as_ref(),
-                        );
-                    }
+                    crate::gdrive::sync_batch_files_and_manifest(
+                        &sp,
+                        account_id,
+                        app_id,
+                        &modified,
+                        &m_path,
+                        lp_clone.as_ref(),
+                    );
                 });
             }
         } else {
@@ -592,6 +570,25 @@ impl RpcEngine {
             }
             let _ = self.vault.save_manifest(account_id, app_id, &manifest);
             self.full_manifest_sent.insert((account_id, app_id));
+
+            let sp_opt = self.vault.steam_path.clone().or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            });
+            if let Some(sp) = sp_opt {
+                let m_path = self.vault.manifest_path(account_id, app_id);
+                let lp_clone = self.log_path.clone();
+                std::thread::spawn(move || {
+                    crate::gdrive::sync_manifest_if_changed(
+                        &sp,
+                        account_id,
+                        app_id,
+                        &m_path,
+                        lp_clone.as_ref(),
+                    );
+                });
+            }
         }
         (ERESULT_OK, Vec::new())
     }

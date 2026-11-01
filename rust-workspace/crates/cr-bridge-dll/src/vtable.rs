@@ -55,7 +55,7 @@ type Slot8Fn = unsafe extern "C" fn(
 
 type ByteSizeFn = unsafe extern "C" fn(body_obj: *mut std::ffi::c_void) -> u64;
 type SerializeToArrayFn =
-    unsafe extern "C" fn(body_obj: *mut std::ffi::c_void, buf: *mut u8, size: i32) -> usize;
+    unsafe extern "C" fn(body_obj: *mut std::ffi::c_void, buf: *mut u8, size: i32) -> u8;
 type ParseFromArrayFn =
     unsafe extern "C" fn(body_obj: *mut std::ffi::c_void, data: *const u8, size: i32) -> u8;
 
@@ -168,13 +168,8 @@ unsafe fn serialize_body(body_obj: *mut std::ffi::c_void) -> Option<Vec<u8>> {
 
     let mut buf = vec![0u8; expected_size as usize];
     let ser_fn: SerializeToArrayFn = std::mem::transmute(ser_addr);
-    let res = ser_fn(body_obj, buf.as_mut_ptr(), expected_size as i32);
-    if res == 0 {
+    if ser_fn(body_obj, buf.as_mut_ptr(), expected_size as i32) == 0 {
         return None;
-    }
-    let buf_addr = buf.as_ptr() as usize;
-    if res >= buf_addr && res <= buf_addr + buf.len() {
-        buf.truncate(res - buf_addr);
     }
     Some(buf)
 }
