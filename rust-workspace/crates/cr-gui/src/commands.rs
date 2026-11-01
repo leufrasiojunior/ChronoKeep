@@ -58,6 +58,8 @@ pub struct ConfigDto {
     pub language: String,
     #[serde(default = "default_backup_provider")]
     pub backup_provider: String,
+    #[serde(default)]
+    pub debug_mode: bool,
 }
 
 fn default_language() -> String {
@@ -203,6 +205,7 @@ pub fn get_config() -> ConfigDto {
     let mut max_upload_mb = 512;
     let mut theme = "system".to_string();
     let mut backup_provider = "gdrive".to_string();
+    let mut debug_mode = false;
 
     let ini_path = s_path.join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -220,6 +223,7 @@ pub fn get_config() -> ConfigDto {
                     "max_upload_mb" => max_upload_mb = v.parse().unwrap_or(512),
                     "theme" => theme = v.to_string(),
                     "backup_provider" if !v.is_empty() => backup_provider = v.to_string(),
+                    "debug" => debug_mode = v.eq_ignore_ascii_case("true") || v == "1",
                     _ => {}
                 }
             }
@@ -238,6 +242,7 @@ pub fn get_config() -> ConfigDto {
         theme,
         language,
         backup_provider,
+        debug_mode,
     }
 }
 
@@ -306,6 +311,7 @@ pub fn save_config(cfg: ConfigDto) -> OperationResult {
     lines.push(format!("theme={}", cfg.theme));
     lines.push(format!("language={}", normalized_lang));
     lines.push(format!("backup_provider={}", cfg.backup_provider));
+    lines.push(format!("debug={}", cfg.debug_mode));
 
     if !refresh_token.is_empty() {
         lines.push(format!("gdrive_refresh_token={}", refresh_token));
@@ -1638,6 +1644,48 @@ pub fn clear_log(log_name: String, steam_dir: Option<String>) -> OperationResult
                 "Failed to clear log file.".to_string()
             },
         }
+    }
+}
+
+#[tauri::command]
+pub fn set_debug_mode(enabled: bool, steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    let _ = cr_common::config::save_debug_mode(s_path, enabled);
+
+    // Notifica daemon em execução via HTTP
+    let port = resolve_service_port(&s_dir);
+    if check_daemon_health(port) {
+        use std::io::Write;
+        use std::net::{SocketAddr, TcpStream};
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400)) {
+            let body = if enabled { "true" } else { "false" };
+            let req = format!(
+                "POST /v1/config/debug HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                port, body.len(), body
+            );
+            let _ = stream.write_all(req.as_bytes());
+        }
+    }
+
+    OperationResult {
+        success: true,
+        message: if enabled {
+            if lang.is_pt() {
+                "Modo Debug ativado! Logs detalhados em tempo real.".to_string()
+            } else {
+                "Debug Mode enabled! Verbose logs active in real time.".to_string()
+            }
+        } else {
+            if lang.is_pt() {
+                "Modo Debug desativado.".to_string()
+            } else {
+                "Debug Mode disabled.".to_string()
+            }
+        },
     }
 }
 

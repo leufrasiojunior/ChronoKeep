@@ -95,6 +95,47 @@ pub fn is_gdrive_connected(steam_dir: &Path) -> bool {
     false
 }
 
+pub fn load_debug_mode(steam_dir: &Path) -> bool {
+    let ini_path = steam_dir.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("debug") {
+                    let val = v.trim();
+                    return val.eq_ignore_ascii_case("true") || val == "1";
+                }
+            }
+        }
+    }
+    false
+}
+
+pub fn save_debug_mode(steam_dir: &Path, enabled: bool) -> Result<(), std::io::Error> {
+    let ini_path = steam_dir.join("chronokeep.ini");
+    let content = fs::read_to_string(&ini_path).unwrap_or_default();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut found = false;
+    for line in &mut lines {
+        let trimmed = line.trim();
+        if let Some((k, _)) = trimmed.split_once('=') {
+            if k.trim().eq_ignore_ascii_case("debug") {
+                *line = format!("debug={}", enabled);
+                found = true;
+                break;
+            }
+        }
+    }
+    if !found {
+        lines.push(format!("debug={}", enabled));
+    }
+    let updated = lines.join("\r\n") + "\r\n";
+    fs::write(&ini_path, updated)
+}
+
 pub fn check_daemon_health(port: u16) -> bool {
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream};

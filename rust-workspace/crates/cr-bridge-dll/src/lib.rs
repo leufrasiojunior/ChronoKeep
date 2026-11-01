@@ -239,6 +239,22 @@ pub fn is_namespace_app(app_id: u32) -> bool {
     false
 }
 
+static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_debug_mode() -> bool {
+    DEBUG_MODE.load(Ordering::Relaxed)
+}
+
+pub fn set_debug_mode(enabled: bool) {
+    DEBUG_MODE.store(enabled, Ordering::Relaxed);
+}
+
+pub fn log_debug(msg: &str) {
+    if is_debug_mode() {
+        log_line(&format!("[DEBUG] {}", msg));
+    }
+}
+
 pub fn log_line(msg: &str) {
     let steam_dir = get_steam_path();
     let base_dir = if !steam_dir.is_empty() {
@@ -406,9 +422,24 @@ fn init_internal(normalized_path: &str, source_tag: &str) -> bool {
     let port = ipc::resolve_service_port(normalized_path);
     SERVICE_PORT.store(port, Ordering::Release);
 
+    let ini_path = Path::new(normalized_path).join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("debug") {
+                    let d = v.trim().eq_ignore_ascii_case("true") || v.trim() == "1";
+                    DEBUG_MODE.store(d, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
     log_line(&format!(
-        "=== Bridge DLL v{} inicializada [{}] (porta={}) ===",
-        env!("CARGO_PKG_VERSION"), source_tag, port
+        "=== Bridge DLL v{} inicializada [{}] (porta={}, debug={}) ===",
+        env!("CARGO_PKG_VERSION"),
+        source_tag,
+        port,
+        if is_debug_mode() { "ON" } else { "OFF" }
     ));
     log_line(&format!("Steam Path: {}", normalized_path));
 

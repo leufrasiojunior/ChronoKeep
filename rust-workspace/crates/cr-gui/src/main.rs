@@ -65,6 +65,7 @@ fn main() {
             upload_game_save,
             get_logs,
             clear_log,
+            set_debug_mode,
             open_directory,
             open_url,
             is_steam_running,

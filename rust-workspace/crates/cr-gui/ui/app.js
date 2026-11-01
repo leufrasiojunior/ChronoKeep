@@ -692,6 +692,21 @@ async function loadInitialData() {
         providerSelect.value = appConfig.backup_provider || "gdrive";
         updateProviderPanel(providerSelect.value);
       }
+
+      // Sync log debug mode and auto-refresh switches
+      const checkLogDebug = document.getElementById("check-log-debug-mode");
+      if (checkLogDebug) {
+        checkLogDebug.checked = !!appConfig.debug_mode;
+      }
+      const checkLogAuto = document.getElementById("check-log-auto-refresh");
+      if (checkLogAuto) {
+        let stored = null;
+        try {
+          stored = localStorage.getItem("chronokeep_log_autorefresh");
+        } catch (_) {}
+        checkLogAuto.checked = stored !== "false";
+        updateLogAutoRefreshState();
+      }
     } else {
       applyLanguage(appConfig.language || "system", true);
     }
@@ -982,15 +997,54 @@ function setupActionHandlers() {
   });
 
   // Logs actions
-  document.getElementById("btn-refresh-log")?.addEventListener("click", loadLogs);
-  document.getElementById("select-log-target")?.addEventListener("change", loadLogs);
-  document.getElementById("btn-clear-log")?.addEventListener("click", async () => {
-    const target = document.getElementById("select-log-target").value;
+  const selectLogTarget = document.getElementById("select-log-target");
+  const checkLogDebug = document.getElementById("check-log-debug-mode");
+  const checkLogAuto = document.getElementById("check-log-auto-refresh");
+  const btnRefreshLog = document.getElementById("btn-refresh-log");
+  const btnClearLog = document.getElementById("btn-clear-log");
+  const btnCopyLog = document.getElementById("btn-copy-log");
+
+  btnRefreshLog?.addEventListener("click", () => loadLogs(false));
+  selectLogTarget?.addEventListener("change", () => loadLogs(false));
+
+  checkLogDebug?.addEventListener("change", async () => {
+    const enabled = checkLogDebug.checked;
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const steamDir = inputSteam || appConfig.steam_dir;
+    try {
+      const res = await invokeBackend("set_debug_mode", { enabled, steamDir: steamDir || null });
+      appConfig.debug_mode = enabled;
+      showToast(res ? res.message : (enabled ? t("logs.toast_debug_enabled") : t("logs.toast_debug_disabled")));
+      loadLogs(false);
+    } catch (e) {
+      showToast(e.toString());
+    }
+  });
+
+  checkLogAuto?.addEventListener("change", () => {
+    updateLogAutoRefreshState();
+  });
+
+  btnCopyLog?.addEventListener("click", async () => {
+    if (!currentRawLogText) return;
+    try {
+      await navigator.clipboard.writeText(currentRawLogText);
+      const prevText = btnCopyLog.textContent;
+      btnCopyLog.textContent = t("logs.btn_copied");
+      showToast(t("logs.toast_copied"));
+      setTimeout(() => {
+        btnCopyLog.textContent = prevText;
+      }, 2000);
+    } catch (_) {}
+  });
+
+  btnClearLog?.addEventListener("click", async () => {
+    const target = selectLogTarget ? selectLogTarget.value : "daemon";
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
     const steamDir = inputSteam || appConfig.steam_dir;
     const res = await invokeBackend("clear_log", { logName: target, steamDir: steamDir || null });
     showToast(res ? res.message : t("logs.toast_cleared"));
-    loadLogs();
+    loadLogs(false);
   });
 
   // Updates actions
@@ -1861,26 +1915,96 @@ async function updateAllComponents() {
 }
 
 // --------------------------------------------------------------------------
-// Logs Loader
+// Logs Loader & Syntax Highlighter
 // --------------------------------------------------------------------------
-async function loadLogs() {
+let currentRawLogText = "";
+
+function updateLogAutoRefreshState() {
+  const checkLogAuto = document.getElementById("check-log-auto-refresh");
+  const liveDot = document.getElementById("log-live-dot");
+  if (!checkLogAuto) return;
+  const isAuto = checkLogAuto.checked;
+  try {
+    localStorage.setItem("chronokeep_log_autorefresh", isAuto ? "true" : "false");
+  } catch (_) {}
+  if (liveDot) {
+    liveDot.style.display = isAuto ? "inline-block" : "none";
+  }
+}
+
+function formatLogSyntax(rawText) {
+  if (!rawText) return "";
+  const lines = rawText.split("\n");
+  return lines
+    .map((line) => {
+      let escaped = escapeHtml(line);
+      // Format timestamp: [YYYY-MM-DD HH:MM:SS]
+      escaped = escaped.replace(
+        /^(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\])/,
+        '<span class="log-ts">$1</span>'
+      );
+      // Format tags
+      escaped = escaped.replace(/(\[DEBUG\])/g, '<span class="log-tag-debug">[DEBUG]</span>');
+      escaped = escaped.replace(/(\[INFO\])/g, '<span class="log-tag-info">[INFO]</span>');
+      escaped = escaped.replace(/(\[WARN(?:ING)?\])/g, '<span class="log-tag-warn">$1</span>');
+      escaped = escaped.replace(/(\[(?:ERROR|ERRO|FALHA)\])/g, '<span class="log-tag-error">$1</span>');
+      // Highlight parameters: app=123, acct=456, port=789
+      escaped = escaped.replace(
+        /\b(app|acct|port|req|resp)=(\d+)\b/g,
+        '<span class="log-param-key">$1=</span><span class="log-param-val">$2</span>'
+      );
+      return `<span class="log-line">${escaped}</span>`;
+    })
+    .join("");
+}
+
+async function loadLogs(isSilentAutoRefresh = false) {
   const output = document.getElementById("log-output");
   const target = document.getElementById("select-log-target")?.value || "daemon";
+  const badge = document.getElementById("terminal-target-badge");
+  const statLines = document.getElementById("terminal-lines-count");
+  const statUpdated = document.getElementById("terminal-last-updated");
+
   if (!output) return;
 
   const fileName = target === "bridge" ? "chronokeep_bridge.log" : "chrono_daemon.log";
-  output.textContent = t("logs.loading_file", { file: fileName });
+  if (badge) badge.textContent = fileName;
+
+  if (!isSilentAutoRefresh) {
+    output.textContent = t("logs.loading_file", { file: fileName });
+  }
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
     const steamDir = inputSteam || appConfig.steam_dir;
     const content = await invokeBackend("get_logs", {
       logName: target,
-      maxLines: 300,
+      maxLines: 400,
       steamDir: steamDir || null,
     });
-    output.textContent = content || t("logs.empty_file");
-    output.scrollTop = output.scrollHeight;
+
+    currentRawLogText = content || "";
+    const lines = (content || "").split("\n").filter((l) => l.trim().length > 0);
+
+    if (statLines) {
+      statLines.textContent = t("logs.lines_count", { count: lines.length });
+    }
+    if (statUpdated) {
+      const now = new Date();
+      statUpdated.textContent = t("logs.updated_at", { time: now.toLocaleTimeString() });
+    }
+
+    if (!content || content.trim().length === 0) {
+      output.textContent = t("logs.empty_file");
+      return;
+    }
+
+    const isNearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 60;
+    output.innerHTML = formatLogSyntax(content);
+
+    if (!isSilentAutoRefresh || isNearBottom) {
+      output.scrollTop = output.scrollHeight;
+    }
   } catch (e) {
     output.textContent = t("logs.error_loading", { error: e });
   }
@@ -1917,4 +2041,19 @@ document.addEventListener("DOMContentLoaded", () => {
       checkDaemon();
     }
   }, 3500);
+
+  // Background log auto-refresh poller every 2.5 seconds
+  setInterval(() => {
+    const checkLogAuto = document.getElementById("check-log-auto-refresh");
+    const pageLogs = document.getElementById("page-logs");
+    if (
+      checkLogAuto &&
+      checkLogAuto.checked &&
+      pageLogs &&
+      pageLogs.classList.contains("active") &&
+      document.visibilityState === "visible"
+    ) {
+      loadLogs(true);
+    }
+  }, 2500);
 });

@@ -124,11 +124,32 @@ pub fn ensure_parent_watcher(pid: u32, log_path: Arc<PathBuf>) {
     }
 }
 
+pub static DEBUG_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_debug_mode() -> bool {
+    DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_debug_mode(enabled: bool) {
+    DEBUG_MODE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn log_msg(log_path: &Path, msg: &str) {
     let line = format!("[{}][chrono-daemon] {}\r\n", get_local_timestamp_str(), msg);
     print!("{}", line);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = f.write_all(line.as_bytes());
         let _ = f.flush();
+    }
+}
+
+pub fn log_debug(log_path: &Path, msg: &str) {
+    if is_debug_mode() {
+        let line = format!("[{}][chrono-daemon][DEBUG] {}\r\n", get_local_timestamp_str(), msg);
+        print!("{}", line);
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path) {
+            let _ = f.write_all(line.as_bytes());
+            let _ = f.flush();
+        }
     }
 }
