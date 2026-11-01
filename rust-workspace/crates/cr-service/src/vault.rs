@@ -62,6 +62,10 @@ impl VaultStorage {
         self.app_dir(account_id, app_id).join("manifest.tsv")
     }
 
+    pub fn cloud_manifest_path(&self, account_id: u32, app_id: u32) -> PathBuf {
+        self.app_dir(account_id, app_id).join("cloud_manifest.tsv")
+    }
+
     pub fn resolve_file_disk_path(
         &self,
         account_id: u32,
@@ -78,6 +82,109 @@ impl VaultStorage {
             full.push(seg);
         }
         Some(full)
+    }
+
+    /// Resolves the actual local OS path where Steam / the game stores a cloud file on disk,
+    /// taking `root_token` (e.g. `""` -> `userdata/.../remote`, `"%WinAppDataLocal%"`, etc.) into account.
+    pub fn resolve_autocloud_local_path(
+        &self,
+        account_id: u32,
+        app_id: u32,
+        root_token: &str,
+        clean_filename: &str,
+    ) -> Option<PathBuf> {
+        let (_, clean_name) = cr_proto::cloud_messages::split_root_token(clean_filename);
+        let safe_rel = sanitize_rel_path(&clean_name);
+        if safe_rel.is_empty() {
+            return None;
+        }
+
+        let tok_lower = root_token.trim().to_ascii_lowercase();
+        let base_dir = match tok_lower.as_str() {
+            "" => self
+                .steam_path
+                .as_ref()?
+                .join("userdata")
+                .join(account_id.to_string())
+                .join(app_id.to_string())
+                .join("remote"),
+            "%steamuserbasestorage%" => self
+                .steam_path
+                .as_ref()?
+                .join("userdata")
+                .join(account_id.to_string())
+                .join(app_id.to_string()),
+            "%winappdatalocal%" => std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("USERPROFILE")
+                        .map(|u| PathBuf::from(u).join("AppData").join("Local"))
+                })?,
+            "%winappdatalocallow%" => std::env::var_os("USERPROFILE")
+                .map(|u| PathBuf::from(u).join("AppData").join("LocalLow"))?,
+            "%winappdataroaming%" => std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("USERPROFILE")
+                        .map(|u| PathBuf::from(u).join("AppData").join("Roaming"))
+                })?,
+            "%winmydocuments%" | "%steamclouddocuments%" => {
+                std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join("Documents"))?
+            }
+            "%winsavedgames%" => {
+                std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join("Saved Games"))?
+            }
+            "%windowshome%" | "%linuxhome%" => std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(PathBuf::from)?,
+            "%winprogramdata%" => std::env::var_os("PROGRAMDATA").map(PathBuf::from)?,
+            _ => return None,
+        };
+
+        let mut full = base_dir;
+        for seg in safe_rel.split('/') {
+            full.push(seg);
+        }
+        Some(full)
+    }
+
+    /// Returns the effective `root_token` for `clean_filename` (`""` for standard `userdata/remote`,
+    /// or e.g. `"%WinAppDataLocal%"` for AutoCloud games).
+    pub fn effective_root_token_for_file(
+        &self,
+        account_id: u32,
+        app_id: u32,
+        clean_filename: &str,
+    ) -> String {
+        let (_, clean_name) = cr_proto::cloud_messages::split_root_token(clean_filename);
+        let safe_rel = sanitize_rel_path(&clean_name);
+        if let Some(cloud_m) = self.load_cloud_manifest(account_id, app_id) {
+            if let Some(entry) = cloud_m.files.get(&safe_rel) {
+                if !entry.root_token.is_empty() {
+                    return entry.root_token.clone();
+                }
+            }
+            if !cloud_m.default_root_token.is_empty() {
+                return cloud_m.default_root_token;
+            }
+        }
+        let manifest_raw = self.load_manifest_raw(account_id, app_id);
+        if let Some(entry) = manifest_raw.files.get(&safe_rel) {
+            if !entry.root_token.is_empty() {
+                return entry.root_token.clone();
+            }
+        }
+        let (_, vdf_files) = self.read_remotecache_metadata(account_id, app_id);
+        if let Some((tok, _)) = vdf_files.get(&safe_rel) {
+            return tok.clone();
+        }
+        let legacy_tokens = self.read_legacy_file_tokens(account_id, app_id);
+        if let Some(tok) = legacy_tokens.get(&safe_rel) {
+            if !tok.is_empty() {
+                return tok.clone();
+            }
+        }
+        manifest_raw.default_root_token
     }
 
     /// Loads the manifest for `(account_id, app_id)`, importing existing local Steam `userdata`
@@ -224,30 +331,37 @@ impl VaultStorage {
         app_id: u32,
     ) -> Vec<(String, Vec<u8>)> {
         let mut modified = Vec::new();
-        let mut candidates = Vec::new();
+        let manifest_raw = self.load_manifest_raw(account_id, app_id);
+        let (_, vdf_files) = self.read_remotecache_metadata(account_id, app_id);
+        let legacy_tokens = self.read_legacy_file_tokens(account_id, app_id);
+
+        let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
         if let Some(ref steam_root) = self.steam_path {
-            candidates.push(
+            candidates.push((
                 steam_root
                     .join("userdata")
                     .join(account_id.to_string())
                     .join(app_id.to_string())
                     .join("remote"),
-            );
-            candidates.push(
+                true,
+            ));
+            candidates.push((
                 steam_root
                     .join("cloud_redirect")
                     .join("storage")
                     .join(account_id.to_string())
                     .join(app_id.to_string()),
-            );
+                false,
+            ));
         }
-        candidates.push(
+        candidates.push((
             PathBuf::from(r"C:\Backup_CloudRedirect\Steam_Folder\cloud_redirect\storage")
                 .join(account_id.to_string())
                 .join(app_id.to_string()),
-        );
+            false,
+        ));
 
-        for src_dir in candidates {
+        for (src_dir, is_userdata_remote) in candidates {
             if !src_dir.exists() {
                 continue;
             }
@@ -268,29 +382,95 @@ impl VaultStorage {
                 {
                     continue;
                 }
-                let Some(dest) = self.resolve_file_disk_path(account_id, app_id, &rel_name) else {
+                let (_, clean_rel) = cr_proto::cloud_messages::split_root_token(&rel_name);
+                let safe_rel = sanitize_rel_path(&clean_rel);
+                if safe_rel.is_empty() {
+                    continue;
+                }
+
+                let Some(dest) = self.resolve_file_disk_path(account_id, app_id, &safe_rel) else {
                     continue;
                 };
+
+                if !is_userdata_remote {
+                    // Pastas legadas servem apenas para migração inicial quando o arquivo ainda não existe no Vault
+                    if dest.exists() {
+                        continue;
+                    }
+                } else {
+                    // Para userdata/<acct>/<app>/remote: ignorar arquivos pertencentes a AutoCloud (root_token != "")
+                    let file_root_tok = manifest_raw
+                        .files
+                        .get(&safe_rel)
+                        .map(|e| e.root_token.as_str())
+                        .filter(|t| !t.is_empty())
+                        .or_else(|| {
+                            vdf_files
+                                .get(&safe_rel)
+                                .map(|(t, _)| t.as_str())
+                                .filter(|t| !t.is_empty())
+                        })
+                        .or_else(|| {
+                            legacy_tokens
+                                .get(&safe_rel)
+                                .map(|t| t.as_str())
+                                .filter(|t| !t.is_empty())
+                        })
+                        .unwrap_or_else(|| {
+                            if vdf_files.contains_key(&safe_rel) {
+                                ""
+                            } else {
+                                manifest_raw.default_root_token.as_str()
+                            }
+                        });
+
+                    if !file_root_tok.is_empty() {
+                        continue;
+                    }
+                }
 
                 let Ok(src_bytes) = fs::read(&src_path) else {
                     continue;
                 };
 
-                let is_different = if dest.exists() {
-                    match fs::read(&dest) {
+                let should_import = if dest.exists() {
+                    let bytes_differ = match fs::read(&dest) {
                         Ok(dest_bytes) => dest_bytes != src_bytes,
                         Err(_) => true,
+                    };
+                    if !bytes_differ {
+                        false
+                    } else {
+                        let src_mtime = fs::metadata(&src_path)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let dest_mtime = fs::metadata(&dest)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let manifest_ts = manifest_raw
+                            .files
+                            .get(&safe_rel)
+                            .map(|e| e.timestamp)
+                            .unwrap_or(0);
+                        let vault_ref_ts = dest_mtime.max(manifest_ts);
+                        src_mtime > vault_ref_ts
                     }
                 } else {
                     true
                 };
 
-                if is_different {
+                if should_import {
                     if self
-                        .write_save_file(account_id, app_id, &rel_name, &src_bytes)
+                        .write_save_file(account_id, app_id, &safe_rel, &src_bytes)
                         .is_ok()
                     {
-                        modified.push((rel_name, src_bytes));
+                        modified.push((safe_rel, src_bytes));
                     }
                 }
             }
@@ -422,12 +602,8 @@ impl VaultStorage {
         (cn_opt, files_meta)
     }
 
-    fn load_manifest_raw(&self, account_id: u32, app_id: u32) -> AppManifest {
-        let path = self.manifest_path(account_id, app_id);
-        let Ok(content) = fs::read_to_string(&path) else {
-            return AppManifest::default();
-        };
-        let parsed = cr_common::manifest::parse_manifest(&content);
+    pub fn parse_app_manifest_str(content: &str) -> AppManifest {
+        let parsed = cr_common::manifest::parse_manifest(content);
         AppManifest {
             change_number: parsed.change_number,
             app_build_id: parsed.app_build_id,
@@ -453,17 +629,7 @@ impl VaultStorage {
         }
     }
 
-    pub fn save_manifest(
-        &self,
-        account_id: u32,
-        app_id: u32,
-        manifest: &AppManifest,
-    ) -> std::io::Result<()> {
-        let dir = self.app_dir(account_id, app_id);
-        fs::create_dir_all(&dir)?;
-        let path = self.manifest_path(account_id, app_id);
-        let tmp_path = path.with_extension("tsv.tmp");
-
+    pub fn serialize_app_manifest(manifest: &AppManifest) -> String {
         let data = cr_common::manifest::ManifestData {
             change_number: manifest.change_number,
             app_build_id: manifest.app_build_id,
@@ -495,9 +661,34 @@ impl VaultStorage {
                 })
                 .collect(),
         };
+        cr_common::manifest::serialize_manifest(&data)
+    }
 
-        let out = cr_common::manifest::serialize_manifest(&data);
+    pub fn load_manifest_raw(&self, account_id: u32, app_id: u32) -> AppManifest {
+        let path = self.manifest_path(account_id, app_id);
+        let Ok(content) = fs::read_to_string(&path) else {
+            return AppManifest::default();
+        };
+        Self::parse_app_manifest_str(&content)
+    }
 
+    pub fn load_cloud_manifest(&self, account_id: u32, app_id: u32) -> Option<AppManifest> {
+        let path = self.cloud_manifest_path(account_id, app_id);
+        let content = fs::read_to_string(&path).ok()?;
+        Some(Self::parse_app_manifest_str(&content))
+    }
+
+    pub fn save_cloud_manifest(
+        &self,
+        account_id: u32,
+        app_id: u32,
+        manifest: &AppManifest,
+    ) -> std::io::Result<()> {
+        let dir = self.app_dir(account_id, app_id);
+        fs::create_dir_all(&dir)?;
+        let path = self.cloud_manifest_path(account_id, app_id);
+        let tmp_path = path.with_extension("tsv.tmp");
+        let out = Self::serialize_app_manifest(manifest);
         {
             let mut file = File::create(&tmp_path)?;
             file.write_all(out.as_bytes())?;
@@ -505,6 +696,65 @@ impl VaultStorage {
         }
         fs::rename(&tmp_path, &path)?;
         Ok(())
+    }
+
+    pub fn save_manifest(
+        &self,
+        account_id: u32,
+        app_id: u32,
+        manifest: &AppManifest,
+    ) -> std::io::Result<()> {
+        let dir = self.app_dir(account_id, app_id);
+        fs::create_dir_all(&dir)?;
+        let path = self.manifest_path(account_id, app_id);
+        let tmp_path = path.with_extension("tsv.tmp");
+        let out = Self::serialize_app_manifest(manifest);
+        {
+            let mut file = File::create(&tmp_path)?;
+            file.write_all(out.as_bytes())?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
+    }
+
+    /// Promotes `cloud_manifest.tsv` into local `manifest.tsv` (`local_cn = cloud_cn`) ONLY when
+    /// 100% of files declared in `cloud_manifest` exist on disk in `vault/files/` with matching SHA-1
+    /// (opportunistically seeding from the game's local path if an identical SHA-1 already exists locally).
+    pub fn try_promote_cloud_manifest_if_complete(&self, account_id: u32, app_id: u32) -> bool {
+        let Some(cloud_m) = self.load_cloud_manifest(account_id, app_id) else {
+            return false;
+        };
+        let local_m = self.load_manifest_raw(account_id, app_id);
+        if cloud_m.change_number <= local_m.change_number && self.manifest_path(account_id, app_id).exists() {
+            return false;
+        }
+
+        for (rel_key, rec) in &cloud_m.files {
+            let vault_has_exact = self
+                .read_save_file(account_id, app_id, rel_key)
+                .map(|b| b.len() as u64 == rec.raw_size && sha1_digest(&b) == rec.sha1)
+                .unwrap_or(false);
+
+            if vault_has_exact {
+                continue;
+            }
+
+            // Se o arquivo local do jogo (AutoCloud ou userdata/remote) já tiver exatamente o mesmo SHA-1,
+            // copia para o Vault sem precisar baixar novamente da nuvem.
+            let seeded_from_local = self
+                .resolve_autocloud_local_path(account_id, app_id, &rec.root_token, rel_key)
+                .and_then(|lp| fs::read(lp).ok())
+                .filter(|b| b.len() as u64 == rec.raw_size && sha1_digest(b) == rec.sha1)
+                .and_then(|b| self.write_save_file(account_id, app_id, rel_key, &b).ok())
+                .is_some();
+
+            if !seeded_from_local {
+                return false;
+            }
+        }
+
+        self.save_manifest(account_id, app_id, &cloud_m).is_ok()
     }
 
     pub fn write_save_file(
@@ -582,5 +832,99 @@ pub fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(1_700_000_000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_autocloud_ignores_stale_userdata_remote() {
+        let base = std::env::temp_dir().join(format!("ck_vault_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let vault_dir = base.join("vault");
+        let steam_dir = base.join("steam");
+        let acct = 182447275u32;
+        let app = 3010850u32;
+
+        let vault = VaultStorage::new(vault_dir, Some(steam_dir.clone()));
+        let rel = "Microsoft/Gears of War E-Day/Saves/76561198142713003/GearsCheckpoint0_1.sav";
+
+        // Grava save novo no Vault com root_token %WinAppDataLocal%
+        let new_bytes = b"NEW_AUTOCLOUD_SAVE_V2";
+        let sha = vault.write_save_file(acct, app, rel, new_bytes).unwrap();
+        let mut manifest = AppManifest {
+            change_number: 5,
+            app_build_id: 100,
+            default_root_token: "%WinAppDataLocal%".to_string(),
+            files: HashMap::new(),
+        };
+        manifest.files.insert(
+            rel.to_string(),
+            CloudFileRecord {
+                filename: rel.to_string(),
+                root_token: "%WinAppDataLocal%".to_string(),
+                sha1: sha,
+                timestamp: now_unix(),
+                raw_size: new_bytes.len() as u64,
+                persist_state: 0,
+                platforms_to_sync: 0xFFFF_FFFF,
+            },
+        );
+        vault.save_manifest(acct, app, &manifest).unwrap();
+
+        // Cria cópia órfã antiga dentro de Steam/userdata/<acct>/<app>/remote/
+        let remote_copy = steam_dir
+            .join("userdata")
+            .join(acct.to_string())
+            .join(app.to_string())
+            .join("remote")
+            .join(rel);
+        fs::create_dir_all(remote_copy.parent().unwrap()).unwrap();
+        fs::write(&remote_copy, b"STALE_USERDATA_COPY_V1").unwrap();
+
+        // sync_local_saves_to_vault deve ignorar completamente userdata/remote para jogos AutoCloud
+        let modified = vault.sync_local_saves_to_vault(acct, app);
+        assert!(modified.is_empty());
+        assert_eq!(
+            vault.read_save_file(acct, app, rel).unwrap(),
+            new_bytes.to_vec()
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_legacy_backup_does_not_overwrite_existing_vault_save() {
+        let base = std::env::temp_dir().join(format!("ck_legacy_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let vault_dir = base.join("vault");
+        let steam_dir = base.join("steam");
+        let acct = 12345u32;
+        let app = 480u32;
+
+        let vault = VaultStorage::new(vault_dir, Some(steam_dir.clone()));
+        vault
+            .write_save_file(acct, app, "save01.dat", b"CURRENT_VAULT_SAVE")
+            .unwrap();
+
+        let legacy_file = steam_dir
+            .join("cloud_redirect")
+            .join("storage")
+            .join(acct.to_string())
+            .join(app.to_string())
+            .join("save01.dat");
+        fs::create_dir_all(legacy_file.parent().unwrap()).unwrap();
+        fs::write(&legacy_file, b"OLD_LEGACY_SAVE").unwrap();
+
+        let modified = vault.sync_local_saves_to_vault(acct, app);
+        assert!(modified.is_empty());
+        assert_eq!(
+            vault.read_save_file(acct, app, "save01.dat").unwrap(),
+            b"CURRENT_VAULT_SAVE".to_vec()
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
 }
 

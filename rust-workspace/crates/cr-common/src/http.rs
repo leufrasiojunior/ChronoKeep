@@ -143,6 +143,22 @@ fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
+pub fn escape_json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 pub fn extract_json_str(json: &str, key: &str) -> Option<String> {
     let pattern = format!("\"{}\"", key);
     let idx = json.find(&pattern)?;
@@ -158,7 +174,30 @@ pub fn extract_json_str(json: &str, key: &str) -> Option<String> {
     while let Some(c) = chars.next() {
         if c == '\\' {
             if let Some(esc) = chars.next() {
-                out.push(esc);
+                match esc {
+                    '"' => out.push('"'),
+                    '\\' => out.push('\\'),
+                    '/' => out.push('/'),
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    'b' => out.push('\u{0008}'),
+                    'f' => out.push('\u{000C}'),
+                    'u' => {
+                        let mut hex = String::with_capacity(4);
+                        for _ in 0..4 {
+                            if let Some(hc) = chars.next() {
+                                hex.push(hc);
+                            }
+                        }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                            if let Some(decoded) = char::from_u32(code) {
+                                out.push(decoded);
+                            }
+                        }
+                    }
+                    other => out.push(other),
+                }
             }
         } else if c == '"' {
             return Some(out);
@@ -181,6 +220,21 @@ pub fn parse_url(url: &str) -> Option<(String, String)> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct HttpResponse {
+    pub status: u32,
+    pub location: Option<String>,
+    pub body: Vec<u8>,
+}
+
+/// Computes an adaptive transfer timeout in milliseconds for payloads of `payload_len` bytes
+/// (minimum 30s, scaling at ~4s per MiB up to 5 minutes).
+pub fn transfer_timeout_ms(payload_len: usize) -> u32 {
+    let extra_ms = ((payload_len as u64) / (256 * 1024)).saturating_mul(1000);
+    let total = 30_000u64.saturating_add(extra_ms);
+    total.min(300_000) as u32
+}
+
 pub fn https_request(
     method: &str,
     host: &str,
@@ -188,18 +242,18 @@ pub fn https_request(
     headers: &[String],
     body: &[u8],
 ) -> Option<(u32, Vec<u8>)> {
-    https_request_with_timeout(method, host, path, headers, body, 5000)
+    https_request_with_timeout(method, host, path, headers, body, 20_000)
 }
 
 #[cfg(target_os = "windows")]
-pub fn https_request_with_timeout(
+pub fn https_request_raw(
     method: &str,
     host: &str,
     path: &str,
     headers: &[String],
     body: &[u8],
     timeout_ms: u32,
-) -> Option<(u32, Vec<u8>)> {
+) -> Option<HttpResponse> {
     unsafe {
         let agent = to_wide("ChronoKeep/1.0");
         let h_session = WinHttpOpen(
@@ -212,8 +266,8 @@ pub fn https_request_with_timeout(
         if h_session.is_null() {
             return None;
         }
-        let t = timeout_ms as i32;
-        WinHttpSetTimeouts(h_session, 5000, 5000, t, t);
+        let t = timeout_ms.max(5_000) as i32;
+        WinHttpSetTimeouts(h_session, 10_000, 10_000, t, t);
 
         let host_w = to_wide(host);
         let h_conn = WinHttpConnect(h_session, host_w.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -258,7 +312,7 @@ pub fn https_request_with_timeout(
         } else {
             body.as_ptr() as *const c_void
         };
-        let body_len = body.len() as DWORD;
+        let body_len = body.len().min(u32::MAX as usize) as DWORD;
 
         let ok = WinHttpSendRequest(h_req, null(), 0, body_ptr, body_len, body_len, 0);
         if ok == 0 || WinHttpReceiveResponse(h_req, null_mut()) == 0 {
@@ -279,35 +333,46 @@ pub fn https_request_with_timeout(
             null_mut(),
         );
 
-        // Se redirecionado e precisamos capturar Location explicitamente
-        if (300..400).contains(&status_code) {
-            let mut loc_len: DWORD = 0;
-            WinHttpQueryHeaders(
+        // Captura o cabeçalho Location independentemente do status HTTP
+        // (necessário tanto para redirecionamentos 3xx quanto para 200 OK do uploadType=resumable do Google Drive)
+        let mut location: Option<String> = None;
+        let mut loc_len: DWORD = 0;
+        WinHttpQueryHeaders(
+            h_req,
+            WINHTTP_QUERY_LOCATION,
+            null(),
+            null_mut(),
+            &mut loc_len,
+            null_mut(),
+        );
+        if loc_len > 0 {
+            let mut loc_buf = vec![0u16; ((loc_len as usize) + 1) / 2];
+            if WinHttpQueryHeaders(
                 h_req,
                 WINHTTP_QUERY_LOCATION,
                 null(),
-                null_mut(),
+                loc_buf.as_mut_ptr() as *mut c_void,
                 &mut loc_len,
                 null_mut(),
-            );
-            if loc_len > 0 {
-                let mut loc_buf = vec![0u16; (loc_len / 2) as usize];
-                if WinHttpQueryHeaders(
-                    h_req,
-                    WINHTTP_QUERY_LOCATION,
-                    null(),
-                    loc_buf.as_mut_ptr() as *mut c_void,
-                    &mut loc_len,
-                    null_mut(),
-                ) != 0 {
-                    let loc_str = String::from_utf16_lossy(&loc_buf);
-                    let trimmed = loc_str.trim_matches('\0').trim();
-                    WinHttpCloseHandle(h_req);
-                    WinHttpCloseHandle(h_conn);
-                    WinHttpCloseHandle(h_session);
-                    return Some((status_code, trimmed.as_bytes().to_vec()));
+            ) != 0
+            {
+                let loc_str = String::from_utf16_lossy(&loc_buf);
+                let trimmed = loc_str.trim_matches('\0').trim().to_string();
+                if !trimmed.is_empty() {
+                    location = Some(trimmed);
                 }
             }
+        }
+
+        if (300..400).contains(&status_code) && location.is_some() {
+            WinHttpCloseHandle(h_req);
+            WinHttpCloseHandle(h_conn);
+            WinHttpCloseHandle(h_session);
+            return Some(HttpResponse {
+                status: status_code,
+                location,
+                body: Vec::new(),
+            });
         }
 
         let mut resp_bytes = Vec::new();
@@ -334,20 +399,41 @@ pub fn https_request_with_timeout(
         WinHttpCloseHandle(h_req);
         WinHttpCloseHandle(h_conn);
         WinHttpCloseHandle(h_session);
-        Some((status_code, resp_bytes))
+        Some(HttpResponse {
+            status: status_code,
+            location,
+            body: resp_bytes,
+        })
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn https_request_with_timeout(
+pub fn https_request_raw(
     _method: &str,
     _host: &str,
     _path: &str,
     _headers: &[String],
     _body: &[u8],
     _timeout_ms: u32,
-) -> Option<(u32, Vec<u8>)> {
+) -> Option<HttpResponse> {
     None
+}
+
+pub fn https_request_with_timeout(
+    method: &str,
+    host: &str,
+    path: &str,
+    headers: &[String],
+    body: &[u8],
+    timeout_ms: u32,
+) -> Option<(u32, Vec<u8>)> {
+    let resp = https_request_raw(method, host, path, headers, body, timeout_ms)?;
+    if (300..400).contains(&resp.status) {
+        if let Some(loc) = resp.location {
+            return Some((resp.status, loc.into_bytes()));
+        }
+    }
+    Some((resp.status, resp.body))
 }
 
 pub fn https_download_url(url: &str, timeout_ms: u32) -> Option<(u32, Vec<u8>)> {

@@ -93,8 +93,14 @@ pub fn push_game_state(port: u16, app_id: u32, account_id: u32, running: bool) -
     http_post(port, "/v1/game_state", payload.as_bytes(), Duration::from_secs(2)).is_some()
 }
 
-/// Forwards a `Cloud.*` RPC call to `cr-service.exe` and returns `Some((eresult, resp_bytes))`
-/// if handled by the service, or `None` on transport/unhandled fallback.
+pub enum RpcForwardResult {
+    Handled(i32, Vec<u8>),
+    UnhandledPassthrough,
+    TransportError,
+}
+
+/// Forwards a `Cloud.*` RPC call to `cr-service.exe` and distinguishes handled responses,
+/// explicit passthrough (`0u8`), and daemon transport failures.
 pub fn forward_rpc(
     port: u16,
     steam_path: &str,
@@ -102,7 +108,7 @@ pub fn forward_rpc(
     app_id: u32,
     account_id: u32,
     req_bytes: &[u8],
-) -> Option<(i32, Vec<u8>)> {
+) -> RpcForwardResult {
     let method_bytes = method.as_bytes();
     let mut payload = Vec::with_capacity(12 + method_bytes.len() + req_bytes.len());
     payload.extend_from_slice(&(method_bytes.len() as u32).to_le_bytes());
@@ -111,24 +117,40 @@ pub fn forward_rpc(
     payload.extend_from_slice(&account_id.to_le_bytes());
     payload.extend_from_slice(req_bytes);
 
-    let resp_body = match http_post(port, "/v1/rpc", &payload, Duration::from_secs(12)) {
+    let timeout = if method == cr_proto::cloud_messages::RPC_COMPLETE_BATCH {
+        Duration::from_secs(15)
+    } else {
+        Duration::from_secs(14)
+    };
+
+    let resp_body = match http_post(port, "/v1/rpc", &payload, timeout) {
         Some(b) => b,
         None => {
             // If cr-service was closed mid-session, auto-respawn once and retry
             if ensure_service_running(steam_path, port) {
-                http_post(port, "/v1/rpc", &payload, Duration::from_secs(12))?
+                let resolved_port = resolve_service_port(steam_path);
+                match http_post(resolved_port, "/v1/rpc", &payload, timeout) {
+                    Some(b) => b,
+                    None => return RpcForwardResult::TransportError,
+                }
             } else {
-                return None;
+                return RpcForwardResult::TransportError;
             }
         }
     };
 
-    if resp_body.len() < 5 || resp_body[0] == 0 {
-        return None;
+    if resp_body.is_empty() {
+        return RpcForwardResult::TransportError;
+    }
+    if resp_body[0] == 0 {
+        return RpcForwardResult::UnhandledPassthrough;
+    }
+    if resp_body.len() < 5 {
+        return RpcForwardResult::TransportError;
     }
     let eresult = i32::from_le_bytes([resp_body[1], resp_body[2], resp_body[3], resp_body[4]]);
     let proto_out = resp_body[5..].to_vec();
-    Some((eresult, proto_out))
+    RpcForwardResult::Handled(eresult, proto_out)
 }
 
 fn http_post(port: u16, path: &str, body: &[u8], timeout: Duration) -> Option<Vec<u8>> {
