@@ -1,6 +1,6 @@
 [package]
 name = "cr-gui"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 
 [[bin]]
@@ -14,6 +14,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 window-vibrancy = "0.8"
+miniz_oxide = "0.8"
 
 [build-dependencies]
 tauri-build = "2"

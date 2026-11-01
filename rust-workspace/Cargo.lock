@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "cr-bridge-dll"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cr-common",
  "cr-proto",
@@ -401,17 +401,18 @@ dependencies = [
 
 [[package]]
 name = "cr-common"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cr-proto",
 ]
 
 [[package]]
 name = "cr-gui"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cr-common",
  "cr-proto",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
  "tauri",
@@ -421,11 +422,11 @@ dependencies = [
 
 [[package]]
 name = "cr-proto"
-version = "0.1.16"
+version = "0.1.17"
 
 [[package]]
 name = "cr-service"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "cr-common",
  "cr-proto",

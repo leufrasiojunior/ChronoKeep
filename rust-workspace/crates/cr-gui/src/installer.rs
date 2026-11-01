@@ -213,9 +213,9 @@ pub fn run_silent_install() -> i32 {
     }
     kill_process_and_wait("chrono-daemon.exe", 2500);
 
-    deploy_component(&steam_dir.join("chronokeep.dll"), "chronokeep.dll", EMBEDDED_CHRONOKEEP_DLL);
-    deploy_component(&steam_dir.join("cloud_redirect.dll"), "cloud_redirect.dll", EMBEDDED_CHRONOKEEP_DLL);
-    deploy_component(&steam_dir.join("chrono-daemon.exe"), "chrono-daemon.exe", EMBEDDED_CHRONO_DAEMON);
+    deploy_component(&steam_dir.join("chronokeep.dll"), "chronokeep.dll", crate::embedded::get_embedded_bridge());
+    deploy_component(&steam_dir.join("cloud_redirect.dll"), "cloud_redirect.dll", crate::embedded::get_embedded_bridge());
+    deploy_component(&steam_dir.join("chrono-daemon.exe"), "chrono-daemon.exe", crate::embedded::get_embedded_daemon());
 
     ensure_opensteamtool_cloud_enabled(steam_dir);
     start_service_from_gui(steam_dir, port);
@@ -267,17 +267,17 @@ pub unsafe fn on_install_and_save(hwnd: HWND) {
     let mut deployed_files = Vec::new();
 
     let target_dll = steam_dir.join("chronokeep.dll");
-    if deploy_component(&target_dll, "chronokeep.dll", EMBEDDED_CHRONOKEEP_DLL) {
+    if deploy_component(&target_dll, "chronokeep.dll", crate::embedded::get_embedded_bridge()) {
         deployed_files.push("chronokeep.dll".to_string());
     }
 
     let target_compat = steam_dir.join("cloud_redirect.dll");
-    if deploy_component(&target_compat, "cloud_redirect.dll", EMBEDDED_CHRONOKEEP_DLL) {
+    if deploy_component(&target_compat, "cloud_redirect.dll", crate::embedded::get_embedded_bridge()) {
         deployed_files.push("cloud_redirect.dll (compatibilidade OpenSteamTool/Hubcap)".to_string());
     }
 
     let target_svc = steam_dir.join("chrono-daemon.exe");
-    if deploy_component(&target_svc, "chrono-daemon.exe", EMBEDDED_CHRONO_DAEMON) {
+    if deploy_component(&target_svc, "chrono-daemon.exe", crate::embedded::get_embedded_daemon()) {
         deployed_files.push("chrono-daemon.exe".to_string());
     }
 

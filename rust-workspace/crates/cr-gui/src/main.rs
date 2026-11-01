@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod commands;
+pub mod embedded;
 mod i18n;
 mod installer;
 mod oauth_flow;
@@ -65,6 +66,7 @@ fn main() {
             upload_game_save,
             get_logs,
             clear_log,
+            set_debug_mode,
             open_directory,
             open_url,
             is_steam_running,

@@ -81,9 +81,10 @@ fn main() {
     log_msg(
         &cfg.log_path,
         &format!(
-            "Servidor iniciado em 127.0.0.1:{} (Limite Upload: {}MB) | Vault={}",
+            "Servidor iniciado em 127.0.0.1:{} (Limite Upload: {}MB, Debug: {}) | Vault={}",
             actual_port,
             cfg.max_upload_mb,
+            if cfg.debug_mode { "ATIVADO" } else { "DESATIVADO" },
             cfg.vault_dir.display()
         ),
     );

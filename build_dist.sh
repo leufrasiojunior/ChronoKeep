@@ -7,9 +7,10 @@ export PATH="$SCRIPT_DIR/.toolchain/bin:$HOME/.cargo/bin:$PATH"
 echo "==> Compilando ChronoKeep em modo release para Windows (x86_64-pc-windows-msvc)..."
 cargo build --config "$SCRIPT_DIR/rust-workspace/.cargo/config.toml" --manifest-path "$SCRIPT_DIR/rust-workspace/Cargo.toml" --workspace --target x86_64-pc-windows-msvc --release
 
-echo "==> Atualizando binarios embutidos no instalador..."
-cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chrono-daemon.exe" "$SCRIPT_DIR/rust-workspace/crates/cr-gui/embedded/chrono-daemon.exe"
-cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chronokeep.dll" "$SCRIPT_DIR/rust-workspace/crates/cr-gui/embedded/chronokeep.dll"
+echo "==> Empacotando e mascarando binarios embutidos (antivirus false-positive mitigation)..."
+python3 "$SCRIPT_DIR/scripts/pack_embedded.py" "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chrono-daemon.exe" "$SCRIPT_DIR/rust-workspace/crates/cr-gui/embedded/chrono-daemon.bin"
+python3 "$SCRIPT_DIR/scripts/pack_embedded.py" "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chronokeep.dll" "$SCRIPT_DIR/rust-workspace/crates/cr-gui/embedded/chronokeep.bin"
+rm -f "$SCRIPT_DIR/rust-workspace/crates/cr-gui/embedded/chrono-daemon.exe" "$SCRIPT_DIR/rust-workspace/crates/cr-gui/embedded/chronokeep.dll"
 
 echo "==> Recompilando ChronoKeep com binarios atualizados..."
 cargo build --config "$SCRIPT_DIR/rust-workspace/.cargo/config.toml" --manifest-path "$SCRIPT_DIR/rust-workspace/Cargo.toml" -p cr-gui --target x86_64-pc-windows-msvc --release

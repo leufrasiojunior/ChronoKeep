@@ -239,6 +239,23 @@ pub fn is_namespace_app(app_id: u32) -> bool {
     false
 }
 
+static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_debug_mode() -> bool {
+    DEBUG_MODE.load(Ordering::Relaxed)
+}
+
+pub fn set_debug_mode(enabled: bool) {
+    DEBUG_MODE.store(enabled, Ordering::Relaxed);
+}
+
+pub fn log_debug(msg: &str) {
+    if is_debug_mode() {
+        let clean = msg.strip_prefix("[DEBUG]").map(|s| s.trim()).unwrap_or_else(|| msg.trim());
+        log_line(&format!("[DEBUG] {}", clean));
+    }
+}
+
 pub fn log_line(msg: &str) {
     let steam_dir = get_steam_path();
     let base_dir = if !steam_dir.is_empty() {
@@ -250,7 +267,33 @@ pub fn log_line(msg: &str) {
     };
 
     let ts = get_local_timestamp_str();
-    let formatted = format!("[{}][chronokeep-bridge] {}\r\n", ts, msg);
+    let (tag, clean_msg) = if let Some(rest) = msg.strip_prefix("[DEBUG]") {
+        ("[DEBUG]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[WARN]") {
+        ("[WARN]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[WARNING]") {
+        ("[WARN]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[AVISO]") {
+        ("[WARN]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[ERROR]") {
+        ("[ERROR]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[ERRO]") {
+        ("[ERROR]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[FALHA]") {
+        ("[ERROR]", rest.trim())
+    } else if let Some(rest) = msg.strip_prefix("[INFO]") {
+        ("[INFO]", rest.trim())
+    } else {
+        let lower = msg.to_ascii_lowercase();
+        if lower.contains("aviso") || lower.contains("warn") {
+            ("[WARN]", msg.trim())
+        } else if lower.contains("erro") || lower.contains("falha") || lower.contains("error") {
+            ("[ERROR]", msg.trim())
+        } else {
+            ("[INFO]", msg.trim())
+        }
+    };
+    let formatted = format!("[{}][chronokeep-bridge]{} {}\r\n", ts, tag, clean_msg);
 
     // Grava tanto em chronokeep_bridge.log quanto em cloud_redirect.log para total visibilidade
     let p1 = base_dir.join("chronokeep_bridge.log");
@@ -406,9 +449,24 @@ fn init_internal(normalized_path: &str, source_tag: &str) -> bool {
     let port = ipc::resolve_service_port(normalized_path);
     SERVICE_PORT.store(port, Ordering::Release);
 
+    let ini_path = Path::new(normalized_path).join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("debug") {
+                    let d = v.trim().eq_ignore_ascii_case("true") || v.trim() == "1";
+                    DEBUG_MODE.store(d, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
     log_line(&format!(
-        "=== Bridge DLL v{} inicializada [{}] (porta={}) ===",
-        env!("CARGO_PKG_VERSION"), source_tag, port
+        "=== Bridge DLL v{} inicializada [{}] (porta={}, debug={}) ===",
+        env!("CARGO_PKG_VERSION"),
+        source_tag,
+        port,
+        if is_debug_mode() { "ON" } else { "OFF" }
     ));
     log_line(&format!("Steam Path: {}", normalized_path));
 

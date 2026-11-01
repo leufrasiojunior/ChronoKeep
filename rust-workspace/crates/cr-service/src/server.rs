@@ -25,8 +25,34 @@ pub fn handle_connection(
         return;
     };
 
+    if crate::lifecycle::is_debug_mode() {
+        crate::lifecycle::log_debug(
+            &log_path,
+            &format!("HTTP Request: {} {} (body={}B)", method, path, body.len()),
+        );
+    }
+
     if method == "GET" && path == "/v1/health" {
         let _ = write_http_response(&mut stream, "200 OK", "application/json", b"{\"ok\":true}");
+        return;
+    }
+
+    if method == "POST" && path == "/v1/config/debug" {
+        let text = String::from_utf8_lossy(&body);
+        let trimmed = text.trim();
+        let enable = trimmed.eq_ignore_ascii_case("true") || trimmed == "1";
+        crate::lifecycle::set_debug_mode(enable);
+        log_msg(
+            &log_path,
+            &format!("[Config] Modo Debug {}", if enable { "ATIVADO" } else { "DESATIVADO" }),
+        );
+        let _ = write_http_response(&mut stream, "200 OK", "text/plain", if enable { b"true" } else { b"false" });
+        return;
+    }
+
+    if method == "GET" && path == "/v1/config/debug" {
+        let enable = crate::lifecycle::is_debug_mode();
+        let _ = write_http_response(&mut stream, "200 OK", "text/plain", if enable { b"true" } else { b"false" });
         return;
     }
 
@@ -153,6 +179,16 @@ pub fn handle_connection(
         ]);
         let req_bytes = &body[off + 8..];
 
+        if crate::lifecycle::is_debug_mode() {
+            crate::lifecycle::log_debug(
+                &log_path,
+                &format!(
+                    "RPC Dispatch detail: method={} app={} acct={} req_bytes={}B",
+                    rpc_method, app_id, account_id, req_bytes.len()
+                ),
+            );
+        }
+
         let rpc_res =
             crate::rpc_engine::dispatch_rpc(&engine, &rpc_method, app_id, account_id, req_bytes);
 
@@ -220,7 +256,13 @@ pub fn handle_connection(
             };
 
             if let Ok(mut guard) = engine.lock() {
-                guard.store_uploaded_blob(account_id, app_id, clean_filename, final_bytes);
+                guard.store_uploaded_blob(account_id, app_id, clean_filename.clone(), final_bytes.clone());
+            }
+            if crate::lifecycle::is_debug_mode() {
+                crate::lifecycle::log_debug(
+                    &log_path,
+                    &format!("PUT /upload/ blob gravado no cofre: app={} acct={} file='{}' bytes={}B", app_id, account_id, clean_filename, final_bytes.len()),
+                );
             }
             let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"");
             let _ = stream.shutdown(std::net::Shutdown::Write);
@@ -243,6 +285,20 @@ pub fn handle_connection(
                 app_id,
                 &clean_filename,
             );
+
+            if crate::lifecycle::is_debug_mode() {
+                crate::lifecycle::log_debug(
+                    &log_path,
+                    &format!(
+                        "GET /download/ blob: app={} acct={} file='{}' (encontrado={}, bytes={})",
+                        app_id,
+                        account_id,
+                        clean_filename,
+                        maybe_data.is_some(),
+                        maybe_data.as_ref().map(|d| d.len()).unwrap_or(0)
+                    ),
+                );
+            }
 
             if let Some(data) = maybe_data {
                 log_msg(
