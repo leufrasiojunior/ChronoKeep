@@ -604,6 +604,39 @@ body {
   color: var(--text-primary);
 }
 
+.card-name-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1px solid var(--card-border-strong);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s cubic-bezier(0.1, 0.9, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.info-help-btn:hover {
+  background: var(--card-bg-hover);
+  color: var(--accent-color);
+  border-color: var(--accent-color);
+  transform: scale(1.1);
+}
+
+.info-help-btn svg {
+  pointer-events: none;
+}
+
 .card-desc {
   font-size: 11.5px;
   color: var(--text-secondary);
