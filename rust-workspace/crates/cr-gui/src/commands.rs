@@ -854,6 +854,18 @@ pub fn uninstall_chronokeep(
                 msg, restored_count
             );
         }
+    } else {
+        if lang.is_pt() {
+            msg = format!(
+                "{} Seus saves locais permanecem preservados no Cofre em: {}.",
+                msg, v_dir
+            );
+        } else {
+            msg = format!(
+                "{} Your local saves remain safely preserved in the Vault at: {}.",
+                msg, v_dir
+            );
+        }
     }
 
     OperationResult {

@@ -980,6 +980,7 @@
           <div class="callout-text">
             <strong data-i18n="modal.uninstall_safe_title">Seus saves estão protegidos:</strong>
             <p data-i18n-html="modal.uninstall_safe_desc_html">Todos os seus arquivos de save salvos no <strong>Cofre Local (Vault)</strong> e no <strong>Google Drive</strong> serão <strong>mantidos intactos</strong> e não serão apagados.</p>
+            <p style="margin: 6px 0 0 0; font-size: 12px; color: var(--text-secondary);"><span data-i18n="modal.uninstall_vault_location_label">Localização do Cofre:</span> <code id="uninstall-vault-location" style="word-break: break-all;"></code></p>
           </div>
         </div>
 
@@ -995,10 +996,10 @@
 
         <div style="margin: 16px 0; padding: 14px; background: var(--bg-subtle); border-radius: var(--radius-sm); border: 1px solid var(--card-border);">
           <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px;">
-            <input type="checkbox" id="check-restore-saves-on-uninstall" checked style="margin-top: 3px; accent-color: var(--accent-color);">
+            <input type="checkbox" id="check-restore-saves-on-uninstall" style="margin-top: 3px; accent-color: var(--accent-color);">
             <div>
-              <strong data-i18n="modal.uninstall_restore_title">Importar / Restaurar saves do Cofre para a Steam local (userdata)</strong>
-              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;" data-i18n-html="modal.uninstall_restore_desc_html">Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\userdata\...\remote</code> para que você continue com seu progresso na Steam local.</p>
+              <strong data-i18n="modal.uninstall_restore_title">Restaurar saves do Cofre para a pasta local da Steam (userdata)</strong>
+              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;" data-i18n-html="modal.uninstall_restore_desc_html">Opcional. Se marcado, copia os saves mais recentes preservados no Cofre de volta para <code>Steam\userdata\...\remote</code>. Se desmarcado, seus saves permanecem seguros apenas no Cofre local.</p>
             </div>
           </label>
         </div>

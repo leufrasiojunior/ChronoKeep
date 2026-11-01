@@ -191,7 +191,16 @@ function openUninstallModal() {
   const btnCancel = document.getElementById("btn-uninstall-cancel");
   const btnConfirm = document.getElementById("btn-uninstall-confirm");
   const checkRestore = document.getElementById("check-restore-saves-on-uninstall");
+  const vaultLocEl = document.getElementById("uninstall-vault-location");
   if (!modal || !btnCancel || !btnConfirm) return;
+
+  if (checkRestore) {
+    checkRestore.checked = false;
+  }
+  if (vaultLocEl) {
+    const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+    vaultLocEl.textContent = inputVault || appConfig.vault_dir || "—";
+  }
 
   btnConfirm.disabled = false;
   btnConfirm.textContent = t("modal.uninstall_confirm");
@@ -210,7 +219,7 @@ function openUninstallModal() {
   btnConfirm.onclick = async () => {
     btnConfirm.disabled = true;
     btnConfirm.textContent = t("modal.uninstall_working");
-    const restoreSaves = checkRestore ? checkRestore.checked : true;
+    const restoreSaves = checkRestore ? checkRestore.checked : false;
 
     try {
       const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();

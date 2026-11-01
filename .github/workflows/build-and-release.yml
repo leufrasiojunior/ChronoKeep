@@ -104,14 +104,10 @@ jobs:
           } elseif ($comp -eq "gui") {
             if (Test-Path "$binDir/ChronoKeep.exe") {
               Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/
-              Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/ChronoKeepSetup.exe
-              Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/ChronoKeepUninstall.exe
             }
           } else {
             if (Test-Path "$binDir/ChronoKeep.exe") {
               Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/
-              Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/ChronoKeepSetup.exe
-              Copy-Item -Force "$binDir/ChronoKeep.exe" release-artifacts/ChronoKeepUninstall.exe
             }
             if (Test-Path "$binDir/chrono-daemon.exe") { Copy-Item -Force "$binDir/chrono-daemon.exe" release-artifacts/ }
             if (Test-Path "$binDir/chronokeep.dll") {
