@@ -309,6 +309,7 @@
                 </div>
                 <div class="card-right">
                   <span class="status-pill active" id="ost-status-pill" data-i18n="status.ost_active">Ativo</span>
+                  <button class="btn btn-secondary btn-sm" id="btn-home-check-deps" data-i18n="home.btn_check_deps" style="font-size: 11px; padding: 4px 8px;">Verificar Dependências</button>
                 </div>
               </div>
 
@@ -1047,6 +1048,48 @@
 
       <div class="dialog-footer">
         <button id="btn-upload-limit-close" class="btn btn-primary" data-i18n="common.understand">Entendi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ContentDialog: Verificação de Dependências & Pré-Requisitos -->
+  <div id="dependencies-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="dep-modal-title" style="max-width: 660px;">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="dep-modal-title" class="dialog-title" data-i18n="modal.dep_title">Verificação de Dependências</h2>
+        <p class="dialog-subtitle" data-i18n="modal.dep_subtitle">Diagnóstico de pré-requisitos antes da instalação do ChronoKeep</p>
+      </div>
+
+      <div class="dialog-body" style="gap: 14px;">
+        <!-- Banner de Status Principal -->
+        <div id="dep-banner-callout" class="dialog-callout warning">
+          <div class="callout-icon" id="dep-banner-icon">⚠️</div>
+          <div class="callout-text">
+            <strong id="dep-banner-title" data-i18n="modal.dep_banner_missing_req_title">Dependências Obrigatórias Ausentes</strong>
+            <p id="dep-banner-desc" data-i18n="modal.dep_banner_missing_req_desc">A instalação está bloqueada até que os componentes obrigatórios listados abaixo sejam instalados no computador.</p>
+          </div>
+        </div>
+
+        <!-- Lista dinâmica de dependências -->
+        <div id="dep-items-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+      </div>
+
+      <div class="dialog-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <button id="btn-dep-refresh" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          <span data-i18n="modal.dep_btn_refresh">Verificar Novamente</span>
+        </button>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-dep-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+          <button id="btn-dep-proceed" class="btn btn-primary" data-i18n="modal.dep_btn_proceed">Continuar Instalação</button>
+        </div>
       </div>
     </div>
   </div>

@@ -424,6 +424,183 @@ pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DependencyItemDto {
+    pub id: String,
+    pub name: String,
+    pub is_required: bool,
+    pub is_installed: bool,
+    pub status_text: String,
+    pub description: String,
+    pub action_type: String,
+    pub action_target: String,
+    pub action_label: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DependencyReportDto {
+    pub can_install: bool,
+    pub all_ok: bool,
+    pub has_missing_required: bool,
+    pub has_missing_third_party: bool,
+    pub items: Vec<DependencyItemDto>,
+}
+
+pub fn is_vc_redist_x64_installed() -> bool {
+    let sys_root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("WINDIR"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let sys_path = Path::new(&sys_root).join("System32");
+    if sys_path.join("vcruntime140.dll").exists() || sys_path.join("msvcp140.dll").exists() {
+        return true;
+    }
+    if Path::new(r"C:\Windows\System32\vcruntime140.dll").exists()
+        || Path::new(r"C:\Windows\System32\msvcp140.dll").exists()
+    {
+        return true;
+    }
+    false
+}
+
+pub fn is_steam_client_installed(steam_dir: &Path) -> bool {
+    steam_dir.join("steam.exe").exists()
+}
+
+pub fn detect_third_party_tool(steam_dir: &Path) -> (bool, String) {
+    if steam_dir.join("opensteamtool.toml").exists() || steam_dir.join("opensteamtool.dll").exists() {
+        return (true, "OpenSteamTool".to_string());
+    }
+    if steam_dir.join("stplug-in").exists() || steam_dir.join("SteamTools.dll").exists() {
+        return (true, "SteamTools".to_string());
+    }
+    if steam_dir.join("GreenLuma_2024_x86.dll").exists()
+        || steam_dir.join("GreenLuma_2024_x64.dll").exists()
+        || steam_dir.join("AppList").exists()
+    {
+        return (true, "GreenLuma".to_string());
+    }
+    (false, String::new())
+}
+
+#[tauri::command]
+pub fn check_system_dependencies(steam_dir: Option<String>) -> DependencyReportDto {
+    let s_dir = steam_dir
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    let vc_ok = is_vc_redist_x64_installed();
+    let steam_ok = is_steam_client_installed(s_path);
+    let (tp_ok, tp_name) = detect_third_party_tool(s_path);
+
+    let mut items = Vec::new();
+
+    // 1. Microsoft Visual C++ 2015-2022 Redistributable (x64)
+    items.push(DependencyItemDto {
+        id: "vc_redist".to_string(),
+        name: "Microsoft Visual C++ 2015-2022 Redistributable (x64)".to_string(),
+        is_required: true,
+        is_installed: vc_ok,
+        status_text: if vc_ok {
+            if lang.is_pt() { "Instalado".to_string() } else { "Installed".to_string() }
+        } else {
+            if lang.is_pt() { "Ausente".to_string() } else { "Missing".to_string() }
+        },
+        description: if lang.is_pt() {
+            "Biblioteca oficial da Microsoft necessária para as DLLs de sistema e serviço daemon.".to_string()
+        } else {
+            "Official Microsoft runtime library required for system libraries and background daemon service.".to_string()
+        },
+        action_type: if vc_ok { "none".to_string() } else { "download".to_string() },
+        action_target: "https://aka.ms/vs/17/release/vc_redist.x64.exe".to_string(),
+        action_label: if lang.is_pt() {
+            "Baixar da Microsoft (vc_redist.x64.exe)".to_string()
+        } else {
+            "Download from Microsoft (vc_redist.x64.exe)".to_string()
+        },
+    });
+
+    // 2. Cliente Steam
+    items.push(DependencyItemDto {
+        id: "steam".to_string(),
+        name: if lang.is_pt() {
+            "Cliente Steam (steam.exe)".to_string()
+        } else {
+            "Steam Client (steam.exe)".to_string()
+        },
+        is_required: true,
+        is_installed: steam_ok,
+        status_text: if steam_ok {
+            if lang.is_pt() { "Detectado".to_string() } else { "Detected".to_string() }
+        } else {
+            if lang.is_pt() { "Não encontrado".to_string() } else { "Not found".to_string() }
+        },
+        description: if lang.is_pt() {
+            format!("Instalação da Steam necessária para a integração das DLLs e saves (pasta: '{}').", s_dir)
+        } else {
+            format!("Steam installation required for DLL hooking and save management (folder: '{}').", s_dir)
+        },
+        action_type: if steam_ok { "none".to_string() } else { "download".to_string() },
+        action_target: "https://store.steampowered.com/about/".to_string(),
+        action_label: if lang.is_pt() {
+            "Baixar Instalador da Steam".to_string()
+        } else {
+            "Download Steam Installer".to_string()
+        },
+    });
+
+    // 3. Ferramenta de Jogos Externos (OpenSteamTool / SteamTools)
+    items.push(DependencyItemDto {
+        id: "opensteamtool".to_string(),
+        name: if lang.is_pt() {
+            "Ferramenta de Jogos Externos (OpenSteamTool / SteamTools)".to_string()
+        } else {
+            "External Games Tool (OpenSteamTool / SteamTools)".to_string()
+        },
+        is_required: false,
+        is_installed: tp_ok,
+        status_text: if tp_ok {
+            if lang.is_pt() {
+                format!("Detectado ({})", tp_name)
+            } else {
+                format!("Detected ({})", tp_name)
+            }
+        } else {
+            if lang.is_pt() {
+                "Não detectado (Dependência de Terceiros)".to_string()
+            } else {
+                "Not detected (Third-Party Dependency)".to_string()
+            }
+        },
+        description: if lang.is_pt() {
+            "O ChronoKeep atua gerenciando a nuvem para jogos externos adicionados por essas ferramentas. Esta é uma dependência de terceiros — pesquise pelo termo na internet para obter e instalar separadamente caso deseje gerenciar jogos externos.".to_string()
+        } else {
+            "ChronoKeep manages cloud sync for external games added through these tools. This is a third-party dependency — search for the term online to obtain and install it separately if you wish to manage external games.".to_string()
+        },
+        action_type: if tp_ok { "none".to_string() } else { "search".to_string() },
+        action_target: "https://www.google.com/search?q=OpenSteamTool".to_string(),
+        action_label: if lang.is_pt() {
+            "Pesquisar 'OpenSteamTool'".to_string()
+        } else {
+            "Search 'OpenSteamTool'".to_string()
+        },
+    });
+
+    let can_install = vc_ok && steam_ok;
+    let all_ok = can_install && tp_ok;
+    let has_missing_required = !can_install;
+    let has_missing_third_party = !tp_ok;
+
+    DependencyReportDto {
+        can_install,
+        all_ok,
+        has_missing_required,
+        has_missing_third_party,
+        items,
+    }
+}
+
 // TODO: Possibilidade de atualizar individualmente o daemon, a dll e o executavel:
 // - Atualizar somente o daemon (chrono-daemon.exe) sem reiniciar o Steam se a DLL nao mudou.
 // - Atualizar somente a DLL (chronokeep.dll / cloud_redirect.dll).
@@ -432,6 +609,26 @@ pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
 pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResult {
     let s_path = Path::new(&steam_dir);
     let lang = crate::i18n::current_lang(Some(s_path));
+
+    // Verificação de dependências obrigatórias
+    let report = check_system_dependencies(Some(steam_dir.clone()));
+    if report.has_missing_required {
+        let missing_names: Vec<&str> = report
+            .items
+            .iter()
+            .filter(|it| it.is_required && !it.is_installed)
+            .map(|it| it.name.as_str())
+            .collect();
+        let missing_str = missing_names.join(", ");
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                format!("Instalação bloqueada: Dependências obrigatórias ausentes ({missing_str}). Por favor, instale-as antes de continuar.")
+            } else {
+                format!("Installation blocked: Missing required dependencies ({missing_str}). Please install them before proceeding.")
+            },
+        };
+    }
     if !s_path.exists() {
         return OperationResult {
             success: false,

@@ -49,6 +49,8 @@ jobs:
       - name: Build Core Daemon & Bridge DLL
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'daemon' || inputs.component == 'bridge' || inputs.component == 'gui' }}
         shell: pwsh
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: |
           $comp = "${{ inputs.component }}"
           if ($comp -eq "daemon") {
@@ -78,6 +80,8 @@ jobs:
       - name: Build ChronoKeep Desktop App (ChronoKeep.exe)
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
         shell: pwsh
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: |
           cd rust-workspace
           cargo build --release -p cr-gui

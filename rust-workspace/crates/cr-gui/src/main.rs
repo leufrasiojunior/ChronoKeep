@@ -57,6 +57,7 @@ fn main() {
             get_service_status,
             start_service,
             stop_service,
+            check_system_dependencies,
             install_chronokeep,
             start_google_login,
             disconnect_google,

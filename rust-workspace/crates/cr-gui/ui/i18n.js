@@ -40,10 +40,15 @@ const CHRONO_LOCALES = {
     "status.gdrive_disconnected_badge": "Google Drive Disconnected",
     "status.connected": "Connected",
     "status.disconnected": "Disconnected",
+    "status.missing": "Missing",
+    "status.detected": "Detected",
+    "status.not_found": "Not found",
+    "status.not_detected_tp": "Not detected (Third-Party Dependency)",
 
     "home.title": "Home",
     "home.hero_title": "ChronoKeep Cloud Save",
     "home.hero_version": "{version} — Clean-Room Steam Cloud Sync",
+    "home.btn_check_deps": "Check Dependencies",
     "home.update_banner_title": "Updates available",
     "home.update_banner_desc_default": "New versions of ChronoKeep components are ready to download.",
     "home.update_banner_desc_count": "{count} component(s) have updates available ({tag}). Click View to update.",
@@ -298,7 +303,19 @@ const CHRONO_LOCALES = {
     "modal.upload_limit_why_title": "Why does this limit exist?",
     "modal.upload_limit_why_desc": "It acts as a safety guard to prevent save folders from accidentally uploading huge unintended files (such as heavy mods, 4K texture packs, installers, or ISOs) that would exhaust your Google Drive storage quota or freeze network queues.",
     "modal.upload_limit_ingame_note": "Note on games: During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability.",
-    "modal.upload_limit_ingame_note_html": "<strong>Note on games:</strong> During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability."
+    "modal.upload_limit_ingame_note_html": "<strong>Note on games:</strong> During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability.",
+
+    "modal.dep_title": "System Dependencies Check",
+    "modal.dep_subtitle": "Pre-flight requirements check before installing ChronoKeep",
+    "modal.dep_banner_missing_req_title": "Required Dependencies Missing",
+    "modal.dep_banner_missing_req_desc": "Installation is blocked until the required components listed below are installed on this computer.",
+    "modal.dep_banner_tp_warn_title": "Third-Party Tool Recommended",
+    "modal.dep_banner_tp_warn_desc": "No third-party tool (such as OpenSteamTool) was detected. ChronoKeep manages cloud saves for external games added via these tools. You can still proceed if you plan to install it later.",
+    "modal.dep_banner_all_ok_title": "All Requirements Met",
+    "modal.dep_banner_all_ok_desc": "All system dependencies and integration tools were detected successfully.",
+    "modal.dep_btn_refresh": "Check Again",
+    "modal.dep_btn_proceed": "Proceed with Installation",
+    "modal.dep_btn_close": "Close"
   },
 
   "pt-BR": {
@@ -336,10 +353,15 @@ const CHRONO_LOCALES = {
     "status.gdrive_disconnected_badge": "Google Drive Desconectado",
     "status.connected": "Conectado",
     "status.disconnected": "Desconectado",
+    "status.missing": "Ausente",
+    "status.detected": "Detectado",
+    "status.not_found": "Não encontrado",
+    "status.not_detected_tp": "Não detectado (Dependência de Terceiros)",
 
     "home.title": "Início",
     "home.hero_title": "ChronoKeep Cloud Save",
     "home.hero_version": "{version} — Sincronização Steam Cloud Clean-Room",
+    "home.btn_check_deps": "Verificar Dependências",
     "home.update_banner_title": "Atualizações disponíveis",
     "home.update_banner_desc_default": "Novas versões de componentes do ChronoKeep estão prontas para download.",
     "home.update_banner_desc_count": "{count} componente(s) com atualização disponível ({tag}). Clique em conferir para atualizar.",
@@ -594,7 +616,19 @@ const CHRONO_LOCALES = {
     "modal.upload_limit_why_title": "Por que existe este limite?",
     "modal.upload_limit_why_desc": "Serve como uma barreira de segurança para evitar que pastas de saves enviem acidentalmente arquivos gigantescos (como mods pesados, texturas 4K, instaladores ou ISOs) que consumiriam todo o espaço do seu Google Drive ou congelariam a rede.",
     "modal.upload_limit_ingame_note": "Nota: Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.",
-    "modal.upload_limit_ingame_note_html": "<strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade."
+    "modal.upload_limit_ingame_note_html": "<strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.",
+
+    "modal.dep_title": "Verificação de Dependências",
+    "modal.dep_subtitle": "Diagnóstico de pré-requisitos antes da instalação do ChronoKeep",
+    "modal.dep_banner_missing_req_title": "Dependências Obrigatórias Ausentes",
+    "modal.dep_banner_missing_req_desc": "A instalação está bloqueada até que os componentes obrigatórios listados abaixo sejam instalados no computador.",
+    "modal.dep_banner_tp_warn_title": "Ferramenta de Terceiros Recomendada",
+    "modal.dep_banner_tp_warn_desc": "Nenhuma ferramenta de terceiros (como OpenSteamTool) foi detectada. O ChronoKeep atua gerenciando a nuvem para jogos externos adicionados por elas. Você pode prosseguir caso planeje instalá-la depois.",
+    "modal.dep_banner_all_ok_title": "Todos os Requisitos Atendidos",
+    "modal.dep_banner_all_ok_desc": "Todas as dependências de sistema e ferramentas de integração foram detectadas com sucesso.",
+    "modal.dep_btn_refresh": "Verificar Novamente",
+    "modal.dep_btn_proceed": "Continuar Instalação",
+    "modal.dep_btn_close": "Fechar"
   }
 };
 
