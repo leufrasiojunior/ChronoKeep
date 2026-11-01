@@ -105,14 +105,38 @@ fn main() {
     }
 
     let max_upload_mb = cfg.max_upload_mb;
+    let (conn_tx, conn_rx) = std::sync::mpsc::sync_channel::<std::net::TcpStream>(256);
+    let shared_rx = Arc::new(Mutex::new(conn_rx));
+
+    for _ in 0..64 {
+        let rx_clone = Arc::clone(&shared_rx);
+        let eng = Arc::clone(&engine);
+        let lp = Arc::clone(&log_path);
+        thread::spawn(move || loop {
+            let next_stream = {
+                let Ok(guard) = rx_clone.lock() else {
+                    break;
+                };
+                guard.recv()
+            };
+            let Ok(stream) = next_stream else {
+                break;
+            };
+            handle_connection(stream, Arc::clone(&eng), Arc::clone(&lp), max_upload_mb);
+        });
+    }
+
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
         };
-        let eng = Arc::clone(&engine);
-        let lp = Arc::clone(&log_path);
-        thread::spawn(move || {
-            handle_connection(stream, eng, lp, max_upload_mb);
-        });
+        if let Err(std::sync::mpsc::TrySendError::Full(overflow_stream)) = conn_tx.try_send(stream)
+        {
+            let eng = Arc::clone(&engine);
+            let lp = Arc::clone(&log_path);
+            thread::spawn(move || {
+                handle_connection(overflow_stream, eng, lp, max_upload_mb);
+            });
+        }
     }
 }

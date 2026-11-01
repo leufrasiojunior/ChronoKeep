@@ -382,6 +382,9 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
                 manifest_data.change_number = 1;
             }
 
+            let mut game_uploaded = 0usize;
+            let mut game_failed = false;
+
             for (rel_name, full_path) in &game.files {
                 let (root_token, clean_filename) = split_root_token(rel_name);
                 if clean_filename.is_empty() {
@@ -389,17 +392,6 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
                 }
 
                 if let Ok(bytes) = fs::read(full_path) {
-                    let ok = sync_orphan_file_to_drive_with_retry(
-                        &token,
-                        game.account_id,
-                        game.app_id,
-                        &clean_filename,
-                        &bytes,
-                    );
-                    if ok {
-                        total_files_uploaded += 1;
-                    }
-
                     // Salva copia local no Vault sempre com caminho canônico e sem token na pasta física
                     let vault_file = vault_dir
                         .join(game.account_id.to_string())
@@ -411,6 +403,21 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
                     }
                     let _ = fs::write(&vault_file, &bytes);
 
+                    let ok = sync_orphan_file_to_drive_with_retry(
+                        &token,
+                        game.account_id,
+                        game.app_id,
+                        &clean_filename,
+                        &bytes,
+                    );
+                    if ok {
+                        total_files_uploaded += 1;
+                        game_uploaded += 1;
+                    } else {
+                        game_failed = true;
+                        continue;
+                    }
+
                     let sha = sha1_digest(&bytes);
                     let file_ts = fs::metadata(full_path)
                         .ok()
@@ -421,10 +428,14 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
 
                     let effective_token = if !root_token.is_empty() {
                         root_token
-                    } else if !manifest_data.default_root_token.is_empty() {
-                        manifest_data.default_root_token.clone()
+                    } else if let Some(existing) = manifest_data.files.get(&clean_filename) {
+                        if !existing.root_token.is_empty() {
+                            existing.root_token.clone()
+                        } else {
+                            manifest_data.default_root_token.clone()
+                        }
                     } else {
-                        "%WinMyDocuments%".to_string()
+                        manifest_data.default_root_token.clone()
                     };
 
                     manifest_data.files.insert(
@@ -447,15 +458,17 @@ pub unsafe fn on_upload_orphans(hwnd: HWND) {
             }
             let _ = fs::write(&manifest_file, manifest_content.as_bytes());
 
-            let _ = sync_orphan_file_to_drive_with_retry(
-                &token,
-                game.account_id,
-                game.app_id,
-                "manifest.tsv",
-                manifest_content.as_bytes(),
-            );
-
-            success_games += 1;
+            if !game_failed && game_uploaded > 0 {
+                if sync_orphan_file_to_drive_with_retry(
+                    &token,
+                    game.account_id,
+                    game.app_id,
+                    "manifest.tsv",
+                    manifest_content.as_bytes(),
+                ) {
+                    success_games += 1;
+                }
+            }
         }
 
         unsafe {
@@ -620,6 +633,7 @@ pub fn upload_single_game_save(
     let max_bytes = max_mb * 1024 * 1024;
     let mut uploaded_count = 0;
     let mut oversized_count = 0;
+    let mut failed_count = 0;
 
     for (rel_name, full_path) in &valid_files {
         let (root_token, clean_filename) = split_root_token(rel_name);
@@ -658,10 +672,14 @@ pub fn upload_single_game_save(
 
                 let effective_token = if !root_token.is_empty() {
                     root_token
-                } else if !manifest_data.default_root_token.is_empty() {
-                    manifest_data.default_root_token.clone()
+                } else if let Some(existing) = manifest_data.files.get(&clean_filename) {
+                    if !existing.root_token.is_empty() {
+                        existing.root_token.clone()
+                    } else {
+                        manifest_data.default_root_token.clone()
+                    }
                 } else {
-                    "%WinMyDocuments%".to_string()
+                    manifest_data.default_root_token.clone()
                 };
 
                 manifest_data.files.insert(
@@ -675,8 +693,24 @@ pub fn upload_single_game_save(
                         platforms_to_sync: 0xFFFF_FFFF,
                     },
                 );
+            } else {
+                failed_count += 1;
             }
         }
+    }
+
+    if failed_count > 0 {
+        return Err(if lang.is_pt() {
+            format!(
+                "Sincronização parcial abortada para proteger seus saves: {} arquivo(s) do AppID {} falharam ao subir para o Google Drive (o índice 'manifest.tsv' não foi alterado na nuvem). Tente novamente.",
+                failed_count, app_id
+            )
+        } else {
+            format!(
+                "Partial sync aborted to protect your saves: {} file(s) for AppID {} failed to upload to Google Drive ('manifest.tsv' was left untouched in the cloud). Please retry.",
+                failed_count, app_id
+            )
+        });
     }
 
     if uploaded_count == 0 {

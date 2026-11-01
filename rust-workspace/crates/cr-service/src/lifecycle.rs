@@ -104,12 +104,16 @@ pub fn ensure_parent_watcher(pid: u32, log_path: Arc<PathBuf>) {
             log_msg(
                 &log_path,
                 &format!(
-                    "[Lifecycle] Processo Steam (PID={}) encerrou. Finalizando chrono-daemon.exe...",
+                    "[Lifecycle] Processo Steam (PID={}) encerrou. Drenando uploads pendentes antes de finalizar chrono-daemon.exe...",
                     pid
                 ),
             );
 
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            crate::gdrive::wait_for_all_uploads(
+                std::time::Duration::from_secs(25),
+                Some(log_path.as_ref()),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(150));
             std::process::exit(0);
         });
     }

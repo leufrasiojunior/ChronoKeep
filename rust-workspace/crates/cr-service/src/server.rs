@@ -18,8 +18,8 @@ pub fn handle_connection(
     log_path: Arc<PathBuf>,
     max_upload_mb: u64,
 ) {
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
-    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(60)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(60)));
 
     let Some((method, path, body)) = read_http_request(&mut stream, &log_path, max_upload_mb) else {
         return;
@@ -33,12 +33,17 @@ pub fn handle_connection(
     if method == "POST" && path == "/v1/shutdown" {
         log_msg(
             &log_path,
-            "[Lifecycle] Requisicao de encerramento (/v1/shutdown) recebida da Steam. Finalizando chrono-daemon...",
+            "[Lifecycle] Requisicao de encerramento (/v1/shutdown) recebida da Steam. Drenando uploads antes de encerrar...",
         );
         let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"OK");
         let _ = stream.flush();
-        std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+        let lp = Arc::clone(&log_path);
+        std::thread::spawn(move || {
+            crate::gdrive::wait_for_all_uploads(
+                std::time::Duration::from_secs(25),
+                Some(lp.as_ref()),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(120));
             std::process::exit(0);
         });
         return;
@@ -121,9 +126,7 @@ pub fn handle_connection(
                     app_id, account_id
                 ),
             );
-            if let Ok(mut guard) = engine.lock() {
-                guard.on_exit_sync(account_id, app_id);
-            }
+            crate::rpc_engine::notify_exit_sync(&engine, account_id, app_id, true);
         }
         let _ = write_http_response(&mut stream, "200 OK", "text/plain", b"OK");
         return;
@@ -150,10 +153,8 @@ pub fn handle_connection(
         ]);
         let req_bytes = &body[off + 8..];
 
-        let rpc_res = engine
-            .lock()
-            .ok()
-            .and_then(|mut g| g.handle_rpc(&rpc_method, app_id, account_id, req_bytes));
+        let rpc_res =
+            crate::rpc_engine::dispatch_rpc(&engine, &rpc_method, app_id, account_id, req_bytes);
 
         match rpc_res {
             Some((eresult, resp_bytes)) => {
@@ -236,10 +237,12 @@ pub fn handle_connection(
 
     if method == "GET" && path.starts_with("/download/") {
         if let Some((account_id, app_id, clean_filename)) = parse_blob_route(&path, "/download/") {
-            let maybe_data = engine
-                .lock()
-                .ok()
-                .and_then(|g| g.retrieve_download_blob(account_id, app_id, &clean_filename));
+            let maybe_data = crate::rpc_engine::retrieve_download_blob_with_cloud(
+                &engine,
+                account_id,
+                app_id,
+                &clean_filename,
+            );
 
             if let Some(data) = maybe_data {
                 log_msg(
@@ -368,6 +371,12 @@ fn read_http_request(
                 method, path, content_length
             ),
         );
+        let _ = write_http_response(
+            stream,
+            "413 Payload Too Large",
+            "text/plain",
+            b"Payload Too Large",
+        );
         return None;
     }
 
@@ -396,6 +405,7 @@ fn read_http_request(
                 content_length
             ),
         );
+        let _ = write_http_response(stream, "400 Bad Request", "text/plain", b"Incomplete Body");
         return None;
     }
     body.truncate(content_length);
