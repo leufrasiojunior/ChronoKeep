@@ -165,7 +165,7 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
     if !cur_hash.is_empty() && !remote_hash.is_empty() && cur_hash == remote_hash {
         return target_ver.to_string();
     }
-    let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONO_DAEMON).to_lowercase();
+    let embedded_hash = sha256_hex(crate::embedded::get_embedded_daemon()).to_lowercase();
     if !cur_hash.is_empty() && cur_hash == embedded_hash {
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }
@@ -208,7 +208,7 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
     if !cur_hash.is_empty() && !remote_hash.is_empty() && cur_hash == remote_hash {
         return target_ver.to_string();
     }
-    let embedded_hash = sha256_hex(crate::commands::EMBEDDED_CHRONOKEEP_DLL).to_lowercase();
+    let embedded_hash = sha256_hex(crate::embedded::get_embedded_bridge()).to_lowercase();
     if !cur_hash.is_empty() && cur_hash == embedded_hash {
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }

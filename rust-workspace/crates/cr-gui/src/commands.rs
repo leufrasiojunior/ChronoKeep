@@ -26,8 +26,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const EMBEDDED_CHRONO_DAEMON: &[u8] = include_bytes!("../embedded/chrono-daemon.exe");
-pub const EMBEDDED_CHRONOKEEP_DLL: &[u8] = include_bytes!("../embedded/chronokeep.dll");
+pub use crate::embedded::{get_embedded_bridge, get_embedded_daemon};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SystemInfoDto {
@@ -661,17 +660,17 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     let dll_ok = deploy_component(
         &s_path.join("chronokeep.dll"),
         "chronokeep.dll",
-        EMBEDDED_CHRONOKEEP_DLL,
+        get_embedded_bridge(),
     );
     let _ = deploy_component(
         &s_path.join("cloud_redirect.dll"),
         "cloud_redirect.dll",
-        EMBEDDED_CHRONOKEEP_DLL,
+        get_embedded_bridge(),
     );
     let daemon_ok = deploy_component(
         &s_path.join("chrono-daemon.exe"),
         "chrono-daemon.exe",
-        EMBEDDED_CHRONO_DAEMON,
+        get_embedded_daemon(),
     );
 
     if !dll_ok || !daemon_ok {

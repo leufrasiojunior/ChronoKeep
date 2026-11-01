@@ -60,10 +60,6 @@ pub const IDYES: i32 = 6;
 pub const IDNO: i32 = 7;
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-// Embedded companion assets
-pub const EMBEDDED_CHRONOKEEP_DLL: &[u8] = include_bytes!("../embedded/chronokeep.dll");
-pub const EMBEDDED_CHRONO_DAEMON: &[u8] = include_bytes!("../embedded/chrono-daemon.exe");
-
 // Control IDs — Tab 1 (Configuração & Instalação)
 pub const ID_EDIT_STEAM: usize = 101;
 pub const ID_EDIT_VAULT: usize = 102;

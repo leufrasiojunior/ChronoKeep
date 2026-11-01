@@ -412,6 +412,7 @@ version = "0.1.16"
 dependencies = [
  "cr-common",
  "cr-proto",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
  "tauri",

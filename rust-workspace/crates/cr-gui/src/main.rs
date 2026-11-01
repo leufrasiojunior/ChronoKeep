@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod commands;
+pub mod embedded;
 mod i18n;
 mod installer;
 mod oauth_flow;
