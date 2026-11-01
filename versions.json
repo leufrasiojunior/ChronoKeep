@@ -1,12 +1,12 @@
 {
-  "release_version": "v0.1.12",
-  "published_at": "2026-10-31T22:44:05Z",
+  "release_version": "v0.1.13",
+  "published_at": "2026-11-01T01:05:58Z",
   "components": {
     "gui": {
-      "version": "v0.1.12",
+      "version": "v0.1.13",
       "filename": "ChronoKeep.exe",
-      "sha256": "9a6317e778a865021af7236f41668b9bcfe40579f0acf92145f17caf806f0017",
-      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.12/ChronoKeep.exe"
+      "sha256": "da69d8a8bfaf77ab5a9c69153bbf8c8d42107510c392629f28d41ecba9f8cb8f",
+      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v0.1.13/ChronoKeep.exe"
     },
     "daemon": {
       "version": "v0.1.8",
