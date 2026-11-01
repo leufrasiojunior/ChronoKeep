@@ -174,6 +174,8 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     pub fn GetModuleHandleW(lp_module_name: *const u16) -> HINSTANCE;
+    pub fn GetUserDefaultLocaleName(lp_locale_name: *mut u16, cch_locale_name: i32) -> i32;
+    pub fn GetUserDefaultUILanguage() -> u16;
 }
 
 #[link(name = "shell32")]

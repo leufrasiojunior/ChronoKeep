@@ -1,6 +1,7 @@
 //! Automatic update verification and deployment for ChronoKeep components.
 //! Supports decoupled updates of ChronoKeep (GUI), chrono-daemon, and chronokeep.dll.
 
+use crate::i18n::Lang;
 use crate::installer::deploy_bytes_safe;
 use crate::service_mgr::{
     close_steam_and_wait, is_process_running, kill_process_and_wait, launch_steam,
@@ -70,7 +71,7 @@ pub struct UpdateApplyResult {
     pub restart_required: bool,
 }
 
-pub fn fetch_remote_manifest() -> Result<RemoteManifest, String> {
+pub fn fetch_remote_manifest(lang: Lang) -> Result<RemoteManifest, String> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -83,15 +84,28 @@ pub fn fetch_remote_manifest() -> Result<RemoteManifest, String> {
         .or_else(|| https_download_url(&fallback_url, 15_000));
 
     let (status, bytes) = res.ok_or_else(|| {
-        "Não foi possível conectar ao servidor de versões do GitHub. Verifique sua conexão com a internet.".to_string()
+        if lang.is_pt() {
+            "Não foi possível conectar ao servidor de versões do GitHub. Verifique sua conexão com a internet.".to_string()
+        } else {
+            "Could not connect to the GitHub version server. Please check your internet connection.".to_string()
+        }
     })?;
 
     if status != 200 {
-        return Err(format!("Servidor de atualização retornou HTTP {}.", status));
+        return Err(if lang.is_pt() {
+            format!("Servidor de atualização retornou HTTP {}.", status)
+        } else {
+            format!("Update server returned HTTP {}.", status)
+        });
     }
 
-    serde_json::from_slice::<RemoteManifest>(&bytes)
-        .map_err(|e| format!("Falha ao decodificar manifesto de versões: {}", e))
+    serde_json::from_slice::<RemoteManifest>(&bytes).map_err(|e| {
+        if lang.is_pt() {
+            format!("Falha ao decodificar manifesto de versões: {}", e)
+        } else {
+            format!("Failed to decode version manifest: {}", e)
+        }
+    })
 }
 
 pub fn sanitize_windows_path(path: &Path) -> String {
@@ -134,9 +148,13 @@ fn extract_marker_version(path: &Path, prefix: &[u8]) -> Option<String> {
     None
 }
 
-pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: &str) -> String {
+pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: &str, lang: Lang) -> String {
     if !daemon_path.exists() {
-        return "Não instalado".to_string();
+        return if lang.is_pt() {
+            "Não instalado".to_string()
+        } else {
+            "Not installed".to_string()
+        };
     }
     // 1. Tenta extrair a versão pelo marcador embutido no binário
     if let Some(v) = extract_marker_version(daemon_path, b"CK_DAEMON_VER:") {
@@ -164,16 +182,22 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
         _ => {
             if !target_ver.is_empty() && target_ver.starts_with('v') {
                 target_ver.to_string()
-            } else {
+            } else if lang.is_pt() {
                 "Instalado".to_string()
+            } else {
+                "Installed".to_string()
             }
         }
     }
 }
 
-pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: &str) -> String {
+pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: &str, lang: Lang) -> String {
     if !bridge_path.exists() {
-        return "Não instalado".to_string();
+        return if lang.is_pt() {
+            "Não instalado".to_string()
+        } else {
+            "Not installed".to_string()
+        };
     }
     // 1. Tenta extrair a versão pelo marcador embutido no binário
     if let Some(v) = extract_marker_version(bridge_path, b"CK_BRIDGE_VER:") {
@@ -202,8 +226,10 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
         _ => {
             if !target_ver.is_empty() && target_ver.starts_with('v') {
                 target_ver.to_string()
-            } else {
+            } else if lang.is_pt() {
                 "Instalado".to_string()
+            } else {
+                "Installed".to_string()
             }
         }
     }
@@ -225,8 +251,8 @@ fn is_remote_newer(current: &str, remote: &str) -> bool {
     rem > cur
 }
 
-pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
-    let manifest = match fetch_remote_manifest() {
+pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
+    let manifest = match fetch_remote_manifest(lang) {
         Ok(m) => m,
         Err(e) => {
             return UpdateCheckResult {
@@ -237,6 +263,12 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
                 components: Vec::new(),
             };
         }
+    };
+
+    let not_installed_str = if lang.is_pt() {
+        "Não instalado"
+    } else {
+        "Not installed"
     };
 
     let mut components = Vec::new();
@@ -273,7 +305,11 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
 
     components.push(ComponentUpdateInfo {
         id: "gui".to_string(),
-        name: "ChronoKeep (Painel)".to_string(),
+        name: if lang.is_pt() {
+            "ChronoKeep (Painel)".to_string()
+        } else {
+            "ChronoKeep (GUI Panel)".to_string()
+        },
         current_version: format!("v{}", env!("CARGO_PKG_VERSION")),
         latest_version: gui_latest_ver,
         current_hash: gui_hash,
@@ -294,7 +330,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         let remote_hash = m.sha256.to_lowercase();
         if daemon_path.exists() {
             let current_hash = sha256_file(&daemon_path).unwrap_or_default().to_lowercase();
-            let ver = detect_daemon_version(&daemon_path, &remote_hash, &daemon_latest_ver);
+            let ver = detect_daemon_version(&daemon_path, &remote_hash, &daemon_latest_ver, lang);
             let status = if current_hash == remote_hash {
                 "up_to_date".to_string()
             } else if is_remote_newer(&ver, &daemon_latest_ver) {
@@ -308,7 +344,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
             };
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
-            (String::new(), "not_installed".to_string(), "Não instalado".to_string(), m.download_url.clone(), m.filename.clone())
+            (String::new(), "not_installed".to_string(), not_installed_str.to_string(), m.download_url.clone(), m.filename.clone())
         }
     } else {
         (String::new(), "up_to_date".to_string(), "OK".to_string(), String::new(), "chrono-daemon.exe".to_string())
@@ -316,7 +352,11 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
 
     components.push(ComponentUpdateInfo {
         id: "daemon".to_string(),
-        name: "chrono-daemon (Serviço)".to_string(),
+        name: if lang.is_pt() {
+            "chrono-daemon (Serviço)".to_string()
+        } else {
+            "chrono-daemon (Service)".to_string()
+        },
         current_version: daemon_ver,
         latest_version: daemon_latest_ver,
         current_hash: daemon_hash,
@@ -344,7 +384,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
         let remote_hash = m.sha256.to_lowercase();
         if bridge_path.exists() {
             let current_hash = sha256_file(&bridge_path).unwrap_or_default().to_lowercase();
-            let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver);
+            let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver, lang);
             let status = if current_hash == remote_hash {
                 "up_to_date".to_string()
             } else if is_remote_newer(&ver, &bridge_latest_ver) {
@@ -358,7 +398,7 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
             };
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
-            (String::new(), "not_installed".to_string(), "Não instalado".to_string(), m.download_url.clone(), m.filename.clone())
+            (String::new(), "not_installed".to_string(), not_installed_str.to_string(), m.download_url.clone(), m.filename.clone())
         }
     } else {
         (String::new(), "up_to_date".to_string(), "OK".to_string(), String::new(), "chronokeep.dll".to_string())
@@ -366,7 +406,11 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
 
     components.push(ComponentUpdateInfo {
         id: "bridge".to_string(),
-        name: "chronokeep.dll (Bridge Steam Cloud)".to_string(),
+        name: if lang.is_pt() {
+            "chronokeep.dll (Bridge Steam Cloud)".to_string()
+        } else {
+            "chronokeep.dll (Steam Cloud Bridge)".to_string()
+        },
         current_version: bridge_ver,
         latest_version: bridge_latest_ver,
         current_hash: bridge_hash,
@@ -381,9 +425,15 @@ pub fn check_updates(steam_dir: &Path) -> UpdateCheckResult {
     UpdateCheckResult {
         success: true,
         message: if has_updates {
-            "Atualizações disponíveis!".to_string()
-        } else {
+            if lang.is_pt() {
+                "Atualizações disponíveis!".to_string()
+            } else {
+                "Updates available!".to_string()
+            }
+        } else if lang.is_pt() {
             "Todos os componentes do ChronoKeep estão atualizados.".to_string()
+        } else {
+            "All ChronoKeep components are up to date.".to_string()
         },
         release_tag: manifest.release_version,
         has_updates,
@@ -396,24 +446,43 @@ pub fn apply_update(
     steam_dir: &Path,
     steam_was_running_override: Option<bool>,
     reopen_steam: bool,
+    lang: Lang,
 ) -> Result<UpdateApplyResult, String> {
-    let manifest = fetch_remote_manifest()?;
+    let manifest = fetch_remote_manifest(lang)?;
 
     match component_id {
         "daemon" => {
-            let comp = manifest.components.get("daemon")
-                .ok_or_else(|| "Componente 'daemon' não encontrado no manifesto remoto.".to_string())?;
+            let comp = manifest.components.get("daemon").ok_or_else(|| {
+                if lang.is_pt() {
+                    "Componente 'daemon' não encontrado no manifesto remoto.".to_string()
+                } else {
+                    "Component 'daemon' not found in remote manifest.".to_string()
+                }
+            })?;
 
-            let (status, bytes) = https_download_url(&comp.download_url, 60_000)
-                .ok_or_else(|| format!("Falha no download de {}", comp.filename))?;
+            let (status, bytes) = https_download_url(&comp.download_url, 60_000).ok_or_else(|| {
+                if lang.is_pt() {
+                    format!("Falha no download de {}", comp.filename)
+                } else {
+                    format!("Failed to download {}", comp.filename)
+                }
+            })?;
 
             if status != 200 {
-                return Err(format!("Download de {} falhou com status HTTP {}.", comp.filename, status));
+                return Err(if lang.is_pt() {
+                    format!("Download de {} falhou com status HTTP {}.", comp.filename, status)
+                } else {
+                    format!("Download of {} failed with HTTP status {}.", comp.filename, status)
+                });
             }
 
             let hash = sha256_hex(&bytes).to_lowercase();
             if hash != comp.sha256.to_lowercase() {
-                return Err(format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename));
+                return Err(if lang.is_pt() {
+                    format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename)
+                } else {
+                    format!("SHA-256 integrity check failed for downloaded file: {}", comp.filename)
+                });
             }
 
             let steam_currently_running = is_process_running("steam.exe");
@@ -429,7 +498,11 @@ pub fn apply_update(
 
             let dst = steam_dir.join("chrono-daemon.exe");
             if !deploy_bytes_safe(&bytes, &dst) {
-                return Err("Falha ao gravar novo chrono-daemon.exe em disco.".to_string());
+                return Err(if lang.is_pt() {
+                    "Falha ao gravar novo chrono-daemon.exe em disco.".to_string()
+                } else {
+                    "Failed to write new chrono-daemon.exe to disk.".to_string()
+                });
             }
 
             let restarted = start_service_from_gui(steam_dir, port);
@@ -439,13 +512,27 @@ pub fn apply_update(
             }
 
             let msg = if steam_was_running && reopen_steam {
-                "chrono-daemon.exe atualizado! A Steam foi reiniciada.".to_string()
+                if lang.is_pt() {
+                    "chrono-daemon.exe atualizado! A Steam foi reiniciada.".to_string()
+                } else {
+                    "chrono-daemon.exe updated! Steam has been restarted.".to_string()
+                }
             } else if steam_was_running {
-                "chrono-daemon.exe atualizado com sucesso!".to_string()
+                if lang.is_pt() {
+                    "chrono-daemon.exe atualizado com sucesso!".to_string()
+                } else {
+                    "chrono-daemon.exe updated successfully!".to_string()
+                }
             } else if restarted {
-                "chrono-daemon.exe atualizado e reiniciado com sucesso!".to_string()
-            } else {
+                if lang.is_pt() {
+                    "chrono-daemon.exe atualizado e reiniciado com sucesso!".to_string()
+                } else {
+                    "chrono-daemon.exe updated and restarted successfully!".to_string()
+                }
+            } else if lang.is_pt() {
                 "chrono-daemon.exe atualizado com sucesso!".to_string()
+            } else {
+                "chrono-daemon.exe updated successfully!".to_string()
             };
 
             Ok(UpdateApplyResult {
@@ -456,20 +543,41 @@ pub fn apply_update(
             })
         }
         "bridge" => {
-            let comp = manifest.components.get("bridge")
+            let comp = manifest
+                .components
+                .get("bridge")
                 .or_else(|| manifest.components.get("bridge_dll"))
-                .ok_or_else(|| "Componente 'bridge' não encontrado no manifesto remoto.".to_string())?;
+                .ok_or_else(|| {
+                    if lang.is_pt() {
+                        "Componente 'bridge' não encontrado no manifesto remoto.".to_string()
+                    } else {
+                        "Component 'bridge' not found in remote manifest.".to_string()
+                    }
+                })?;
 
-            let (status, bytes) = https_download_url(&comp.download_url, 60_000)
-                .ok_or_else(|| format!("Falha no download de {}", comp.filename))?;
+            let (status, bytes) = https_download_url(&comp.download_url, 60_000).ok_or_else(|| {
+                if lang.is_pt() {
+                    format!("Falha no download de {}", comp.filename)
+                } else {
+                    format!("Failed to download {}", comp.filename)
+                }
+            })?;
 
             if status != 200 {
-                return Err(format!("Download de {} falhou com status HTTP {}.", comp.filename, status));
+                return Err(if lang.is_pt() {
+                    format!("Download de {} falhou com status HTTP {}.", comp.filename, status)
+                } else {
+                    format!("Download of {} failed with HTTP status {}.", comp.filename, status)
+                });
             }
 
             let hash = sha256_hex(&bytes).to_lowercase();
             if hash != comp.sha256.to_lowercase() {
-                return Err(format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename));
+                return Err(if lang.is_pt() {
+                    format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename)
+                } else {
+                    format!("SHA-256 integrity check failed for downloaded file: {}", comp.filename)
+                });
             }
 
             let steam_currently_running = is_process_running("steam.exe");
@@ -486,7 +594,11 @@ pub fn apply_update(
             let _ = deploy_bytes_safe(&bytes, &dst_redirect);
 
             if !ok1 {
-                return Err("Falha ao gravar chronokeep.dll no diretório da Steam.".to_string());
+                return Err(if lang.is_pt() {
+                    "Falha ao gravar chronokeep.dll no diretório da Steam.".to_string()
+                } else {
+                    "Failed to write chronokeep.dll to Steam directory.".to_string()
+                });
             }
 
             if steam_was_running && reopen_steam {
@@ -494,9 +606,15 @@ pub fn apply_update(
             }
 
             let msg = if steam_was_running && reopen_steam {
-                "chronokeep.dll atualizada! A Steam foi reiniciada.".to_string()
-            } else {
+                if lang.is_pt() {
+                    "chronokeep.dll atualizada! A Steam foi reiniciada.".to_string()
+                } else {
+                    "chronokeep.dll updated! Steam has been restarted.".to_string()
+                }
+            } else if lang.is_pt() {
                 "chronokeep.dll atualizada com sucesso!".to_string()
+            } else {
+                "chronokeep.dll updated successfully!".to_string()
             };
 
             Ok(UpdateApplyResult {
@@ -507,27 +625,55 @@ pub fn apply_update(
             })
         }
         "gui" => {
-            let comp = manifest.components.get("gui")
-                .ok_or_else(|| "Componente 'gui' não encontrado no manifesto remoto.".to_string())?;
+            let comp = manifest.components.get("gui").ok_or_else(|| {
+                if lang.is_pt() {
+                    "Componente 'gui' não encontrado no manifesto remoto.".to_string()
+                } else {
+                    "Component 'gui' not found in remote manifest.".to_string()
+                }
+            })?;
 
-            let (status, bytes) = https_download_url(&comp.download_url, 120_000)
-                .ok_or_else(|| format!("Falha no download de {}", comp.filename))?;
+            let (status, bytes) = https_download_url(&comp.download_url, 120_000).ok_or_else(|| {
+                if lang.is_pt() {
+                    format!("Falha no download de {}", comp.filename)
+                } else {
+                    format!("Failed to download {}", comp.filename)
+                }
+            })?;
 
             if status != 200 {
-                return Err(format!("Download de {} falhou com status HTTP {}.", comp.filename, status));
+                return Err(if lang.is_pt() {
+                    format!("Download de {} falhou com status HTTP {}.", comp.filename, status)
+                } else {
+                    format!("Download of {} failed with HTTP status {}.", comp.filename, status)
+                });
             }
 
             let hash = sha256_hex(&bytes).to_lowercase();
             if hash != comp.sha256.to_lowercase() {
-                return Err(format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename));
+                return Err(if lang.is_pt() {
+                    format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename)
+                } else {
+                    format!("SHA-256 integrity check failed for downloaded file: {}", comp.filename)
+                });
             }
 
-            let cur_exe = std::env::current_exe()
-                .map_err(|e| format!("Não foi possível determinar caminho do executável atual: {}", e))?;
+            let cur_exe = std::env::current_exe().map_err(|e| {
+                if lang.is_pt() {
+                    format!("Não foi possível determinar caminho do executável atual: {}", e)
+                } else {
+                    format!("Could not determine current executable path: {}", e)
+                }
+            })?;
 
             let new_exe = cur_exe.with_extension("new.exe");
-            std::fs::write(&new_exe, &bytes)
-                .map_err(|e| format!("Falha ao salvar {} temporariamente: {}", comp.filename, e))?;
+            std::fs::write(&new_exe, &bytes).map_err(|e| {
+                if lang.is_pt() {
+                    format!("Falha ao salvar {} temporariamente: {}", comp.filename, e)
+                } else {
+                    format!("Failed to save temporary {}: {}", comp.filename, e)
+                }
+            })?;
 
             #[cfg(target_os = "windows")]
             {
@@ -554,14 +700,22 @@ pub fn apply_update(
                 );
 
                 if let Err(e) = std::fs::write(&bat_path, bat_script) {
-                    return Err(format!("Falha ao criar script de atualização: {}", e));
+                    return Err(if lang.is_pt() {
+                        format!("Falha ao criar script de atualização: {}", e)
+                    } else {
+                        format!("Failed to create update script: {}", e)
+                    });
                 }
 
                 let mut cmd = std::process::Command::new("cmd.exe");
                 cmd.args(&["/c", &bat_path.to_string_lossy().to_string()]);
                 cmd.creation_flags(CREATE_NO_WINDOW);
                 if let Err(e) = cmd.spawn() {
-                    return Err(format!("Falha ao executar script de atualização: {}", e));
+                    return Err(if lang.is_pt() {
+                        format!("Falha ao executar script de atualização: {}", e)
+                    } else {
+                        format!("Failed to launch update script: {}", e)
+                    });
                 }
 
                 // Encerra processo atual após 300ms para liberar o executável para substituição
@@ -573,11 +727,19 @@ pub fn apply_update(
 
             Ok(UpdateApplyResult {
                 success: true,
-                message: "ChronoKeep atualizado! Reiniciando o aplicativo em instantes...".to_string(),
+                message: if lang.is_pt() {
+                    "ChronoKeep atualizado! Reiniciando o aplicativo em instantes...".to_string()
+                } else {
+                    "ChronoKeep updated! Restarting the application shortly...".to_string()
+                },
                 component_id: "gui".to_string(),
                 restart_required: true,
             })
         }
-        _ => Err(format!("Componente desconhecido: {}", component_id)),
+        _ => Err(if lang.is_pt() {
+            format!("Componente desconhecido: {}", component_id)
+        } else {
+            format!("Unknown component: {}", component_id)
+        }),
     }
 }
