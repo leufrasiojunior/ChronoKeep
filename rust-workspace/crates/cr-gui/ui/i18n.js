@@ -15,6 +15,8 @@ const CHRONO_LOCALES = {
     "common.save_error": "Error saving settings.",
     "common.open_in_explorer": "Open folder in Explorer",
     "common.cancel": "Cancel",
+    "common.view_details": "View details",
+    "common.understand": "Got it",
     "common.installed": "Installed",
     "common.not_installed": "Not installed",
     "common.unknown_error": "Unknown error",
@@ -38,10 +40,15 @@ const CHRONO_LOCALES = {
     "status.gdrive_disconnected_badge": "Google Drive Disconnected",
     "status.connected": "Connected",
     "status.disconnected": "Disconnected",
+    "status.missing": "Missing",
+    "status.detected": "Detected",
+    "status.not_found": "Not found",
+    "status.not_detected_tp": "Not detected (Third-Party Dependency)",
 
     "home.title": "Home",
     "home.hero_title": "ChronoKeep Cloud Save",
     "home.hero_version": "{version} — Clean-Room Steam Cloud Sync",
+    "home.btn_check_deps": "Check Dependencies",
     "home.update_banner_title": "Updates available",
     "home.update_banner_desc_default": "New versions of ChronoKeep components are ready to download.",
     "home.update_banner_desc_count": "{count} component(s) have updates available ({tag}). Click View to update.",
@@ -274,18 +281,42 @@ const CHRONO_LOCALES = {
     "modal.steam_restart_confirm": "Continue & Restart Steam",
 
     "modal.uninstall_title": "Uninstall ChronoKeep from Steam",
-    "modal.uninstall_subtitle": "Component removal and save file restoration",
+    "modal.uninstall_subtitle": "Component removal and save file management",
     "modal.uninstall_safe_title": "Your saves are protected:",
     "modal.uninstall_safe_desc_html": "All save files stored in your <strong>Local Vault</strong> and <strong>Google Drive</strong> will remain <strong>completely intact</strong> and will not be deleted.",
+    "modal.uninstall_vault_location_label": "Local Vault location:",
     "modal.uninstall_warn_title": "What will happen:",
     "modal.uninstall_step1": "1. Steam will be temporarily closed to unload the DLLs.",
     "modal.uninstall_step2_html": "2. <code>chronokeep.dll</code>, <code>cloud_redirect.dll</code>, and <code>chrono-daemon.exe</code> will be removed from the Steam folder.",
     "modal.uninstall_step3": "3. All cloud redirections will be disabled and Steam will return to Valve's original state.",
-    "modal.uninstall_restore_title": "Import / Restore saves from Vault to local Steam (userdata)",
-    "modal.uninstall_restore_desc_html": "Copies the most recent saves preserved in the Vault directly back to <code>Steam\\userdata\\...\\remote</code> so you can keep playing locally on Steam.",
+    "modal.uninstall_restore_title": "Restore saves from Vault to local Steam (userdata)",
+    "modal.uninstall_restore_desc_html": "Optional. If checked, copies the most recent saves preserved in the Vault back into <code>Steam\\userdata\\...\\remote</code>. If unchecked, your saves remain safely stored only in the Local Vault.",
     "modal.uninstall_choice": "Are you sure you want to uninstall ChronoKeep from Steam?",
     "modal.uninstall_confirm": "Yes, Uninstall ChronoKeep",
-    "modal.uninstall_working": "Uninstalling and restoring..."
+    "modal.uninstall_working": "Uninstalling...",
+
+    "modal.upload_limit_title": "Manual Upload Limit per File",
+    "modal.upload_limit_subtitle": "How this setting works and what it does",
+    "modal.upload_limit_p1_html": "This setting defines the <strong>maximum individual size</strong> accepted for each save file during manual synchronization and orphan save uploads to the cloud (Google Drive).",
+    "modal.upload_limit_safe_title": "Your local saves are never lost:",
+    "modal.upload_limit_safe_desc": "If a save file exceeds the selected limit (e.g. 512 MB), it will <strong>not be discarded or deleted</strong>. It will remain securely stored and preserved on your local drive in the ChronoKeep <strong>Vault</strong>. Only the cloud upload for that specific file is bypassed.",
+    "modal.upload_limit_safe_desc_html": "If a save file exceeds the selected limit (e.g. 512 MB), it will <strong>not be discarded or deleted</strong>. It will remain securely stored and preserved on your local drive in the ChronoKeep <strong>Vault</strong>. Only the cloud upload for that specific file is bypassed.",
+    "modal.upload_limit_why_title": "Why does this limit exist?",
+    "modal.upload_limit_why_desc": "It acts as a safety guard to prevent save folders from accidentally uploading huge unintended files (such as heavy mods, 4K texture packs, installers, or ISOs) that would exhaust your Google Drive storage quota or freeze network queues.",
+    "modal.upload_limit_ingame_note": "Note on games: During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability.",
+    "modal.upload_limit_ingame_note_html": "<strong>Note on games:</strong> During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability.",
+
+    "modal.dep_title": "System Dependencies Check",
+    "modal.dep_subtitle": "Pre-flight requirements check before installing ChronoKeep",
+    "modal.dep_banner_missing_req_title": "Required Dependencies Missing",
+    "modal.dep_banner_missing_req_desc": "Installation is blocked until the required components listed below are installed on this computer.",
+    "modal.dep_banner_tp_warn_title": "Third-Party Tool Recommended",
+    "modal.dep_banner_tp_warn_desc": "No third-party tool (such as OpenSteamTool) was detected. ChronoKeep manages cloud saves for external games added via these tools. You can still proceed if you plan to install it later.",
+    "modal.dep_banner_all_ok_title": "All Requirements Met",
+    "modal.dep_banner_all_ok_desc": "All system dependencies and integration tools were detected successfully.",
+    "modal.dep_btn_refresh": "Check Again",
+    "modal.dep_btn_proceed": "Proceed with Installation",
+    "modal.dep_btn_close": "Close"
   },
 
   "pt-BR": {
@@ -298,6 +329,8 @@ const CHRONO_LOCALES = {
     "common.save_error": "Erro ao salvar.",
     "common.open_in_explorer": "Abrir pasta no Explorer",
     "common.cancel": "Cancelar",
+    "common.view_details": "Ver mais detalhes",
+    "common.understand": "Entendi",
     "common.installed": "Instalado",
     "common.not_installed": "Não instalado",
     "common.unknown_error": "Falha desconhecida",
@@ -321,10 +354,15 @@ const CHRONO_LOCALES = {
     "status.gdrive_disconnected_badge": "Google Drive Desconectado",
     "status.connected": "Conectado",
     "status.disconnected": "Desconectado",
+    "status.missing": "Ausente",
+    "status.detected": "Detectado",
+    "status.not_found": "Não encontrado",
+    "status.not_detected_tp": "Não detectado (Dependência de Terceiros)",
 
     "home.title": "Início",
     "home.hero_title": "ChronoKeep Cloud Save",
     "home.hero_version": "{version} — Sincronização Steam Cloud Clean-Room",
+    "home.btn_check_deps": "Verificar Dependências",
     "home.update_banner_title": "Atualizações disponíveis",
     "home.update_banner_desc_default": "Novas versões de componentes do ChronoKeep estão prontas para download.",
     "home.update_banner_desc_count": "{count} componente(s) com atualização disponível ({tag}). Clique em conferir para atualizar.",
@@ -557,18 +595,42 @@ const CHRONO_LOCALES = {
     "modal.steam_restart_confirm": "Continuar e Reiniciar Steam",
 
     "modal.uninstall_title": "Desinstalar ChronoKeep da Steam",
-    "modal.uninstall_subtitle": "Remoção de componentes e restauração de arquivos",
+    "modal.uninstall_subtitle": "Remoção de componentes e gerenciamento de saves",
     "modal.uninstall_safe_title": "Seus saves estão protegidos:",
     "modal.uninstall_safe_desc_html": "Todos os seus arquivos de save salvos no <strong>Cofre Local (Vault)</strong> e no <strong>Google Drive</strong> serão <strong>mantidos intactos</strong> e não serão apagados.",
+    "modal.uninstall_vault_location_label": "Localização do Cofre:",
     "modal.uninstall_warn_title": "O que acontecerá:",
     "modal.uninstall_step1": "1. A Steam será temporariamente encerrada para descarregar as DLLs.",
     "modal.uninstall_step2_html": "2. Os arquivos <code>chronokeep.dll</code>, <code>cloud_redirect.dll</code> e <code>chrono-daemon.exe</code> serão excluídos da pasta da Steam.",
     "modal.uninstall_step3": "3. Todos os redirecionamentos de nuvem serão desativados e a Steam voltará ao estado original da Valve.",
-    "modal.uninstall_restore_title": "Importar / Restaurar saves do Cofre para a Steam local (userdata)",
-    "modal.uninstall_restore_desc_html": "Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\\userdata\\...\\remote</code> para que você continue com seu progresso na Steam local.",
+    "modal.uninstall_restore_title": "Restaurar saves do Cofre para a pasta local da Steam (userdata)",
+    "modal.uninstall_restore_desc_html": "Opcional. Se marcado, copia os saves mais recentes preservados no Cofre de volta para a pasta <code>Steam\\userdata\\...\\remote</code>. Se desmarcado, seus saves permanecem seguros apenas no Cofre local.",
     "modal.uninstall_choice": "Tem certeza de que deseja desinstalar o ChronoKeep da Steam?",
     "modal.uninstall_confirm": "Sim, Desinstalar ChronoKeep",
-    "modal.uninstall_working": "Desinstalando e restaurando..."
+    "modal.uninstall_working": "Desinstalando...",
+
+    "modal.upload_limit_title": "Limite de Upload Manual por Arquivo",
+    "modal.upload_limit_subtitle": "Como funciona e para que serve esta configuração",
+    "modal.upload_limit_p1_html": "Esta configuração define o <strong>tamanho individual máximo</strong> aceito por arquivo durante a sincronização manual e upload de órfãos para a nuvem (Google Drive).",
+    "modal.upload_limit_safe_title": "Seus saves locais nunca são perdidos:",
+    "modal.upload_limit_safe_desc": "Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.",
+    "modal.upload_limit_safe_desc_html": "Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.",
+    "modal.upload_limit_why_title": "Por que existe este limite?",
+    "modal.upload_limit_why_desc": "Serve como uma barreira de segurança para evitar que pastas de saves enviem acidentalmente arquivos gigantescos (como mods pesados, texturas 4K, instaladores ou ISOs) que consumiriam todo o espaço do seu Google Drive ou congelariam a rede.",
+    "modal.upload_limit_ingame_note": "Nota: Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.",
+    "modal.upload_limit_ingame_note_html": "<strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.",
+
+    "modal.dep_title": "Verificação de Dependências",
+    "modal.dep_subtitle": "Diagnóstico de pré-requisitos antes da instalação do ChronoKeep",
+    "modal.dep_banner_missing_req_title": "Dependências Obrigatórias Ausentes",
+    "modal.dep_banner_missing_req_desc": "A instalação está bloqueada até que os componentes obrigatórios listados abaixo sejam instalados no computador.",
+    "modal.dep_banner_tp_warn_title": "Ferramenta de Terceiros Recomendada",
+    "modal.dep_banner_tp_warn_desc": "Nenhuma ferramenta de terceiros (como OpenSteamTool) foi detectada. O ChronoKeep atua gerenciando a nuvem para jogos externos adicionados por elas. Você pode prosseguir caso planeje instalá-la depois.",
+    "modal.dep_banner_all_ok_title": "Todos os Requisitos Atendidos",
+    "modal.dep_banner_all_ok_desc": "Todas as dependências de sistema e ferramentas de integração foram detectadas com sucesso.",
+    "modal.dep_btn_refresh": "Verificar Novamente",
+    "modal.dep_btn_proceed": "Continuar Instalação",
+    "modal.dep_btn_close": "Fechar"
   }
 };
 
@@ -622,7 +684,14 @@ function applyI18nToDOM() {
 
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
-    if (key) el.textContent = t(key);
+    if (key) {
+      const val = t(key);
+      if (typeof val === "string" && val.includes("<") && val.includes(">")) {
+        el.innerHTML = val;
+      } else {
+        el.textContent = val;
+      }
+    }
   });
 
   document.querySelectorAll("[data-i18n-html]").forEach((el) => {

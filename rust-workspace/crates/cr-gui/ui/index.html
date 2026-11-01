@@ -119,7 +119,7 @@
         <div class="sidebar-versions" id="sidebar-versions">
           <div class="sidebar-version-item">
             <span class="sidebar-ver-key">GUI:</span>
-            <span class="sidebar-ver-val" id="sidebar-ver-gui">v0.1.15</span>
+            <span class="sidebar-ver-val" id="sidebar-ver-gui">v0.1.16</span>
           </div>
           <div class="sidebar-version-item">
             <span class="sidebar-ver-key">DLL:</span>
@@ -153,7 +153,7 @@
             </div>
             <div class="hero-info">
               <h3 class="hero-title" data-i18n="home.hero_title">ChronoKeep Cloud Save</h3>
-              <p class="hero-version" id="hero-version">v0.1.15 — Sincronização Steam Cloud Clean-Room</p>
+              <p class="hero-version" id="hero-version">v0.1.16 — Sincronização Steam Cloud Clean-Room</p>
             </div>
           </div>
 
@@ -309,6 +309,7 @@
                 </div>
                 <div class="card-right">
                   <span class="status-pill active" id="ost-status-pill" data-i18n="status.ost_active">Ativo</span>
+                  <button class="btn btn-secondary btn-sm" id="btn-home-check-deps" data-i18n="home.btn_check_deps" style="font-size: 11px; padding: 4px 8px;">Verificar Dependências</button>
                 </div>
               </div>
 
@@ -403,7 +404,16 @@
                   </svg>
                 </div>
                 <div class="card-text">
-                  <div class="card-name" data-i18n="providers.upload_limit_title">Limite de Upload Manual por Arquivo</div>
+                  <div class="card-name card-name-row">
+                    <span data-i18n="providers.upload_limit_title">Limite de Upload Manual por Arquivo</span>
+                    <button type="button" class="info-help-btn" id="btn-upload-limit-help" data-i18n-title="common.view_details" title="Ver mais detalhes" aria-label="Ver mais detalhes">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                      </svg>
+                    </button>
+                  </div>
                   <div class="card-desc" data-i18n="providers.upload_limit_desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
                 </div>
               </div>
@@ -606,7 +616,7 @@
                   <div class="update-item-title" data-i18n="settings.comp_gui_title">ChronoKeep (Painel Interface)</div>
                   <div class="update-item-meta">
                     <span class="meta-label" data-i18n="settings.meta_installed_ver">Versão instalada:</span>
-                    <span class="meta-val" id="meta-gui-cur">v0.1.15</span>
+                    <span class="meta-val" id="meta-gui-cur">v0.1.16</span>
                     <span class="meta-sep">•</span>
                     <span class="meta-label" data-i18n="settings.meta_latest">Mais recente:</span>
                     <span class="meta-val" id="meta-gui-latest">-</span>
@@ -850,7 +860,7 @@
             </div>
             <div>
               <h2 class="about-name">ChronoKeep</h2>
-              <p class="about-desc" id="about-version">v0.1.15</p>
+              <p class="about-desc" id="about-version">v0.1.16</p>
             </div>
           </div>
 
@@ -970,6 +980,7 @@
           <div class="callout-text">
             <strong data-i18n="modal.uninstall_safe_title">Seus saves estão protegidos:</strong>
             <p data-i18n-html="modal.uninstall_safe_desc_html">Todos os seus arquivos de save salvos no <strong>Cofre Local (Vault)</strong> e no <strong>Google Drive</strong> serão <strong>mantidos intactos</strong> e não serão apagados.</p>
+            <p style="margin: 6px 0 0 0; font-size: 12px; color: var(--text-secondary);"><span data-i18n="modal.uninstall_vault_location_label">Localização do Cofre:</span> <code id="uninstall-vault-location" style="word-break: break-all;"></code></p>
           </div>
         </div>
 
@@ -985,10 +996,10 @@
 
         <div style="margin: 16px 0; padding: 14px; background: var(--bg-subtle); border-radius: var(--radius-sm); border: 1px solid var(--card-border);">
           <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px;">
-            <input type="checkbox" id="check-restore-saves-on-uninstall" checked style="margin-top: 3px; accent-color: var(--accent-color);">
+            <input type="checkbox" id="check-restore-saves-on-uninstall" style="margin-top: 3px; accent-color: var(--accent-color);">
             <div>
-              <strong data-i18n="modal.uninstall_restore_title">Importar / Restaurar saves do Cofre para a Steam local (userdata)</strong>
-              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;" data-i18n-html="modal.uninstall_restore_desc_html">Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\userdata\...\remote</code> para que você continue com seu progresso na Steam local.</p>
+              <strong data-i18n="modal.uninstall_restore_title">Restaurar saves do Cofre para a pasta local da Steam (userdata)</strong>
+              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;" data-i18n-html="modal.uninstall_restore_desc_html">Opcional. Se marcado, copia os saves mais recentes preservados no Cofre de volta para <code>Steam\userdata\...\remote</code>. Se desmarcado, seus saves permanecem seguros apenas no Cofre local.</p>
             </div>
           </label>
         </div>
@@ -999,6 +1010,87 @@
       <div class="dialog-footer">
         <button id="btn-uninstall-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
         <button id="btn-uninstall-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;" data-i18n="modal.uninstall_confirm">Sim, Desinstalar ChronoKeep</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ContentDialog: Informações do Limite de Upload Manual -->
+  <div id="upload-limit-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-limit-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="upload-limit-title" class="dialog-title" data-i18n="modal.upload_limit_title">Limite de Upload Manual por Arquivo</h2>
+        <p class="dialog-subtitle" data-i18n="modal.upload_limit_subtitle">Como funciona e para que serve esta configuração</p>
+      </div>
+
+      <div class="dialog-body">
+        <p data-i18n-html="modal.upload_limit_p1_html">Esta configuração define o <strong>tamanho individual máximo</strong> aceito por arquivo durante a sincronização manual e upload de órfãos para a nuvem (Google Drive).</p>
+
+        <div class="dialog-callout safe">
+          <div class="callout-icon">🛡️</div>
+          <div class="callout-text">
+            <strong data-i18n="modal.upload_limit_safe_title">Seus saves locais nunca são perdidos:</strong>
+            <p data-i18n-html="modal.upload_limit_safe_desc_html">Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.</p>
+          </div>
+        </div>
+
+        <div class="dialog-callout warning">
+          <div class="callout-icon">💡</div>
+          <div class="callout-text">
+            <strong data-i18n="modal.upload_limit_why_title">Por que existe este limite?</strong>
+            <p data-i18n="modal.upload_limit_why_desc">Serve como barreira de segurança para evitar que pastas de saves enviem acidentalmente arquivos gigantescos (como mods pesados, texturas 4K, instaladores ou ISOs) que consumiriam todo o espaço do seu Google Drive ou congelariam a rede.</p>
+          </div>
+        </div>
+
+        <p style="margin-top: 4px; font-size: 12px; color: var(--text-secondary); line-height: 1.4;" data-i18n-html="modal.upload_limit_ingame_note_html"><strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-upload-limit-close" class="btn btn-primary" data-i18n="common.understand">Entendi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ContentDialog: Verificação de Dependências & Pré-Requisitos -->
+  <div id="dependencies-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="dep-modal-title" style="max-width: 660px;">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="dep-modal-title" class="dialog-title" data-i18n="modal.dep_title">Verificação de Dependências</h2>
+        <p class="dialog-subtitle" data-i18n="modal.dep_subtitle">Diagnóstico de pré-requisitos antes da instalação do ChronoKeep</p>
+      </div>
+
+      <div class="dialog-body" style="gap: 14px;">
+        <!-- Banner de Status Principal -->
+        <div id="dep-banner-callout" class="dialog-callout warning">
+          <div class="callout-icon" id="dep-banner-icon">⚠️</div>
+          <div class="callout-text">
+            <strong id="dep-banner-title" data-i18n="modal.dep_banner_missing_req_title">Dependências Obrigatórias Ausentes</strong>
+            <p id="dep-banner-desc" data-i18n="modal.dep_banner_missing_req_desc">A instalação está bloqueada até que os componentes obrigatórios listados abaixo sejam instalados no computador.</p>
+          </div>
+        </div>
+
+        <!-- Lista dinâmica de dependências -->
+        <div id="dep-items-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+      </div>
+
+      <div class="dialog-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <button id="btn-dep-refresh" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          <span data-i18n="modal.dep_btn_refresh">Verificar Novamente</span>
+        </button>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-dep-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+          <button id="btn-dep-proceed" class="btn btn-primary" data-i18n="modal.dep_btn_proceed">Continuar Instalação</button>
+        </div>
       </div>
     </div>
   </div>

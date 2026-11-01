@@ -7,10 +7,10 @@ Construído 100% em **Rust** (arquitetura *clean-room*, código limpo e seguro),
 
 ## 🚀 Como Usar (Instalação Rápida para Usuário Comum)
 
-Não é necessário compilar nada nem usar scripts complexos. O executável **`ChronoKeepSetup.exe`** é **100% autocontido** (todos os binários e DLLs necessários estão embutidos dentro dele).
+Não é necessário compilar nada nem usar scripts complexos. O executável **`ChronoKeep.exe`** é **100% autocontido** (todos os binários e DLLs necessários estão embutidos dentro dele).
 
-1. Acesse a aba **[Releases](../../releases)** deste repositório e baixe o arquivo **`ChronoKeepSetup.exe`**.
-2. Execute o **`ChronoKeepSetup.exe`**.
+1. Acesse a aba **[Releases](../../releases)** deste repositório e baixe o arquivo **`ChronoKeep.exe`**.
+2. Execute o **`ChronoKeep.exe`**.
 3. O instalador detectará sua pasta da Steam automaticamente:
    - Se o seu **OpenSteamTool** estiver com o recurso cloud desativado (`opensteamtool.toml`), o ChronoKeep avisará na hora e oferecerá para ativar com 1 clique.
 4. Clique no botão **`Instalar na Steam (1-Clique)`**:
@@ -18,16 +18,16 @@ Não é necessário compilar nada nem usar scripts complexos. O executável **`C
 5. *(Opcional)* Clique em **`Conectar Conta Google Drive`** para fazer login com 1 clique no navegador e salvar uma cópia na nuvem.
 6. Pronto! Abra sua Steam e jogue normalmente. Seus saves estarão sempre sincronizados e seguros em `%USERPROFILE%\Saved Games\ChronoKeepVault`.
 
-> 💡 **Dica (Instalação Silenciosa)**: Você também pode rodar `ChronoKeepSetup.exe /silent` ou clicar no botão **`Instalar Silencioso`** na interface para implantar tudo instantaneamente sem confirmações adicionais.
+> 💡 **Dica (Instalação Silenciosa)**: Você também pode rodar `ChronoKeep.exe /silent` ou clicar no botão **`Instalar Silencioso`** na interface para implantar tudo instantaneamente sem confirmações adicionais.
 
 ---
 
 ## 🏛️ Arquitetura
 
-1. **`ChronoKeepSetup.exe` (Instalador All-In-One — `crates/cr-gui`)**
-   - Executável nativo Win32 leve (~1 MB).
+1. **`ChronoKeep.exe` (Aplicativo e Painel All-In-One — `crates/cr-gui`)**
+   - Executável nativo Win32 construído em Tauri v2 com interface Fluent Design.
    - Contém a DLL e o Daemon embutidos via `include_bytes!`. Funciona mesmo executado isolado em um computador sem outros arquivos.
-   - Suporte a modo silencioso via `/silent`, `/S` ou `/install`.
+   - Suporte a modo silencioso via `/silent`, `/S` ou `/install`, e modo de desinstalação via `--uninstall`.
    - Gerenciador de conexão OAuth2 para Google Drive.
 
 2. **`chronokeep.dll` / `cloud_redirect.dll` (Bridge DLL — `crates/cr-bridge-dll`)**

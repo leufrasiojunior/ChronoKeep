@@ -16,9 +16,8 @@ cargo build --config "$SCRIPT_DIR/rust-workspace/.cargo/config.toml" --manifest-
 
 echo "==> Copiando binarios para a pasta dist/..."
 mkdir -p "$SCRIPT_DIR/dist"
+rm -f "$SCRIPT_DIR/dist/ChronoKeepSetup.exe" "$SCRIPT_DIR/dist/ChronoKeepUninstall.exe"
 cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/ChronoKeep.exe" "$SCRIPT_DIR/dist/ChronoKeep.exe"
-cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/ChronoKeep.exe" "$SCRIPT_DIR/dist/ChronoKeepSetup.exe"
-cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/ChronoKeep.exe" "$SCRIPT_DIR/dist/ChronoKeepUninstall.exe"
 cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chrono-daemon.exe" "$SCRIPT_DIR/dist/chrono-daemon.exe"
 cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chronokeep.dll" "$SCRIPT_DIR/dist/chronokeep.dll"
 cp "$SCRIPT_DIR/rust-workspace/target/x86_64-pc-windows-msvc/release/chronokeep.dll" "$SCRIPT_DIR/dist/cloud_redirect.dll"
