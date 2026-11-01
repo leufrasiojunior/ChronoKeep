@@ -294,9 +294,11 @@ const CHRONO_LOCALES = {
     "modal.upload_limit_p1_html": "This setting defines the <strong>maximum individual size</strong> accepted for each save file during manual synchronization and orphan save uploads to the cloud (Google Drive).",
     "modal.upload_limit_safe_title": "Your local saves are never lost:",
     "modal.upload_limit_safe_desc": "If a save file exceeds the selected limit (e.g. 512 MB), it will <strong>not be discarded or deleted</strong>. It will remain securely stored and preserved on your local drive in the ChronoKeep <strong>Vault</strong>. Only the cloud upload for that specific file is bypassed.",
+    "modal.upload_limit_safe_desc_html": "If a save file exceeds the selected limit (e.g. 512 MB), it will <strong>not be discarded or deleted</strong>. It will remain securely stored and preserved on your local drive in the ChronoKeep <strong>Vault</strong>. Only the cloud upload for that specific file is bypassed.",
     "modal.upload_limit_why_title": "Why does this limit exist?",
     "modal.upload_limit_why_desc": "It acts as a safety guard to prevent save folders from accidentally uploading huge unintended files (such as heavy mods, 4K texture packs, installers, or ISOs) that would exhaust your Google Drive storage quota or freeze network queues.",
-    "modal.upload_limit_ingame_note": "Note: During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability."
+    "modal.upload_limit_ingame_note": "Note on games: During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability.",
+    "modal.upload_limit_ingame_note_html": "<strong>Note on games:</strong> During normal gameplay, the daemon automatically manages upload batches and in-flight transfer limits in the background for maximum reliability."
   },
 
   "pt-BR": {
@@ -588,9 +590,11 @@ const CHRONO_LOCALES = {
     "modal.upload_limit_p1_html": "Esta configuração define o <strong>tamanho individual máximo</strong> aceito por arquivo durante a sincronização manual e upload de órfãos para a nuvem (Google Drive).",
     "modal.upload_limit_safe_title": "Seus saves locais nunca são perdidos:",
     "modal.upload_limit_safe_desc": "Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.",
+    "modal.upload_limit_safe_desc_html": "Caso um arquivo de save seja maior que o limite selecionado (ex: 512 MB), ele <strong>não será descartado nem apagado</strong>. Ele continuará armazenado e seguro em seu disco local no <strong>Cofre (Vault)</strong> do ChronoKeep. Apenas o envio deste arquivo específico para a nuvem será ignorado.",
     "modal.upload_limit_why_title": "Por que existe este limite?",
     "modal.upload_limit_why_desc": "Serve como uma barreira de segurança para evitar que pastas de saves enviem acidentalmente arquivos gigantescos (como mods pesados, texturas 4K, instaladores ou ISOs) que consumiriam todo o espaço do seu Google Drive ou congelariam a rede.",
-    "modal.upload_limit_ingame_note": "Nota: Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade."
+    "modal.upload_limit_ingame_note": "Nota: Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade.",
+    "modal.upload_limit_ingame_note_html": "<strong>Nota sobre jogos:</strong> Durante a execução dos jogos, o daemon gerencia o tráfego em lote e a proteção de conexão em voo automaticamente em segundo plano para garantir máxima estabilidade."
   }
 };
 
@@ -644,7 +648,14 @@ function applyI18nToDOM() {
 
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
-    if (key) el.textContent = t(key);
+    if (key) {
+      const val = t(key);
+      if (typeof val === "string" && val.includes("<") && val.includes(">")) {
+        el.innerHTML = val;
+      } else {
+        el.textContent = val;
+      }
+    }
   });
 
   document.querySelectorAll("[data-i18n-html]").forEach((el) => {
