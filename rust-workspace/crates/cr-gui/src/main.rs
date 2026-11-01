@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod commands;
+mod i18n;
 mod installer;
 mod oauth_flow;
 mod orphans;
@@ -52,6 +53,7 @@ fn main() {
             get_system_info,
             get_config,
             save_config,
+            set_language,
             get_service_status,
             start_service,
             stop_service,

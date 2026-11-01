@@ -523,12 +523,23 @@ pub fn upload_single_game_save(
     vault_dir: &Path,
     app_id: u32,
     account_id: u32,
+    lang: crate::i18n::Lang,
 ) -> Result<usize, String> {
-    let token_path = find_or_create_gdrive_token_file(steam_dir)
-        .ok_or_else(|| "Conta Google Drive não conectada. Conecte sua conta antes de sincronizar.".to_string())?;
+    let token_path = find_or_create_gdrive_token_file(steam_dir).ok_or_else(|| {
+        if lang.is_pt() {
+            "Conta Google Drive não conectada. Conecte sua conta antes de sincronizar.".to_string()
+        } else {
+            "Google Drive account not connected. Please connect your account before syncing.".to_string()
+        }
+    })?;
 
-    let token = refresh_access_token(&token_path)
-        .ok_or_else(|| "Falha ao renovar token de acesso do Google Drive. Refaça o login nas configurações.".to_string())?;
+    let token = refresh_access_token(&token_path).ok_or_else(|| {
+        if lang.is_pt() {
+            "Falha ao renovar token de acesso do Google Drive. Refaça o login nas configurações.".to_string()
+        } else {
+            "Failed to refresh Google Drive access token. Please sign in again in Settings.".to_string()
+        }
+    })?;
 
     let mut files_to_sync: Vec<(String, PathBuf)> = Vec::new();
 
@@ -670,18 +681,35 @@ pub fn upload_single_game_save(
 
     if uploaded_count == 0 {
         if oversized_count > 0 {
-            return Err(format!(
-                "Nenhum arquivo enviado à nuvem: todos os {} arquivo(s) do AppID {} excedem o limite de upload manual ({} MB) e foram preservados apenas no Cofre local.",
-                valid_files.len(),
-                app_id,
-                max_mb
-            ));
+            return Err(if lang.is_pt() {
+                format!(
+                    "Nenhum arquivo enviado à nuvem: todos os {} arquivo(s) do AppID {} excedem o limite de upload manual ({} MB) e foram preservados apenas no Cofre local.",
+                    valid_files.len(),
+                    app_id,
+                    max_mb
+                )
+            } else {
+                format!(
+                    "No files uploaded to cloud: all {} file(s) for AppID {} exceed the manual upload limit ({} MB) and were preserved in the local Vault only.",
+                    valid_files.len(),
+                    app_id,
+                    max_mb
+                )
+            });
         } else {
-            return Err(format!(
-                "Falha ao enviar os {} arquivo(s) do AppID {} para o Google Drive. Verifique a conexão com a internet ou permissões da conta.",
-                valid_files.len(),
-                app_id
-            ));
+            return Err(if lang.is_pt() {
+                format!(
+                    "Falha ao enviar os {} arquivo(s) do AppID {} para o Google Drive. Verifique a conexão com a internet ou permissões da conta.",
+                    valid_files.len(),
+                    app_id
+                )
+            } else {
+                format!(
+                    "Failed to upload {} file(s) for AppID {} to Google Drive. Check your internet connection or account permissions.",
+                    valid_files.len(),
+                    app_id
+                )
+            });
         }
     }
 
@@ -695,10 +723,17 @@ pub fn upload_single_game_save(
         manifest_content.as_bytes(),
     );
     if !manifest_ok {
-        return Err(format!(
-            "Os arquivos de save do AppID {} foram enviados, mas houve falha ao sincronizar o índice 'manifest.tsv' com o Google Drive.",
-            app_id
-        ));
+        return Err(if lang.is_pt() {
+            format!(
+                "Os arquivos de save do AppID {} foram enviados, mas houve falha ao sincronizar o índice 'manifest.tsv' com o Google Drive.",
+                app_id
+            )
+        } else {
+            format!(
+                "Save files for AppID {} were uploaded, but syncing the 'manifest.tsv' index to Google Drive failed.",
+                app_id
+            )
+        });
     }
 
     if let Some(parent) = manifest_file.parent() {
@@ -708,12 +743,21 @@ pub fn upload_single_game_save(
 
     let target_upload_count = valid_files.len().saturating_sub(oversized_count);
     if uploaded_count < target_upload_count {
-        return Err(format!(
-            "Sincronização parcial: apenas {} de {} arquivo(s) do AppID {} foram enviados ao Google Drive com sucesso.",
-            uploaded_count,
-            target_upload_count,
-            app_id
-        ));
+        return Err(if lang.is_pt() {
+            format!(
+                "Sincronização parcial: apenas {} de {} arquivo(s) do AppID {} foram enviados ao Google Drive com sucesso.",
+                uploaded_count,
+                target_upload_count,
+                app_id
+            )
+        } else {
+            format!(
+                "Partial sync: only {} of {} file(s) for AppID {} were uploaded to Google Drive successfully.",
+                uploaded_count,
+                target_upload_count,
+                app_id
+            )
+        });
     }
 
     Ok(uploaded_count)

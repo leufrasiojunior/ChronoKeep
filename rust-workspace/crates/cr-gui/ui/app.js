@@ -21,12 +21,112 @@ let appConfig = {
   gdrive_connected: false,
   max_upload_mb: 512,
   theme: "dark",
+  language: "system",
   backup_provider: "gdrive",
 };
 let defaultVaultDir = "";
+let osLocale = "";
+let sysInfoCache = null;
 
 let daemonOnline = false;
 let toastTimeout = null;
+
+function formatVersionLabel(val) {
+  if (!val) return "-";
+  const lower = String(val).trim().toLowerCase();
+  if (lower === "não instalado" || lower === "nao instalado" || lower === "not installed") {
+    return t("common.not_installed");
+  }
+  if (lower === "instalado" || lower === "installed") {
+    return t("common.installed");
+  }
+  return val;
+}
+
+function formatSaveSource(source) {
+  if (!source) return t("saves.source_vault_local");
+  const norm = String(source).trim().toLowerCase();
+  if (norm === "steam_userdata" || norm === "steam userdata") {
+    return t("saves.source_steam_userdata");
+  }
+  if (norm === "steam_vault" || norm === "steam + cofre" || norm === "steam + vault") {
+    return t("saves.source_steam_vault");
+  }
+  if (norm === "vault_local" || norm === "cofre local" || norm === "local vault") {
+    return t("saves.source_vault_local");
+  }
+  return source;
+}
+
+function applyLanguage(pref, refreshDynamic = true) {
+  const normalizedPref = pref || "system";
+  appConfig.language = normalizedPref;
+  try {
+    localStorage.setItem("chronokeep_lang_pref", normalizedPref);
+  } catch (_) {}
+
+  if (window.ChronoI18n) {
+    const resolved = window.ChronoI18n.resolveLocale(normalizedPref, osLocale);
+    window.ChronoI18n.setLocale(resolved);
+    window.ChronoI18n.applyI18nToDOM();
+    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v0.1.13";
+    const vStr = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
+    const heroVerEl = document.getElementById("hero-version");
+    if (heroVerEl) heroVerEl.textContent = t("home.hero_version", { version: vStr });
+  }
+
+  const langSelect = document.getElementById("select-language");
+  if (langSelect && langSelect.value !== normalizedPref) {
+    langSelect.value = normalizedPref;
+  }
+
+  if (refreshDynamic) {
+    refreshDynamicUI();
+  }
+}
+
+function refreshSystemInfoUI() {
+  if (!sysInfoCache) return;
+  const ostPill = document.getElementById("ost-status-pill");
+  if (ostPill) {
+    if (sysInfoCache.opensteamtool_active) {
+      ostPill.textContent = t("status.ost_active");
+      ostPill.className = "status-pill active";
+    } else {
+      ostPill.textContent = t("status.ost_inactive");
+      ostPill.className = "status-pill";
+    }
+  }
+
+  if (sysInfoCache.version) {
+    const vStr = sysInfoCache.version.startsWith("v") ? sysInfoCache.version : `v${sysInfoCache.version}`;
+    const verEl = document.getElementById("about-version");
+    if (verEl) verEl.textContent = vStr;
+    const heroVerEl = document.getElementById("hero-version") || document.querySelector(".hero-version");
+    if (heroVerEl) heroVerEl.textContent = t("home.hero_version", { version: vStr });
+  }
+
+  const elGui = document.getElementById("sidebar-ver-gui");
+  const elDll = document.getElementById("sidebar-ver-dll");
+  const elDaemon = document.getElementById("sidebar-ver-daemon");
+  if (elGui && sysInfoCache.gui_version) elGui.textContent = formatVersionLabel(sysInfoCache.gui_version);
+  if (elDll && sysInfoCache.dll_version) elDll.textContent = formatVersionLabel(sysInfoCache.dll_version);
+  if (elDaemon && sysInfoCache.daemon_version) elDaemon.textContent = formatVersionLabel(sysInfoCache.daemon_version);
+}
+
+function refreshDynamicUI() {
+  refreshSystemInfoUI();
+  updateDaemonStatusUI(daemonOnline, appConfig.port);
+  updateGDriveStatusUI(appConfig.gdrive_connected);
+  renderSavesTable();
+  if (lastUpdateCheckResult) {
+    renderUpdateCheckResultUI(lastUpdateCheckResult);
+  }
+  const logsPage = document.getElementById("page-logs");
+  if (logsPage && logsPage.classList.contains("active")) {
+    loadLogs();
+  }
+}
 
 function showToast(message, duration = 3500) {
   const toast = document.getElementById("toast");
@@ -93,6 +193,8 @@ function openUninstallModal() {
   const checkRestore = document.getElementById("check-restore-saves-on-uninstall");
   if (!modal || !btnCancel || !btnConfirm) return;
 
+  btnConfirm.disabled = false;
+  btnConfirm.textContent = t("modal.uninstall_confirm");
   modal.style.display = "flex";
 
   const closeModal = () => {
@@ -100,14 +202,14 @@ function openUninstallModal() {
     btnCancel.onclick = null;
     btnConfirm.onclick = null;
     btnConfirm.disabled = false;
-    btnConfirm.textContent = "Sim, Desinstalar ChronoKeep";
+    btnConfirm.textContent = t("modal.uninstall_confirm");
   };
 
   btnCancel.onclick = closeModal;
 
   btnConfirm.onclick = async () => {
     btnConfirm.disabled = true;
-    btnConfirm.textContent = "Desinstalando e restaurando...";
+    btnConfirm.textContent = t("modal.uninstall_working");
     const restoreSaves = checkRestore ? checkRestore.checked : true;
 
     try {
@@ -127,11 +229,11 @@ function openUninstallModal() {
         showToast(res.message, 8000);
         checkDaemon();
       } else {
-        showToast(`Erro na desinstalação: ${res ? res.message : "Falha desconhecida"}`);
+        showToast(t("toast.uninstall_failed", { error: res ? res.message : t("common.unknown_error") }));
       }
     } catch (e) {
       closeModal();
-      showToast(`Erro ao desinstalar: ${e}`);
+      showToast(t("toast.uninstall_exception", { error: e }));
     }
   };
 }
@@ -213,7 +315,7 @@ function setupNavigation() {
     });
   });
 
-  // Global search navigation
+  // Global search navigation (bilingual PT-BR & EN-US)
   const searchInput = document.getElementById("global-search");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
@@ -221,13 +323,42 @@ function setupNavigation() {
       if (!q) return;
       if (q.includes("log")) {
         document.querySelector("[data-page='logs']")?.click();
-      } else if (q.includes("save") || q.includes("nuvem") || q.includes("orfao")) {
+      } else if (
+        q.includes("save") ||
+        q.includes("nuvem") ||
+        q.includes("cloud") ||
+        q.includes("orfao") ||
+        q.includes("órfao") ||
+        q.includes("orphan")
+      ) {
         document.querySelector("[data-page='cloud-saves']")?.click();
-      } else if (q.includes("provedor") || q.includes("provedores") || q.includes("drive") || q.includes("gdrive") || q.includes("cofre")) {
+      } else if (
+        q.includes("provedor") ||
+        q.includes("provider") ||
+        q.includes("backup") ||
+        q.includes("drive") ||
+        q.includes("gdrive") ||
+        q.includes("cofre") ||
+        q.includes("vault")
+      ) {
         document.querySelector("[data-page='providers']")?.click();
-      } else if (q.includes("steam") || q.includes("porta") || q.includes("tema") || q.includes("config")) {
+      } else if (
+        q.includes("steam") ||
+        q.includes("porta") ||
+        q.includes("port") ||
+        q.includes("tema") ||
+        q.includes("theme") ||
+        q.includes("idioma") ||
+        q.includes("lang") ||
+        q.includes("config") ||
+        q.includes("setting") ||
+        q.includes("update") ||
+        q.includes("atualiza")
+      ) {
         document.querySelector("[data-page='settings']")?.click();
-      } else if (q.includes("inicio") || q.includes("daemon")) {
+      } else if (q.includes("sobre") || q.includes("about")) {
+        document.querySelector("[data-page='about']")?.click();
+      } else if (q.includes("inicio") || q.includes("início") || q.includes("home") || q.includes("daemon")) {
         document.querySelector("[data-page='home']")?.click();
       }
     });
@@ -254,29 +385,28 @@ function updateDaemonStatusUI(online, port) {
   const dot = document.getElementById("global-status-dot");
   const text = document.getElementById("global-status-text");
   const heroBadge = document.getElementById("hero-daemon-badge");
-  const heroText = document.getElementById("hero-daemon-text");
   const toggle = document.getElementById("toggle-daemon");
   const tileLabel = document.getElementById("tile-daemon-label");
   const cardDesc = document.getElementById("card-desc-daemon");
 
   if (online) {
-    if (dot) { dot.className = "status-dot online"; }
-    if (text) text.textContent = "Daemon Ativo";
+    if (dot) dot.className = "status-dot online";
+    if (text) text.textContent = t("status.daemon_active");
     if (heroBadge) {
-      heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">Daemon Ativo</span>`;
+      heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">${escapeHtml(t("status.daemon_active"))}</span>`;
     }
     if (toggle) toggle.checked = true;
-    if (tileLabel) tileLabel.textContent = "Parar Daemon";
-    if (cardDesc) cardDesc.textContent = "Serviço de sincronização ativo em segundo plano";
+    if (tileLabel) tileLabel.textContent = t("home.tile_stop_daemon");
+    if (cardDesc) cardDesc.textContent = t("home.daemon_desc_online");
   } else {
-    if (dot) { dot.className = "status-dot offline"; }
-    if (text) text.textContent = "Daemon Inativo";
+    if (dot) dot.className = "status-dot offline";
+    if (text) text.textContent = t("status.daemon_inactive");
     if (heroBadge) {
-      heroBadge.innerHTML = `<span class="badge-dot offline"></span><span class="badge-text">Daemon Desligado</span>`;
+      heroBadge.innerHTML = `<span class="badge-dot offline"></span><span class="badge-text">${escapeHtml(t("status.daemon_offline"))}</span>`;
     }
     if (toggle) toggle.checked = false;
-    if (tileLabel) tileLabel.textContent = "Iniciar Daemon";
-    if (cardDesc) cardDesc.textContent = "Serviço de sincronização local desligado";
+    if (tileLabel) tileLabel.textContent = t("home.tile_start_daemon");
+    if (cardDesc) cardDesc.textContent = t("home.daemon_desc_offline");
   }
 }
 
@@ -287,54 +417,54 @@ function updateGDriveStatusUI(connected) {
   const tileLabel = document.getElementById("tile-gdrive-label");
   const cardDesc = document.getElementById("card-desc-gdrive");
 
-  // Provedores de Backup elements
+  // Backup Providers page elements
   const providerPill = document.getElementById("provider-gdrive-status-pill");
   const providerBtnAction = document.getElementById("btn-provider-gdrive-action");
   const providerCardDesc = document.getElementById("provider-card-desc-gdrive");
 
   if (connected) {
     if (heroBadge) {
-      heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">Google Drive Conectado</span>`;
+      heroBadge.innerHTML = `<span class="badge-dot online"></span><span class="badge-text">${escapeHtml(t("status.gdrive_connected_badge"))}</span>`;
     }
     if (btnAction) {
-      btnAction.textContent = "Desconectar";
+      btnAction.textContent = t("home.btn_disconnect");
       btnAction.className = "btn btn-secondary";
     }
-    if (tileLabel) tileLabel.textContent = "Drive Conectado";
-    if (cardDesc) cardDesc.textContent = "Conta Google vinculada — Sincronização em nuvem ativa";
+    if (tileLabel) tileLabel.textContent = t("home.tile_drive_connected");
+    if (cardDesc) cardDesc.textContent = t("home.gdrive_desc_connected");
 
     if (providerPill) {
-      providerPill.textContent = "Conectado";
+      providerPill.textContent = t("status.connected");
       providerPill.className = "status-pill active";
     }
     if (providerBtnAction) {
-      providerBtnAction.textContent = "Desconectar Google Drive";
+      providerBtnAction.textContent = t("providers.btn_google_disconnect");
       providerBtnAction.className = "btn btn-secondary";
     }
     if (providerCardDesc) {
-      providerCardDesc.textContent = "Conta Google vinculada — Sincronização em nuvem ativa";
+      providerCardDesc.textContent = t("providers.gdrive_auth_desc_connected");
     }
   } else {
     if (heroBadge) {
-      heroBadge.innerHTML = `<span class="badge-dot offline"></span><span class="badge-text">Google Drive Desconectado</span>`;
+      heroBadge.innerHTML = `<span class="badge-dot offline"></span><span class="badge-text">${escapeHtml(t("status.gdrive_disconnected_badge"))}</span>`;
     }
     if (btnAction) {
-      btnAction.textContent = "Conectar";
+      btnAction.textContent = t("home.btn_connect");
       btnAction.className = "btn btn-primary";
     }
-    if (tileLabel) tileLabel.textContent = "Conectar Drive";
-    if (cardDesc) cardDesc.textContent = "Clique para autorizar upload de saves no navegador";
+    if (tileLabel) tileLabel.textContent = t("home.tile_connect_drive");
+    if (cardDesc) cardDesc.textContent = t("home.gdrive_desc_disconnected");
 
     if (providerPill) {
-      providerPill.textContent = "Desconectado";
+      providerPill.textContent = t("status.disconnected");
       providerPill.className = "status-pill";
     }
     if (providerBtnAction) {
-      providerBtnAction.textContent = "Fazer Login no Google";
+      providerBtnAction.textContent = t("providers.btn_google_login");
       providerBtnAction.className = "btn btn-primary";
     }
     if (providerCardDesc) {
-      providerCardDesc.textContent = "Conecte sua conta para envio automático de saves e manifestos na nuvem";
+      providerCardDesc.textContent = t("providers.gdrive_auth_desc_disconnected");
     }
   }
 }
@@ -346,32 +476,13 @@ async function loadInitialData() {
   try {
     const sysInfo = await invokeBackend("get_system_info");
     if (sysInfo) {
+      sysInfoCache = sysInfo;
+      if (sysInfo.os_locale) {
+        osLocale = sysInfo.os_locale;
+      }
       appConfig.steam_dir = sysInfo.steam_dir;
       defaultVaultDir = sysInfo.vault_dir;
       appConfig.vault_dir = sysInfo.vault_dir;
-      const ostPill = document.getElementById("ost-status-pill");
-      if (ostPill) {
-        if (sysInfo.opensteamtool_active) {
-          ostPill.textContent = "Ativo";
-          ostPill.className = "status-pill active";
-        } else {
-          ostPill.textContent = "Inativo / Não detectado";
-          ostPill.className = "status-pill";
-        }
-      }
-      if (sysInfo.version) {
-        const vStr = sysInfo.version.startsWith("v") ? sysInfo.version : `v${sysInfo.version}`;
-        const verEl = document.getElementById("about-version");
-        if (verEl) verEl.textContent = vStr;
-        const heroVerEl = document.getElementById("hero-version") || document.querySelector(".hero-version");
-        if (heroVerEl) heroVerEl.textContent = `${vStr} — Sincronização Steam Cloud Clean-Room`;
-      }
-      const elGui = document.getElementById("sidebar-ver-gui");
-      const elDll = document.getElementById("sidebar-ver-dll");
-      const elDaemon = document.getElementById("sidebar-ver-daemon");
-      if (elGui && sysInfo.gui_version) elGui.textContent = sysInfo.gui_version;
-      if (elDll && sysInfo.dll_version) elDll.textContent = sysInfo.dll_version;
-      if (elDaemon && sysInfo.daemon_version) elDaemon.textContent = sysInfo.daemon_version;
     }
 
     const cfg = await invokeBackend("get_config");
@@ -388,24 +499,28 @@ async function loadInitialData() {
       document.getElementById("select-max-upload").value = String(appConfig.max_upload_mb);
       document.getElementById("select-theme").value = appConfig.theme;
       applyTheme(appConfig.theme);
-      updateGDriveStatusUI(appConfig.gdrive_connected);
 
-      // Sincroniza dropdown e painel do provedor de backup
+      // Apply saved or auto-detected OS language immediately
+      applyLanguage(appConfig.language || "system", true);
+
+      // Sync backup provider dropdown & panel
       const providerSelect = document.getElementById("select-backup-provider");
       if (providerSelect) {
         providerSelect.value = appConfig.backup_provider || "gdrive";
         updateProviderPanel(providerSelect.value);
       }
+    } else {
+      applyLanguage(appConfig.language || "system", true);
     }
 
     await checkDaemon();
 
-    // Verificação proativa de atualizações em segundo plano após o carregamento inicial da UI
+    // Proactive background update check after UI startup
     setTimeout(() => {
       checkForUpdates(false).catch((e) => console.warn("Auto-check updates on startup:", e));
     }, 400);
   } catch (err) {
-    console.error("Erro ao carregar dados iniciais:", err);
+    console.error("Failed to load initial data:", err);
   }
 }
 
@@ -416,7 +531,7 @@ async function checkDaemon() {
       updateDaemonStatusUI(res.online, res.port);
     }
   } catch (e) {
-    console.error("Falha ao consultar status do daemon:", e);
+    console.error("Failed to query daemon status:", e);
   }
 }
 
@@ -427,7 +542,6 @@ function applyTheme(theme) {
   } else if (theme === "dark") {
     html.setAttribute("data-theme", "dark");
   } else {
-    // Seguir sistema
     const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     html.setAttribute("data-theme", isDark ? "dark" : "light");
   }
@@ -437,10 +551,10 @@ function applyTheme(theme) {
 // Actions & Handlers
 // --------------------------------------------------------------------------
 function setupActionHandlers() {
-  // Tile: Instalar na Steam
+  // Tile: Install to Steam
   document.getElementById("tile-install")?.addEventListener("click", () => {
     ensureDisclaimerAccepted(async () => {
-      showToast("Instalando componentes do ChronoKeep na Steam...");
+      showToast(t("toast.installing_steam"));
       try {
         const res = await invokeBackend("install_chronokeep", {
           steamDir: appConfig.steam_dir,
@@ -450,10 +564,10 @@ function setupActionHandlers() {
           showToast(res.message);
           await checkDaemon();
         } else {
-          showToast(res ? res.message : "Falha na instalação.");
+          showToast(res ? res.message : t("toast.install_failed"));
         }
       } catch (e) {
-        showToast("Erro durante a instalação: " + e);
+        showToast(t("toast.install_error", { error: e }));
       }
     });
   });
@@ -461,13 +575,13 @@ function setupActionHandlers() {
   // Toggle Daemon
   document.getElementById("toggle-daemon")?.addEventListener("change", async (e) => {
     if (e.target.checked) {
-      showToast("Iniciando serviço ChronoKeep Daemon...");
+      showToast(t("toast.starting_daemon"));
       const res = await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
-      showToast(res ? res.message : "Comando enviado.");
+      showToast(res ? res.message : t("common.command_sent"));
     } else {
-      showToast("Encerrando ChronoKeep Daemon...");
+      showToast(t("toast.stopping_daemon"));
       const res = await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
-      showToast(res ? res.message : "Comando enviado.");
+      showToast(res ? res.message : t("common.command_sent"));
     }
     await checkDaemon();
   });
@@ -475,10 +589,10 @@ function setupActionHandlers() {
   // Tile Daemon Button
   document.getElementById("tile-daemon")?.addEventListener("click", async () => {
     if (daemonOnline) {
-      showToast("Encerrando daemon...");
+      showToast(t("toast.stopping_daemon"));
       await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
     } else {
-      showToast("Iniciando daemon...");
+      showToast(t("toast.starting_daemon"));
       await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
     }
     await checkDaemon();
@@ -486,7 +600,7 @@ function setupActionHandlers() {
 
   // Restart Daemon Button
   document.getElementById("btn-restart-daemon")?.addEventListener("click", async () => {
-    showToast("Reiniciando serviço...");
+    showToast(t("toast.restarting_daemon"));
     await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
     setTimeout(async () => {
       await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
@@ -521,20 +635,20 @@ function setupActionHandlers() {
   const gdriveAction = async () => {
     if (appConfig.gdrive_connected) {
       const res = await invokeBackend("disconnect_google", { steamDir: appConfig.steam_dir });
-      showToast(res ? res.message : "Google Drive desconectado.");
+      showToast(res ? res.message : t("toast.gdrive_disconnected"));
       updateGDriveStatusUI(false);
     } else {
-      showToast("Abrindo navegador para autorizar acesso ao Google Drive...");
+      showToast(t("toast.gdrive_opening_browser"));
       try {
         const res = await invokeBackend("start_google_login", { steamDir: appConfig.steam_dir });
         if (res && res.success) {
           showToast(res.message);
           updateGDriveStatusUI(true);
         } else {
-          showToast("Falha na autenticação com o Google.");
+          showToast(t("toast.gdrive_auth_failed"));
         }
       } catch (e) {
-        showToast("Erro no login: " + e);
+        showToast(t("toast.gdrive_login_error", { error: e }));
       }
     }
   };
@@ -542,7 +656,7 @@ function setupActionHandlers() {
   document.getElementById("btn-gdrive-action")?.addEventListener("click", gdriveAction);
   document.getElementById("btn-provider-gdrive-action")?.addEventListener("click", gdriveAction);
 
-  // Provedores de Backup Handlers
+  // Backup Providers Handlers
   const providerSelect = document.getElementById("select-backup-provider");
   if (providerSelect) {
     providerSelect.addEventListener("change", (e) => {
@@ -555,11 +669,11 @@ function setupActionHandlers() {
     const input = document.getElementById("input-vault-dir");
     if (input && defaultVaultDir) {
       input.value = defaultVaultDir;
-      showToast("Caminho padrão restaurado: " + defaultVaultDir);
+      showToast(t("toast.vault_default_restored", { path: defaultVaultDir }));
     }
   });
 
-  // Save Settings Function (Geral & Provedores)
+  // Save Settings Function (General & Providers)
   const saveSettings = async (feedbackElId = "config-feedback") => {
     const portEl = document.getElementById("input-port");
     const providerEl = document.getElementById("select-backup-provider");
@@ -567,6 +681,7 @@ function setupActionHandlers() {
     const steamDirEl = document.getElementById("input-steam-dir");
     const vaultDirEl = document.getElementById("input-vault-dir");
     const themeEl = document.getElementById("select-theme");
+    const langEl = document.getElementById("select-language");
 
     const newCfg = {
       steam_dir: steamDirEl ? steamDirEl.value.trim() : appConfig.steam_dir,
@@ -575,6 +690,7 @@ function setupActionHandlers() {
       gdrive_connected: appConfig.gdrive_connected,
       max_upload_mb: maxUploadEl ? parseInt(maxUploadEl.value, 10) : 512,
       theme: themeEl ? themeEl.value : appConfig.theme,
+      language: langEl ? langEl.value : (appConfig.language || "system"),
       backup_provider: providerEl ? providerEl.value : (appConfig.backup_provider || "gdrive"),
     };
 
@@ -582,19 +698,36 @@ function setupActionHandlers() {
     if (res && res.success) {
       appConfig = { ...appConfig, ...newCfg };
       applyTheme(newCfg.theme);
-      showToast("Configurações salvas com sucesso!");
+      applyLanguage(newCfg.language, true);
+      showToast(res.message || t("toast.settings_saved"));
       const fb = document.getElementById(feedbackElId);
       if (fb) {
-        fb.textContent = "✓ Salvo!";
+        fb.textContent = t("common.saved_check");
         setTimeout(() => { fb.textContent = ""; }, 2500);
       }
     } else {
-      showToast(res ? res.message : "Erro ao salvar.");
+      showToast(res ? res.message : t("common.save_error"));
     }
   };
 
   document.getElementById("btn-save-config")?.addEventListener("click", () => saveSettings("config-feedback"));
   document.getElementById("btn-save-providers")?.addEventListener("click", () => saveSettings("providers-feedback"));
+
+  // Language selector: immediate live GUI hot-reload + instant persistence
+  document.getElementById("select-language")?.addEventListener("change", async (e) => {
+    const newLangPref = e.target.value || "system";
+    applyLanguage(newLangPref, true);
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const steamDir = inputSteam || appConfig.steam_dir;
+    try {
+      await invokeBackend("set_language", {
+        language: newLangPref,
+        steamDir: steamDir || null,
+      });
+    } catch (err) {
+      console.warn("Failed to persist language preference:", err);
+    }
+  });
 
   // Theme selector live preview
   document.getElementById("select-theme")?.addEventListener("change", (e) => {
@@ -605,7 +738,7 @@ function setupActionHandlers() {
   document.getElementById("btn-scan-saves")?.addEventListener("click", scanSaves);
   document.getElementById("btn-sync-selected")?.addEventListener("click", syncSelectedSaves);
 
-  // Abas de filtro de saves
+  // Saves filter tabs
   const setupTab = (tabId, tabKey) => {
     document.getElementById(tabId)?.addEventListener("click", () => {
       document.querySelectorAll(".saves-tab-btn").forEach((b) => b.classList.remove("active"));
@@ -618,22 +751,25 @@ function setupActionHandlers() {
   setupTab("tab-btn-official", "official");
   setupTab("tab-btn-all", "all");
 
-  // Campo de busca de saves
+  // Saves search input
   document.getElementById("input-search-saves")?.addEventListener("input", (e) => {
     savesSearchQuery = e.target.value.trim().toLowerCase();
     renderSavesTable();
   });
 
-  // GitHub External Links
+  // GitHub External Links (including delegated listener for dynamically translated disclaimer link)
   const openGitHub = (e) => {
     e?.preventDefault();
     invokeBackend("open_url", { url: "https://github.com/leufrasiojunior/ChronoKeep" });
   };
   document.getElementById("nav-github-link")?.addEventListener("click", openGitHub);
   document.getElementById("btn-about-github")?.addEventListener("click", openGitHub);
-  document.getElementById("link-disclaimer-issue")?.addEventListener("click", (e) => {
-    e.preventDefault();
-    invokeBackend("open_url", { url: "https://github.com/leufrasiojunior/ChronoKeep/issues" });
+  document.addEventListener("click", (e) => {
+    const issueLink = e.target && e.target.closest ? e.target.closest("#link-disclaimer-issue") : null;
+    if (issueLink) {
+      e.preventDefault();
+      invokeBackend("open_url", { url: "https://github.com/leufrasiojunior/ChronoKeep/issues" });
+    }
   });
 
   // Logs actions
@@ -644,7 +780,7 @@ function setupActionHandlers() {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
     const steamDir = inputSteam || appConfig.steam_dir;
     const res = await invokeBackend("clear_log", { logName: target, steamDir: steamDir || null });
-    showToast(res ? res.message : "Log limpo.");
+    showToast(res ? res.message : t("logs.toast_cleared"));
     loadLogs();
   });
 
@@ -666,20 +802,31 @@ function setupActionHandlers() {
 }
 
 // --------------------------------------------------------------------------
-// Saves Scanner & Renderer (Tools vs Steam Oficial vs Todos)
+// Saves Scanner & Renderer (Tools vs Official Steam vs All)
 // --------------------------------------------------------------------------
 let cachedSavesList = [];
-let currentSavesTab = "tools"; // Padrão inicial: Tools
+let currentSavesTab = "tools";
 let savesSearchQuery = "";
 
-function getBadgeHtml(item) {
+function getOriginLabel(item) {
   if (item.origin === "tools") {
-    return `<span class="badge badge-tools">${escapeHtml(item.origin_label || "Tools")}</span>`;
+    return item.origin_label || "Tools";
   }
   if (item.origin === "official") {
-    return `<span class="badge badge-official">Steam Oficial</span>`;
+    return t("saves.origin_official");
   }
-  return `<span class="badge badge-vault">${escapeHtml(item.origin_label || "Arquivado")}</span>`;
+  return t("saves.origin_archived");
+}
+
+function getBadgeHtml(item) {
+  const label = escapeHtml(getOriginLabel(item));
+  if (item.origin === "tools") {
+    return `<span class="badge badge-tools">${label}</span>`;
+  }
+  if (item.origin === "official") {
+    return `<span class="badge badge-official">${label}</span>`;
+  }
+  return `<span class="badge badge-vault">${label}</span>`;
 }
 
 function updateSavesCounts() {
@@ -701,38 +848,40 @@ function renderSavesTable() {
   if (!tbody) return;
 
   if (!cachedSavesList || cachedSavesList.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state">${escapeHtml(t("saves.empty_initial"))}</td></tr>`;
     bindOrphanCheckboxes();
     updateSelectionUI();
     return;
   }
 
-  // 1. Filtro pela Aba ativa
+  // 1. Filter by active tab
   let filtered = cachedSavesList.filter((item) => {
     if (currentSavesTab === "tools") return item.origin === "tools";
     if (currentSavesTab === "official") return item.origin === "official";
     return true; // 'all'
   });
 
-  // 2. Filtro pela busca por texto
+  // 2. Filter by search query
   if (savesSearchQuery) {
     const q = savesSearchQuery.toLowerCase();
-    filtered = filtered.filter(
-      (item) =>
+    filtered = filtered.filter((item) => {
+      const originLbl = getOriginLabel(item).toLowerCase();
+      return (
         (item.name && item.name.toLowerCase().includes(q)) ||
         (item.app_id && item.app_id.toString().includes(q)) ||
-        (item.origin_label && item.origin_label.toLowerCase().includes(q))
-    );
+        originLbl.includes(q)
+      );
+    });
   }
 
   if (filtered.length === 0) {
-    let msg = "Nenhum save correspondente ao filtro atual.";
+    let msg = escapeHtml(t("saves.empty_filter"));
     if (savesSearchQuery) {
-      msg = `Nenhum save encontrado para "${escapeHtml(savesSearchQuery)}".`;
+      msg = escapeHtml(t("saves.empty_search", { query: savesSearchQuery }));
     } else if (currentSavesTab === "tools") {
-      msg = "Nenhum save de jogo do SteamTools ou GreenLuma encontrado.";
+      msg = escapeHtml(t("saves.empty_tools"));
     } else if (currentSavesTab === "official") {
-      msg = "Nenhum save de jogo da biblioteca oficial Steam encontrado.";
+      msg = escapeHtml(t("saves.empty_official"));
     }
     tbody.innerHTML = `<tr><td colspan="9" class="empty-state">${msg}</td></tr>`;
     bindOrphanCheckboxes();
@@ -755,21 +904,21 @@ function renderSavesTable() {
         <td><strong>${item.app_id}</strong></td>
         <td><span class="game-title">${escapeHtml(item.name)}</span></td>
         <td>${getBadgeHtml(item)}</td>
-        <td>${item.file_count} arquivos</td>
+        <td>${escapeHtml(t("saves.files_count", { count: item.file_count }))}</td>
         <td>${item.total_size_formatted}</td>
         <td>
-          <span class="status-pill active">✓ ${item.source.replace("Vault", "Cofre")}</span>
+          <span class="status-pill active">✓ ${escapeHtml(formatSaveSource(item.source))}</span>
         </td>
         <td>
           ${
             item.in_cloud
-              ? `<span class="status-pill active">✓ Na Nuvem</span>`
-              : `<span class="status-pill warning">Pendente</span>`
+              ? `<span class="status-pill active">${escapeHtml(t("saves.pill_in_cloud"))}</span>`
+              : `<span class="status-pill warning">${escapeHtml(t("saves.pill_pending"))}</span>`
           }
         </td>
         <td style="text-align: center;">
           <button class="btn btn-secondary btn-sm" onclick="syncGameSave(${item.app_id}, ${item.account_id}, this, ${item.total_bytes}, '${escapeHtml(item.name).replace(/'/g, "\\'")}')">
-            Sincronizar
+            ${escapeHtml(t("saves.btn_sync"))}
           </button>
         </td>
       </tr>
@@ -781,6 +930,14 @@ function renderSavesTable() {
   updateSelectionUI();
 }
 
+function getScanBtnDefaultHtml() {
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg> <span data-i18n="saves.btn_scan">${escapeHtml(t("saves.btn_scan"))}</span>`;
+}
+
+function getSyncSelectedBtnDefaultHtml() {
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> <span data-i18n="saves.btn_sync_selected">${escapeHtml(t("saves.btn_sync_selected"))}</span> (<span id="selected-count">0</span>)`;
+}
+
 async function scanSaves() {
   if (!isDisclaimerAccepted()) {
     ensureDisclaimerAccepted(() => scanSaves());
@@ -789,13 +946,12 @@ async function scanSaves() {
 
   const tbody = document.getElementById("tbody-saves");
   const scanBtn = document.getElementById("btn-scan-saves");
-  const originalScanHtml = scanBtn ? scanBtn.innerHTML : "";
   if (scanBtn) {
     scanBtn.disabled = true;
-    scanBtn.innerHTML = `<span class="fluent-spinner-sm"></span> Escaneando...`;
+    scanBtn.innerHTML = `<span class="fluent-spinner-sm"></span> ${escapeHtml(t("saves.btn_scanning"))}`;
   }
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="9" class="empty-state"><div class="fluent-spinner" style="margin: 0 auto 12px auto;"></div>Varrendo pastas de saves locais no PC...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="9" class="empty-state"><div class="fluent-spinner" style="margin: 0 auto 12px auto;"></div>${escapeHtml(t("saves.empty_scanning"))}</td></tr>`;
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -812,18 +968,18 @@ async function scanSaves() {
     updateSavesCounts();
     renderSavesTable();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--error-color);">Erro ao escanear saves: ${e}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--error-color);">${escapeHtml(t("saves.empty_scan_error", { error: e }))}</td></tr>`;
   } finally {
     if (scanBtn) {
       scanBtn.disabled = false;
-      scanBtn.innerHTML = originalScanHtml;
+      scanBtn.innerHTML = getScanBtnDefaultHtml();
     }
   }
 }
 
 function escapeHtml(text) {
   if (!text) return "";
-  return text
+  return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -863,7 +1019,6 @@ function formatBytes(bytes) {
 
 let syncProgressTimeout = null;
 
-// Permite ao navegador repintar a tela e manter spinners rodando suavemente
 function yieldToUI(delayMs = 30) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
@@ -929,7 +1084,6 @@ async function syncSelectedSaves() {
   if (checked.length === 0) return;
 
   const btnSyncSelected = document.getElementById("btn-sync-selected");
-  const originalHtml = btnSyncSelected ? btnSyncSelected.innerHTML : "";
 
   const totalGames = checked.length;
   const totalBytes = checked.reduce(
@@ -942,14 +1096,14 @@ async function syncSelectedSaves() {
   const failedList = [];
 
   showSyncProgress(
-    "Iniciando sincronização com o Google Drive...",
-    `0 de ${totalGames} jogos • 0 B de ${formatBytes(totalBytes)}`,
+    t("saves.batch_starting"),
+    t("saves.batch_starting_detail", { total: totalGames, bytes: formatBytes(totalBytes) }),
     0
   );
 
   if (btnSyncSelected) {
     btnSyncSelected.disabled = true;
-    btnSyncSelected.innerHTML = `<span class="fluent-spinner-sm"></span> Sincronizando (0/${totalGames})...`;
+    btnSyncSelected.innerHTML = `<span class="fluent-spinner-sm"></span> ${escapeHtml(t("saves.batch_btn_progress", { current: 0, total: totalGames }))}`;
   }
 
   for (let i = 0; i < totalGames; i++) {
@@ -962,23 +1116,27 @@ async function syncSelectedSaves() {
 
     const currentPercent = totalBytes > 0 ? (processedBytes / totalBytes) * 100 : (i / totalGames) * 100;
     showSyncProgress(
-      `Sincronizando: ${gameName} (${i + 1} de ${totalGames})`,
-      `${formatBytes(processedBytes)} de ${formatBytes(totalBytes)} • Jogo ${i + 1} de ${totalGames}`,
+      t("saves.batch_item_title", { name: gameName, current: i + 1, total: totalGames }),
+      t("saves.batch_item_detail", {
+        doneBytes: formatBytes(processedBytes),
+        totalBytes: formatBytes(totalBytes),
+        current: i + 1,
+        total: totalGames,
+      }),
       currentPercent
     );
 
     if (btnSyncSelected) {
-      btnSyncSelected.innerHTML = `<span class="fluent-spinner-sm"></span> Sincronizando (${i + 1}/${totalGames})...`;
+      btnSyncSelected.innerHTML = `<span class="fluent-spinner-sm"></span> ${escapeHtml(t("saves.batch_btn_progress", { current: i + 1, total: totalGames }))}`;
     }
 
     if (row) {
       const cells = row.querySelectorAll("td");
-      if (cells.length >= 7) {
-        cells[6].innerHTML = `<span class="status-pill warning"><span class="fluent-spinner-sm"></span> Enviando...</span>`;
+      if (cells.length >= 8) {
+        cells[7].innerHTML = `<span class="status-pill warning"><span class="fluent-spinner-sm"></span> ${escapeHtml(t("saves.pill_uploading"))}</span>`;
       }
     }
 
-    // Dá um respiro para o navegador atualizar os spinners
     await yieldToUI(35);
 
     try {
@@ -996,29 +1154,31 @@ async function syncSelectedSaves() {
 
       if (res && res.success) {
         successCount++;
+        const cachedItem = cachedSavesList.find((it) => it.app_id === appId && it.account_id === accountId);
+        if (cachedItem) cachedItem.in_cloud = true;
         if (row) {
           const cells = row.querySelectorAll("td");
-          if (cells.length >= 7) {
-            cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
+          if (cells.length >= 8) {
+            cells[7].innerHTML = `<span class="status-pill active">${escapeHtml(t("saves.pill_in_cloud"))}</span>`;
           }
         }
       } else {
-        const errorMsg = (res && res.message) ? res.message : "Falha desconhecida";
+        const errorMsg = (res && res.message) ? res.message : t("common.unknown_error");
         failedList.push({ appId, error: errorMsg });
         if (row) {
           const cells = row.querySelectorAll("td");
-          if (cells.length >= 7) {
-            cells[6].innerHTML = `<span class="status-pill offline" title="${escapeHtml(errorMsg)}">Falha</span>`;
+          if (cells.length >= 8) {
+            cells[7].innerHTML = `<span class="status-pill offline" title="${escapeHtml(errorMsg)}">${escapeHtml(t("saves.pill_failed"))}</span>`;
           }
         }
       }
     } catch (e) {
-      console.error(`Erro ao sincronizar AppID ${appId}:`, e);
+      console.error(`Error syncing AppID ${appId}:`, e);
       failedList.push({ appId, error: e.message || String(e) });
       if (row) {
         const cells = row.querySelectorAll("td");
-        if (cells.length >= 7) {
-          cells[6].innerHTML = `<span class="status-pill offline">Erro</span>`;
+        if (cells.length >= 8) {
+          cells[7].innerHTML = `<span class="status-pill offline">${escapeHtml(t("saves.pill_error"))}</span>`;
         }
       }
     }
@@ -1026,8 +1186,13 @@ async function syncSelectedSaves() {
     processedBytes += gameBytes;
     const progressAfterGame = totalBytes > 0 ? (processedBytes / totalBytes) * 100 : ((i + 1) / totalGames) * 100;
     showSyncProgress(
-      `Concluído: ${gameName}`,
-      `${formatBytes(processedBytes)} de ${formatBytes(totalBytes)} • ${i + 1} de ${totalGames} jogos processados`,
+      t("saves.batch_done_item_title", { name: gameName }),
+      t("saves.batch_done_item_detail", {
+        doneBytes: formatBytes(processedBytes),
+        totalBytes: formatBytes(totalBytes),
+        current: i + 1,
+        total: totalGames,
+      }),
       progressAfterGame
     );
 
@@ -1035,22 +1200,33 @@ async function syncSelectedSaves() {
   }
 
   showSyncProgress(
-    "Sincronização em lote finalizada!",
-    `${successCount} de ${totalGames} jogos sincronizados com sucesso • ${formatBytes(processedBytes)} enviados`,
+    t("saves.batch_finished_title"),
+    t("saves.batch_finished_detail", {
+      success: successCount,
+      total: totalGames,
+      bytes: formatBytes(processedBytes),
+    }),
     100
   );
   hideSyncProgress(4000);
 
   if (failedList.length === 0) {
-    showToast(`${successCount} jogo(s) sincronizado(s) com a nuvem com sucesso!`, 4000);
+    showToast(t("saves.toast_batch_all_ok", { success: successCount }), 4000);
   } else if (successCount === 0) {
-    showToast(`Falha ao sincronizar ${failedList.length} jogo(s) selecionado(s): ${failedList[0].error}`, 6000);
+    showToast(t("saves.toast_batch_all_fail", { failed: failedList.length, error: failedList[0].error }), 6000);
   } else {
-    showToast(`${successCount} jogo(s) sincronizado(s), mas ${failedList.length} falharam: ${failedList[0].error}`, 6000);
+    showToast(
+      t("saves.toast_batch_partial", {
+        success: successCount,
+        failed: failedList.length,
+        error: failedList[0].error,
+      }),
+      6000
+    );
   }
   if (btnSyncSelected) {
     btnSyncSelected.disabled = false;
-    btnSyncSelected.innerHTML = originalHtml || `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> Sincronizar Selecionados (<span id="selected-count">0</span>)`;
+    btnSyncSelected.innerHTML = getSyncSelectedBtnDefaultHtml();
   }
   updateSelectionUI();
 }
@@ -1059,27 +1235,28 @@ async function syncSelectedSaves() {
 // Manual Game Save Sync
 // --------------------------------------------------------------------------
 async function syncGameSave(appId, accountId, btn, totalBytes = 0, gameName = "") {
-  const originalHtml = btn ? btn.innerHTML : "Sincronizar";
   const displayName = gameName || `AppID ${appId}`;
   const row = btn ? btn.closest("tr") : null;
 
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = `<span class="fluent-spinner-sm"></span> Enviando...`;
+    btn.innerHTML = `<span class="fluent-spinner-sm"></span> ${escapeHtml(t("saves.pill_uploading"))}`;
   }
   if (row) {
     const cells = row.querySelectorAll("td");
-    if (cells.length >= 7) {
-      cells[6].innerHTML = `<span class="status-pill warning"><span class="fluent-spinner-sm"></span> Enviando...</span>`;
+    if (cells.length >= 8) {
+      cells[7].innerHTML = `<span class="status-pill warning"><span class="fluent-spinner-sm"></span> ${escapeHtml(t("saves.pill_uploading"))}</span>`;
     }
   }
 
   showSyncProgress(
-    `Sincronizando ${displayName}...`,
-    totalBytes > 0 ? `1 jogo • ${formatBytes(totalBytes)}` : "Enviando save para o Google Drive...",
+    t("saves.single_syncing_title", { name: displayName }),
+    totalBytes > 0
+      ? t("saves.single_syncing_bytes", { bytes: formatBytes(totalBytes) })
+      : t("saves.single_syncing_fallback"),
     30
   );
-  showToast(`Sincronizando ${displayName} com o Google Drive...`);
+  showToast(t("saves.toast_single_syncing", { name: displayName }));
 
   await yieldToUI(35);
 
@@ -1095,59 +1272,60 @@ async function syncGameSave(appId, accountId, btn, totalBytes = 0, gameName = ""
       vaultDir: vaultDir || null,
     });
     if (res && res.success) {
+      const cachedItem = cachedSavesList.find((it) => it.app_id === appId && it.account_id === accountId);
+      if (cachedItem) cachedItem.in_cloud = true;
+
       showSyncProgress(
-        `Sincronizado: ${displayName}!`,
-        totalBytes > 0 ? `${formatBytes(totalBytes)} enviados com sucesso` : "Concluído",
+        t("saves.single_done_title", { name: displayName }),
+        totalBytes > 0
+          ? t("saves.single_done_bytes", { bytes: formatBytes(totalBytes) })
+          : t("saves.single_done_fallback"),
         100
       );
       hideSyncProgress(3000);
       showToast(res.message, 4000);
       if (row) {
         const cells = row.querySelectorAll("td");
-        if (cells.length >= 7) {
-          cells[6].innerHTML = `<span class="status-pill active">✓ Na Nuvem</span>`;
+        if (cells.length >= 8) {
+          cells[7].innerHTML = `<span class="status-pill active">${escapeHtml(t("saves.pill_in_cloud"))}</span>`;
         }
       }
       if (btn) {
-        btn.textContent = "Sincronizado ✅";
+        btn.textContent = t("saves.btn_synced");
         setTimeout(() => {
           btn.disabled = false;
-          btn.innerHTML = originalHtml;
+          btn.textContent = t("saves.btn_sync");
         }, 4000);
       }
     } else {
-      const errorMsg = res ? res.message : "Falha na sincronização";
-      showSyncProgress(
-        `Falha ao sincronizar: ${displayName}`,
-        errorMsg,
-        0
-      );
+      const errorMsg = res ? res.message : t("saves.single_fail_fallback");
+      showSyncProgress(t("saves.single_fail_title", { name: displayName }), errorMsg, 0);
       hideSyncProgress(4000);
       showToast(errorMsg, 5000);
       if (row) {
         const cells = row.querySelectorAll("td");
-        if (cells.length >= 7) {
-          cells[6].innerHTML = `<span class="status-pill offline" title="${escapeHtml(errorMsg)}">Falha</span>`;
+        if (cells.length >= 8) {
+          cells[7].innerHTML = `<span class="status-pill offline" title="${escapeHtml(errorMsg)}">${escapeHtml(t("saves.pill_failed"))}</span>`;
         }
       }
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = originalHtml;
+        btn.textContent = t("saves.btn_sync");
       }
     }
   } catch (err) {
-    showSyncProgress(`Erro ao sincronizar: ${displayName}`, String(err), 0);
+    showSyncProgress(t("saves.single_err_title", { name: displayName }), String(err), 0);
     hideSyncProgress(4000);
-    showToast(`Erro ao sincronizar: ${err}`, 5000);
+    showToast(t("saves.toast_single_err", { error: err }), 5000);
     if (row) {
       const cells = row.querySelectorAll("td");
-      if (cells.length >= 7) {
-        cells[6].innerHTML = `<span class="status-pill offline">Erro</span>`;
+      if (cells.length >= 8) {
+        cells[7].innerHTML = `<span class="status-pill offline">${escapeHtml(t("saves.pill_error"))}</span>`;
       }
     }
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = originalHtml;
+      btn.textContent = t("saves.btn_sync");
     }
   }
 }
@@ -1164,19 +1342,99 @@ function renderUpdateBadge(badgeEl, status) {
   badgeEl.className = "badge-tag";
   if (status === "up_to_date") {
     badgeEl.classList.add("up-to-date");
-    badgeEl.textContent = "Atualizado";
+    badgeEl.textContent = t("settings.badge_up_to_date");
   } else if (status === "update_available") {
     badgeEl.classList.add("update-available");
-    badgeEl.textContent = "Disponível";
+    badgeEl.textContent = t("settings.badge_available");
   } else if (status === "not_installed") {
     badgeEl.classList.add("not-installed");
-    badgeEl.textContent = "Não Instalado";
+    badgeEl.textContent = t("settings.badge_not_installed");
   } else if (status === "error") {
     badgeEl.classList.add("error");
-    badgeEl.textContent = "Erro";
+    badgeEl.textContent = t("settings.badge_error");
   } else {
     badgeEl.classList.add("neutral");
-    badgeEl.textContent = "Não Verificado";
+    badgeEl.textContent = t("settings.badge_not_checked");
+  }
+}
+
+function renderUpdateCheckResultUI(res) {
+  const banner = document.getElementById("update-status-banner");
+  const btnUpdateAll = document.getElementById("btn-update-all");
+
+  if (!res || !res.success) {
+    if (banner) {
+      banner.className = "update-banner error";
+      banner.style.display = "flex";
+      banner.innerHTML = `<span>⚠️</span><span>${escapeHtml((res && res.message) ? res.message : t("settings.banner_check_failed"))}</span>`;
+    }
+    return;
+  }
+
+  if (res.components && Array.isArray(res.components)) {
+    for (const comp of res.components) {
+      const id = comp.id;
+      const curEl = document.getElementById(`meta-${id}-cur`);
+      const latestEl = document.getElementById(`meta-${id}-latest`);
+      const badgeEl = document.getElementById(`badge-${id}`);
+      const updateBtn = document.getElementById(`btn-update-${id}`);
+      const displayCurVer = formatVersionLabel(comp.current_version);
+
+      if (curEl) curEl.textContent = displayCurVer;
+      if (latestEl) latestEl.textContent = comp.latest_version || "-";
+      if (badgeEl) renderUpdateBadge(badgeEl, comp.status);
+
+      if (id === "gui") {
+        const el = document.getElementById("sidebar-ver-gui");
+        if (el && comp.current_version) el.textContent = displayCurVer;
+      } else if (id === "bridge") {
+        const el = document.getElementById("sidebar-ver-dll");
+        if (el && comp.current_version) el.textContent = displayCurVer;
+      } else if (id === "daemon") {
+        const el = document.getElementById("sidebar-ver-daemon");
+        if (el && comp.current_version) el.textContent = displayCurVer;
+      }
+
+      if (updateBtn) {
+        if (comp.status === "update_available") {
+          updateBtn.style.display = "inline-flex";
+          updateBtn.disabled = false;
+          updateBtn.textContent = t("settings.updates_btn_update");
+        } else {
+          updateBtn.style.display = "none";
+        }
+      }
+    }
+  }
+
+  if (banner) {
+    if (res.has_updates) {
+      banner.className = "update-banner info";
+      banner.style.display = "flex";
+      banner.innerHTML = `<span>🚀</span><span>${escapeHtml(t("settings.banner_updates_available"))}</span>`;
+      if (btnUpdateAll) btnUpdateAll.style.display = "inline-flex";
+    } else {
+      banner.className = "update-banner success";
+      banner.style.display = "flex";
+      const tag = res.release_tag || t("settings.banner_latest_fallback");
+      banner.innerHTML = `<span>✓</span><span>${escapeHtml(t("settings.banner_all_up_to_date", { tag }))}</span>`;
+      if (btnUpdateAll) btnUpdateAll.style.display = "none";
+    }
+  }
+
+  const homeBanner = document.getElementById("home-update-banner");
+  const homeDesc = document.getElementById("home-update-desc");
+  if (homeBanner) {
+    if (res.has_updates) {
+      homeBanner.style.display = "flex";
+      if (homeDesc) {
+        const compCount = res.components?.filter((c) => c.status === "update_available").length || 1;
+        const tag = res.release_tag || t("settings.banner_latest_fallback");
+        homeDesc.textContent = t("home.update_banner_desc_count", { count: compCount, tag });
+      }
+    } else {
+      homeBanner.style.display = "none";
+    }
   }
 }
 
@@ -1185,114 +1443,36 @@ async function checkForUpdates(showUserToast = false) {
   const icon = document.getElementById("icon-check-updates");
   const text = document.getElementById("text-check-updates");
   const banner = document.getElementById("update-status-banner");
-  const btnUpdateAll = document.getElementById("btn-update-all");
 
   if (btn) btn.disabled = true;
   if (icon) icon.classList.add("spin-icon");
-  if (text) text.textContent = "Verificando...";
+  if (text) text.textContent = t("settings.updates_btn_checking");
 
   try {
     const res = await invokeBackend("check_for_updates");
     lastUpdateCheckResult = res;
-
-    if (!res || !res.success) {
-      if (banner) {
-        banner.className = "update-banner error";
-        banner.style.display = "flex";
-        banner.innerHTML = `<span>⚠️</span><span>${(res && res.message) ? res.message : "Falha ao verificar atualizações."}</span>`;
-      }
-      if (showUserToast) {
-        showToast((res && res.message) ? res.message : "Falha ao verificar atualizações.");
-      }
-      return;
-    }
-
-    // Process components
-    if (res.components && Array.isArray(res.components)) {
-      for (const comp of res.components) {
-        const id = comp.id;
-        const curEl = document.getElementById(`meta-${id}-cur`);
-        const latestEl = document.getElementById(`meta-${id}-latest`);
-        const badgeEl = document.getElementById(`badge-${id}`);
-        const updateBtn = document.getElementById(`btn-update-${id}`);
-
-        if (curEl) curEl.textContent = comp.current_version || "-";
-        if (latestEl) latestEl.textContent = comp.latest_version || "-";
-        if (badgeEl) renderUpdateBadge(badgeEl, comp.status);
-
-        // Atualiza os indicadores de versão na barra lateral
-        if (id === "gui") {
-          const el = document.getElementById("sidebar-ver-gui");
-          if (el && comp.current_version) el.textContent = comp.current_version;
-        } else if (id === "bridge") {
-          const el = document.getElementById("sidebar-ver-dll");
-          if (el && comp.current_version) el.textContent = comp.current_version;
-        } else if (id === "daemon") {
-          const el = document.getElementById("sidebar-ver-daemon");
-          if (el && comp.current_version) el.textContent = comp.current_version;
-        }
-
-        if (updateBtn) {
-          if (comp.status === "update_available") {
-            updateBtn.style.display = "inline-flex";
-            updateBtn.disabled = false;
-            updateBtn.textContent = "Atualizar";
-          } else {
-            updateBtn.style.display = "none";
-          }
-        }
-      }
-    }
-
-    if (banner) {
-      if (res.has_updates) {
-        banner.className = "update-banner info";
-        banner.style.display = "flex";
-        banner.innerHTML = `<span>🚀</span><span>Atualizações disponíveis.</span>`;
-        if (btnUpdateAll) btnUpdateAll.style.display = "inline-flex";
-      } else {
-        banner.className = "update-banner success";
-        banner.style.display = "flex";
-        banner.innerHTML = `<span>✓</span><span>Todos os componentes do ChronoKeep estão atualizados (${res.release_tag || "Versão mais recente"}).</span>`;
-        if (btnUpdateAll) btnUpdateAll.style.display = "none";
-      }
-    }
-
-    // Sincroniza o banner de atualização da tela Início
-    const homeBanner = document.getElementById("home-update-banner");
-    const homeDesc = document.getElementById("home-update-desc");
-    if (homeBanner) {
-      if (res.has_updates) {
-        homeBanner.style.display = "flex";
-        if (homeDesc) {
-          const compCount = res.components?.filter(c => c.status === "update_available").length || 1;
-          homeDesc.textContent = `${compCount} componente(s) com atualização disponível (${res.release_tag || "Nova versão"}). Clique em conferir para atualizar.`;
-        }
-      } else {
-        homeBanner.style.display = "none";
-      }
-    }
+    renderUpdateCheckResultUI(res);
 
     if (showUserToast) {
-      showToast(res.message);
+      showToast((res && res.message) ? res.message : t("settings.banner_check_failed"));
     }
   } catch (err) {
     if (banner) {
       banner.className = "update-banner error";
       banner.style.display = "flex";
-      banner.innerHTML = `<span>⚠️</span><span>Erro ao consultar atualizações: ${err}</span>`;
+      banner.innerHTML = `<span>⚠️</span><span>${escapeHtml(t("settings.banner_check_error", { error: err }))}</span>`;
     }
     if (showUserToast) {
-      showToast(`Erro ao verificar atualizações: ${err}`);
+      showToast(t("settings.banner_check_error", { error: err }));
     }
   } finally {
     if (btn) btn.disabled = false;
     if (icon) icon.classList.remove("spin-icon");
-    if (text) text.textContent = "Verificar Atualizações";
+    if (text) text.textContent = t("settings.updates_btn_check");
   }
 }
 
-function confirmSteamRestart(componentLabel = "componente") {
+function confirmSteamRestart(componentLabel = "") {
   return new Promise((resolve) => {
     const modal = document.getElementById("steam-restart-modal");
     const btnCancel = document.getElementById("btn-steam-restart-cancel");
@@ -1342,9 +1522,7 @@ async function updateComponent(componentId, reopenSteam = true, steamWasRunning 
   if (isUpdatingComponent) return;
 
   const btn = document.getElementById(`btn-update-${componentId}`);
-  const originalText = btn ? btn.textContent : "Atualizar";
 
-  // Verifica se a Steam está aberta para atualizar daemon ou bridge DLL quando chamado individualmente
   let isSteamOpen = steamWasRunning;
   if ((componentId === "daemon" || componentId === "bridge") && steamWasRunning === null) {
     try {
@@ -1354,10 +1532,13 @@ async function updateComponent(componentId, reopenSteam = true, steamWasRunning 
     }
 
     if (isSteamOpen) {
-      const compLabel = componentId === "bridge" ? "Bridge DLL (Hook Steam)" : "Daemon (Serviço de Sincronização)";
+      const compLabel =
+        componentId === "bridge"
+          ? t("modal.steam_restart_comp_bridge")
+          : t("modal.steam_restart_comp_daemon");
       const confirmed = await confirmSteamRestart(compLabel);
       if (!confirmed) {
-        showToast("Atualização cancelada.", 3000);
+        showToast(t("toast.update_cancelled"), 3000);
         return;
       }
     }
@@ -1366,10 +1547,10 @@ async function updateComponent(componentId, reopenSteam = true, steamWasRunning 
   isUpdatingComponent = true;
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "Atualizando...";
+    btn.textContent = t("settings.updates_btn_updating");
   }
 
-  showToast(`Baixando e aplicando atualização de ${componentId}...`, 5000);
+  showToast(t("toast.updating_component", { component: componentId }), 5000);
 
   try {
     const res = await invokeBackend("update_component", {
@@ -1384,23 +1565,23 @@ async function updateComponent(componentId, reopenSteam = true, steamWasRunning 
         if (banner) {
           banner.className = "update-banner success";
           banner.style.display = "flex";
-          banner.innerHTML = `<span>🔄</span><span>ChronoKeep atualizado! Reiniciando aplicativo...</span>`;
+          banner.innerHTML = `<span>🔄</span><span>${escapeHtml(t("settings.banner_restarting_gui"))}</span>`;
         }
       } else {
         await checkForUpdates(false);
       }
     } else {
-      showToast(`Erro ao atualizar: ${(res && res.message) ? res.message : "Falha na operação."}`);
+      showToast(t("toast.update_error", { error: (res && res.message) ? res.message : t("common.unknown_error") }));
       if (btn) {
         btn.disabled = false;
-        btn.textContent = originalText;
+        btn.textContent = t("settings.updates_btn_update");
       }
     }
   } catch (err) {
-    showToast(`Erro ao atualizar componente: ${err}`);
+    showToast(t("toast.update_comp_error", { error: err }));
     if (btn) {
       btn.disabled = false;
-      btn.textContent = originalText;
+      btn.textContent = t("settings.updates_btn_update");
     }
   } finally {
     isUpdatingComponent = false;
@@ -1409,25 +1590,24 @@ async function updateComponent(componentId, reopenSteam = true, steamWasRunning 
 
 async function updateAllComponents() {
   if (isUpdatingComponent || !lastUpdateCheckResult) return;
-  const available = (lastUpdateCheckResult.components || []).filter(c => c.status === "update_available");
+  const available = (lastUpdateCheckResult.components || []).filter((c) => c.status === "update_available");
   if (available.length === 0) {
-    showToast("Nenhum componente pendente de atualização.");
+    showToast(t("toast.no_pending_updates"));
     return;
   }
 
-  // Atualiza primeiro o daemon, depois a bridge dll, e por último a interface (pois reinicia o app)
   const order = ["daemon", "bridge", "gui"];
   const sorted = available.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 
-  const hasSteamComponent = sorted.some(c => c.id === "daemon" || c.id === "bridge");
+  const hasSteamComponent = sorted.some((c) => c.id === "daemon" || c.id === "bridge");
   let steamWasRunning = false;
   if (hasSteamComponent) {
     try {
       steamWasRunning = await invokeBackend("is_steam_running");
       if (steamWasRunning) {
-        const confirmed = await confirmSteamRestart("todos os componentes da Steam");
+        const confirmed = await confirmSteamRestart(t("modal.steam_restart_comp_all"));
         if (!confirmed) {
-          showToast("Atualização cancelada.", 3000);
+          showToast(t("toast.update_cancelled"), 3000);
           return;
         }
       }
@@ -1435,22 +1615,22 @@ async function updateAllComponents() {
   }
 
   const btnAll = document.getElementById("btn-update-all");
-  const origAllText = btnAll ? btnAll.textContent : "Atualizar Todos";
+  const btnAllSpan = btnAll ? btnAll.querySelector("span") : null;
   if (btnAll) {
     btnAll.disabled = true;
-    btnAll.textContent = "Atualizando em lote...";
+    if (btnAllSpan) btnAllSpan.textContent = t("settings.updates_btn_updating_batch");
+    else btnAll.textContent = t("settings.updates_btn_updating_batch");
   }
 
   try {
     for (let i = 0; i < sorted.length; i++) {
       const comp = sorted[i];
-      // Se houver mais algum componente que utilize a Steam depois deste, não reabre ainda
-      const nextHasSteam = sorted.slice(i + 1).some(c => c.id === "daemon" || c.id === "bridge");
+      const nextHasSteam = sorted.slice(i + 1).some((c) => c.id === "daemon" || c.id === "bridge");
       const shouldReopen = steamWasRunning && !nextHasSteam;
       await updateComponent(comp.id, shouldReopen, steamWasRunning);
     }
   } catch (err) {
-    showToast(`Erro durante atualização em lote: ${err}`);
+    showToast(t("toast.batch_update_error", { error: err }));
     if (steamWasRunning) {
       try {
         const stillRunning = await invokeBackend("is_steam_running");
@@ -1462,7 +1642,8 @@ async function updateAllComponents() {
   } finally {
     if (btnAll) {
       btnAll.disabled = false;
-      btnAll.textContent = origAllText;
+      if (btnAllSpan) btnAllSpan.textContent = t("settings.updates_btn_all");
+      else btnAll.textContent = t("settings.updates_btn_all");
     }
   }
 }
@@ -1475,7 +1656,8 @@ async function loadLogs() {
   const target = document.getElementById("select-log-target")?.value || "daemon";
   if (!output) return;
 
-  output.textContent = `Carregando ${target === "bridge" ? "chronokeep_bridge.log" : "chrono_daemon.log"}...`;
+  const fileName = target === "bridge" ? "chronokeep_bridge.log" : "chrono_daemon.log";
+  output.textContent = t("logs.loading_file", { file: fileName });
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -1485,10 +1667,10 @@ async function loadLogs() {
       maxLines: 300,
       steamDir: steamDir || null,
     });
-    output.textContent = content || "[Arquivo de log vazio]";
+    output.textContent = content || t("logs.empty_file");
     output.scrollTop = output.scrollHeight;
   } catch (e) {
-    output.textContent = `Erro ao carregar log: ${e}`;
+    output.textContent = t("logs.error_loading", { error: e });
   }
 }
 
@@ -1496,11 +1678,18 @@ async function loadLogs() {
 // Lifecycle Startup
 // --------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
+  // Zero-flash initial pass using cached user preference or browser OS language
+  let cachedPref = "system";
+  try {
+    cachedPref = localStorage.getItem("chronokeep_lang_pref") || "system";
+  } catch (_) {}
+  applyLanguage(cachedPref, false);
+
   setupNavigation();
   setupActionHandlers();
   loadInitialData();
 
-  // Se iniciado como desinstalador (ChronoKeepUninstall.exe ou --uninstall)
+  // If launched as uninstaller (ChronoKeepUninstall.exe or --uninstall)
   invokeBackend("get_launch_mode")
     .then((mode) => {
       if (mode === "uninstall") {
@@ -1517,4 +1706,3 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }, 3500);
 });
-
