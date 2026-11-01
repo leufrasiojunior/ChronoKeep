@@ -68,10 +68,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path rust-workspace/crates/cr-gui/embedded
           $binDir = if (Test-Path "rust-workspace/target/release/chrono-daemon.exe") { "rust-workspace/target/release" } else { "rust-workspace/target/x86_64-pc-windows-msvc/release" }
           if (Test-Path "$binDir/chrono-daemon.exe") {
-            Copy-Item -Force "$binDir/chrono-daemon.exe" rust-workspace/crates/cr-gui/embedded/
+            python scripts/pack_embedded.py "$binDir/chrono-daemon.exe" rust-workspace/crates/cr-gui/embedded/chrono-daemon.bin
           }
           if (Test-Path "$binDir/chronokeep.dll") {
-            Copy-Item -Force "$binDir/chronokeep.dll" rust-workspace/crates/cr-gui/embedded/
+            python scripts/pack_embedded.py "$binDir/chronokeep.dll" rust-workspace/crates/cr-gui/embedded/chronokeep.bin
           }
           if (Test-Path dist/chronokeep.ini) {
             Copy-Item -Force dist/chronokeep.ini rust-workspace/crates/cr-gui/embedded/
