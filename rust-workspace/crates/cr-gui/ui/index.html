@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark">
+<html lang="en-US" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Configurações do ChronoKeep</title>
+  <title>ChronoKeep Settings</title>
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -14,7 +14,7 @@
       <div class="app-logo">
         <img src="app-logo.png" alt="ChronoKeep Logo" class="app-logo-img">
       </div>
-      <span class="app-title">Configurações do ChronoKeep</span>
+      <span class="app-title" data-i18n="app.title">Configurações do ChronoKeep</span>
     </div>
 
     <div class="header-center">
@@ -23,7 +23,7 @@
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        <input type="text" id="global-search" placeholder="Pesquisar por configurações" autocomplete="off">
+        <input type="text" id="global-search" data-i18n-placeholder="app.search_placeholder" placeholder="Pesquisar por configurações" autocomplete="off">
       </div>
     </div>
 
@@ -42,7 +42,7 @@
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
             <polyline points="9 22 9 12 15 12 15 22"></polyline>
           </svg>
-          <span class="nav-label">Início</span>
+          <span class="nav-label" data-i18n="nav.home">Início</span>
         </button>
 
         <button class="nav-item" data-page="providers">
@@ -52,8 +52,8 @@
             <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
             <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
           </svg>
-          <span class="nav-label">Provedores de Backup</span>
-          <span class="badge-pill">NOVO</span>
+          <span class="nav-label" data-i18n="nav.providers">Provedores de Backup</span>
+          <span class="badge-pill" data-i18n="common.new_badge">NOVO</span>
         </button>
 
         <button class="nav-item" data-page="settings">
@@ -62,7 +62,7 @@
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
-          <span class="nav-label">Geral & Sistema</span>
+          <span class="nav-label" data-i18n="nav.settings">Configurações</span>
         </button>
 
         <button class="nav-item" data-page="cloud-saves">
@@ -70,8 +70,8 @@
           <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
           </svg>
-          <span class="nav-label">Saves Órfãos</span>
-          <span class="badge-pill">NOVO</span>
+          <span class="nav-label" data-i18n="nav.saves">Saves Órfãos</span>
+          <span class="badge-pill" data-i18n="common.new_badge">NOVO</span>
         </button>
 
         <button class="nav-item" data-page="games">
@@ -80,7 +80,7 @@
             <rect x="2" y="6" width="20" height="12" rx="2"></rect>
             <path d="M6 12h4m-2-2v4m7-3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path>
           </svg>
-          <span class="nav-label">Jogos & Nuvem</span>
+          <span class="nav-label" data-i18n="nav.games">Jogos & Nuvem</span>
         </button>
 
         <button class="nav-item" data-page="logs">
@@ -89,7 +89,7 @@
             <polyline points="4 17 10 11 4 5"></polyline>
             <line x1="12" y1="19" x2="20" y2="19"></line>
           </svg>
-          <span class="nav-label">Logs do Sistema</span>
+          <span class="nav-label" data-i18n="nav.logs">Logs do Sistema</span>
         </button>
 
         <button class="nav-item" data-page="about">
@@ -99,7 +99,7 @@
             <line x1="12" y1="16" x2="12" y2="12"></line>
             <line x1="12" y1="8" x2="12.01" y2="8"></line>
           </svg>
-          <span class="nav-label">Sobre</span>
+          <span class="nav-label" data-i18n="nav.about">Sobre</span>
         </button>
       </div>
 
@@ -108,18 +108,18 @@
           <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
           </svg>
-          <span class="nav-label">Repositório GitHub</span>
+          <span class="nav-label" data-i18n="nav.github">Repositório GitHub</span>
         </a>
 
         <div class="nav-item" id="nav-system-status">
           <div class="status-dot online" id="global-status-dot"></div>
-          <span class="nav-label" id="global-status-text">Daemon Ativo</span>
+          <span class="nav-label" id="global-status-text" data-i18n="status.daemon_active">Daemon Ativo</span>
         </div>
 
         <div class="sidebar-versions" id="sidebar-versions">
           <div class="sidebar-version-item">
             <span class="sidebar-ver-key">GUI:</span>
-            <span class="sidebar-ver-val" id="sidebar-ver-gui">v0.1.9</span>
+            <span class="sidebar-ver-val" id="sidebar-ver-gui">v0.1.13</span>
           </div>
           <div class="sidebar-version-item">
             <span class="sidebar-ver-key">DLL:</span>
@@ -138,7 +138,7 @@
       <!-- PAGE 1: INÍCIO (Home) -->
       <section class="page active" id="page-home">
         <div class="page-title-row">
-          <h1 class="page-title">Início</h1>
+          <h1 class="page-title" data-i18n="home.title">Início</h1>
         </div>
 
         <!-- Hero / Banner Row -->
@@ -152,19 +152,19 @@
               </svg>
             </div>
             <div class="hero-info">
-              <h3 class="hero-title">ChronoKeep Cloud Save</h3>
-              <p class="hero-version" id="hero-version">v0.1.9 — Sincronização Steam Cloud Clean-Room</p>
+              <h3 class="hero-title" data-i18n="home.hero_title">ChronoKeep Cloud Save</h3>
+              <p class="hero-version" id="hero-version">v0.1.13 — Sincronização Steam Cloud Clean-Room</p>
             </div>
           </div>
 
           <div class="hero-badges">
             <div class="status-badge" id="hero-daemon-badge">
               <span class="badge-dot online"></span>
-              <span class="badge-text" id="hero-daemon-text">Daemon Online</span>
+              <span class="badge-text" id="hero-daemon-text" data-i18n="status.daemon_active">Daemon Ativo</span>
             </div>
             <div class="status-badge" id="hero-gdrive-badge">
               <span class="badge-dot offline"></span>
-              <span class="badge-text" id="hero-gdrive-text">Google Drive Conectado</span>
+              <span class="badge-text" id="hero-gdrive-text" data-i18n="status.gdrive_connected_badge">Google Drive Conectado</span>
             </div>
           </div>
         </div>
@@ -180,18 +180,18 @@
               </svg>
             </div>
             <div class="home-update-texts">
-              <span class="home-update-title">Atualizações disponíveis</span>
-              <span class="home-update-desc" id="home-update-desc">Novas versões de componentes do ChronoKeep estão prontas para download.</span>
+              <span class="home-update-title" data-i18n="home.update_banner_title">Atualizações disponíveis</span>
+              <span class="home-update-desc" id="home-update-desc" data-i18n="home.update_banner_desc_default">Novas versões de componentes do ChronoKeep estão prontas para download.</span>
             </div>
           </div>
-          <button class="btn btn-sm btn-primary" id="btn-home-check-updates">Conferir</button>
+          <button class="btn btn-sm btn-primary" id="btn-home-check-updates" data-i18n="home.update_banner_btn">Conferir</button>
         </div>
 
         <!-- 2-Column Section (Acesso Rápido & Utilitários) -->
         <div class="two-column-grid">
           <!-- Coluna 1: Acesso Rápido (Tiles) -->
           <div class="column-block">
-            <h2 class="section-title">Acesso rápido</h2>
+            <h2 class="section-title" data-i18n="home.quick_access">Acesso rápido</h2>
             <div class="quick-access-grid">
               <div class="quick-tile" id="tile-install">
                 <div class="tile-icon-box blue">
@@ -201,7 +201,7 @@
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
                 </div>
-                <span class="tile-label">Instalar na Steam</span>
+                <span class="tile-label" data-i18n="home.tile_install">Instalar na Steam</span>
               </div>
 
               <div class="quick-tile" id="tile-daemon">
@@ -210,7 +210,7 @@
                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
                   </svg>
                 </div>
-                <span class="tile-label" id="tile-daemon-label">Iniciar Daemon</span>
+                <span class="tile-label" id="tile-daemon-label" data-i18n="home.tile_start_daemon">Iniciar Daemon</span>
               </div>
 
               <div class="quick-tile" id="tile-open-vault">
@@ -219,7 +219,7 @@
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                   </svg>
                 </div>
-                <span class="tile-label">Abrir Cofre</span>
+                <span class="tile-label" data-i18n="home.tile_open_vault">Abrir Cofre</span>
               </div>
 
               <div class="quick-tile" id="tile-open-steam">
@@ -229,7 +229,7 @@
                     <polygon points="10 8 16 12 10 16 10 8"></polygon>
                   </svg>
                 </div>
-                <span class="tile-label">Pasta Steam</span>
+                <span class="tile-label" data-i18n="home.tile_open_steam">Pasta Steam</span>
               </div>
 
               <div class="quick-tile" id="tile-gdrive-login">
@@ -238,7 +238,7 @@
                     <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
                   </svg>
                 </div>
-                <span class="tile-label" id="tile-gdrive-label">Conectar Drive</span>
+                <span class="tile-label" id="tile-gdrive-label" data-i18n="home.tile_connect_drive">Conectar Drive</span>
               </div>
 
               <div class="quick-tile" id="tile-view-logs">
@@ -252,7 +252,7 @@
                     <line x1="3" y1="18" x2="3.01" y2="18"></line>
                   </svg>
                 </div>
-                <span class="tile-label">Ver Logs</span>
+                <span class="tile-label" data-i18n="home.tile_view_logs">Ver Logs</span>
               </div>
             </div>
           </div>
@@ -260,7 +260,7 @@
           <!-- Coluna 2: Utilitários (SettingsCard list) -->
           <div class="column-block">
             <div class="section-header-row">
-              <h2 class="section-title">Utilitários e Serviços</h2>
+              <h2 class="section-title" data-i18n="home.utilities_title">Utilitários e Serviços</h2>
             </div>
 
             <div class="settings-card-list">
@@ -276,8 +276,8 @@
                     </svg>
                   </div>
                   <div class="card-text">
-                    <div class="card-name">ChronoKeep Daemon</div>
-                    <div class="card-desc" id="card-desc-daemon">Serviço de sincronização HTTP local (Porta 39771)</div>
+                    <div class="card-name" data-i18n="home.daemon_card_title">ChronoKeep Daemon</div>
+                    <div class="card-desc" id="card-desc-daemon" data-i18n="home.daemon_desc_offline">Serviço de sincronização local desligado</div>
                   </div>
                 </div>
                 <div class="card-right">
@@ -285,7 +285,7 @@
                     <input type="checkbox" id="toggle-daemon">
                     <span class="slider"></span>
                   </label>
-                  <button class="card-chevron" id="btn-restart-daemon" title="Reiniciar Daemon">
+                  <button class="card-chevron" id="btn-restart-daemon" data-i18n-title="home.daemon_restart_title" title="Reiniciar Daemon">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <polyline points="23 4 23 10 17 10"></polyline>
                       <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
@@ -303,12 +303,12 @@
                     </svg>
                   </div>
                   <div class="card-text">
-                    <div class="card-name">Redirecionamento OpenSteamTool</div>
-                    <div class="card-desc" id="card-desc-ost">Habilitação do recurso [cloud] no opensteamtool.toml</div>
+                    <div class="card-name" data-i18n="home.ost_card_title">Redirecionamento OpenSteamTool</div>
+                    <div class="card-desc" id="card-desc-ost" data-i18n="home.ost_card_desc">Habilitação do recurso [cloud] no opensteamtool.toml</div>
                   </div>
                 </div>
                 <div class="card-right">
-                  <span class="status-pill active" id="ost-status-pill">Ativo</span>
+                  <span class="status-pill active" id="ost-status-pill" data-i18n="status.ost_active">Ativo</span>
                 </div>
               </div>
 
@@ -321,12 +321,12 @@
                     </svg>
                   </div>
                   <div class="card-text">
-                    <div class="card-name">Google Drive Sincronização</div>
-                    <div class="card-desc" id="card-desc-gdrive">Upload multipart e verificação incremental MD5</div>
+                    <div class="card-name" data-i18n="home.gdrive_card_title">Google Drive Sincronização</div>
+                    <div class="card-desc" id="card-desc-gdrive" data-i18n="home.gdrive_desc_disconnected">Clique para autorizar upload de saves no navegador</div>
                   </div>
                 </div>
                 <div class="card-right">
-                  <button class="btn btn-secondary" id="btn-gdrive-action">Conectar</button>
+                  <button class="btn btn-secondary" id="btn-gdrive-action" data-i18n="home.btn_connect">Conectar</button>
                 </div>
               </div>
 
@@ -338,10 +338,10 @@
       <!-- PAGE: PROVEDORES DE BACKUP -->
       <section class="page" id="page-providers">
         <div class="page-title-row">
-          <h1 class="page-title">Provedores de Backup</h1>
+          <h1 class="page-title" data-i18n="providers.title">Provedores de Backup</h1>
         </div>
 
-        <div class="sub-header-desc">
+        <div class="sub-header-desc" data-i18n="providers.subtitle">
           Configure para onde seus saves serão sincronizados: nuvem externa (Google Drive) ou cofre local no seu computador.
         </div>
 
@@ -357,21 +357,21 @@
                 </svg>
               </div>
               <div class="card-text">
-                <div class="card-name">Provedor Ativo de Backup</div>
-                <div class="card-desc">Selecione o destino de sincronização para os saves do Steam</div>
+                <div class="card-name" data-i18n="providers.active_card_title">Provedor Ativo de Backup</div>
+                <div class="card-desc" data-i18n="providers.active_card_desc">Selecione o destino de sincronização para os saves do Steam</div>
               </div>
             </div>
             <div class="card-right">
               <select id="select-backup-provider" class="select-input">
-                <option value="gdrive" selected>Google Drive (Nuvem)</option>
-                <option value="local">Armazenamento Local (Cofre)</option>
+                <option value="gdrive" selected data-i18n="providers.opt_gdrive">Google Drive (Nuvem)</option>
+                <option value="local" data-i18n="providers.opt_local">Armazenamento Local (Cofre)</option>
               </select>
             </div>
           </div>
 
           <!-- PAINEL 1: GOOGLE DRIVE -->
           <div id="panel-provider-gdrive" class="provider-panel">
-            <h2 class="group-title">Configurações do Google Drive</h2>
+            <h2 class="group-title" data-i18n="providers.gdrive_group_title">Configurações do Google Drive</h2>
 
             <!-- Card Conexão Google -->
             <div class="settings-card">
@@ -382,13 +382,13 @@
                   </svg>
                 </div>
                 <div class="card-text">
-                  <div class="card-name">Autenticação Google Drive</div>
-                  <div class="card-desc" id="provider-card-desc-gdrive">Conecte sua conta para envio automático de saves e manifestos na nuvem</div>
+                  <div class="card-name" data-i18n="providers.gdrive_auth_title">Autenticação Google Drive</div>
+                  <div class="card-desc" id="provider-card-desc-gdrive" data-i18n="providers.gdrive_auth_desc_disconnected">Conecte sua conta para envio automático de saves e manifestos na nuvem</div>
                 </div>
               </div>
               <div class="card-right">
-                <span class="status-pill" id="provider-gdrive-status-pill">Desconectado</span>
-                <button class="btn btn-primary" id="btn-provider-gdrive-action">Fazer Login no Google</button>
+                <span class="status-pill" id="provider-gdrive-status-pill" data-i18n="status.disconnected">Desconectado</span>
+                <button class="btn btn-primary" id="btn-provider-gdrive-action" data-i18n="providers.btn_google_login">Fazer Login no Google</button>
               </div>
             </div>
 
@@ -403,16 +403,16 @@
                   </svg>
                 </div>
                 <div class="card-text">
-                  <div class="card-name">Limite de Upload Manual por Arquivo</div>
-                  <div class="card-desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
+                  <div class="card-name" data-i18n="providers.upload_limit_title">Limite de Upload Manual por Arquivo</div>
+                  <div class="card-desc" data-i18n="providers.upload_limit_desc">Na sincronização manual, saves maiores que este limite são preservados apenas no Cofre local</div>
                 </div>
               </div>
               <div class="card-right">
                 <select id="select-max-upload" class="select-input">
                   <option value="128">128 MB</option>
                   <option value="256">256 MB</option>
-                  <option value="512" selected>512 MB (Padrão)</option>
-                  <option value="1024">1024 MB (1 GB)</option>
+                  <option value="512" selected data-i18n="providers.opt_512mb_default">512 MB (Padrão)</option>
+                  <option value="1024" data-i18n="providers.opt_1024mb">1024 MB (1 GB)</option>
                 </select>
               </div>
             </div>
@@ -420,7 +420,7 @@
 
           <!-- PAINEL 2: ARMAZENAMENTO LOCAL (COFRE) -->
           <div id="panel-provider-local" class="provider-panel" style="display: none;">
-            <h2 class="group-title">Configurações do Cofre Local</h2>
+            <h2 class="group-title" data-i18n="providers.local_group_title">Configurações do Cofre Local</h2>
 
             <!-- Card Pasta do Cofre Local (movido de Geral) -->
             <div class="settings-card">
@@ -431,16 +431,16 @@
                   </svg>
                 </div>
                 <div class="card-text">
-                  <div class="card-name">Pasta do Cofre Local</div>
-                  <div class="card-desc">Diretório onde cópias dos saves e manifestos são preservados localmente</div>
+                  <div class="card-name" data-i18n="providers.vault_dir_title">Pasta do Cofre Local</div>
+                  <div class="card-desc" data-i18n="providers.vault_dir_desc">Diretório onde cópias dos saves e manifestos são preservados localmente</div>
                 </div>
               </div>
               <div class="card-right input-group">
                 <input type="text" id="input-vault-dir" class="text-input" placeholder="%USERPROFILE%\Saved Games\ChronoKeepVault">
-                <button class="btn btn-secondary btn-sm" id="btn-reset-vault-default" title="Restaurar pasta padrão (%USERPROFILE%\Saved Games\ChronoKeepVault)">
+                <button class="btn btn-secondary btn-sm" id="btn-reset-vault-default" data-i18n="providers.vault_reset_btn" data-i18n-title="providers.vault_reset_title" title="Restaurar pasta padrão (%USERPROFILE%\Saved Games\ChronoKeepVault)">
                   Restaurar Padrão
                 </button>
-                <button class="btn btn-icon" id="btn-explore-vault" title="Abrir pasta no Explorer">
+                <button class="btn btn-icon" id="btn-explore-vault" data-i18n-title="common.open_in_explorer" title="Abrir pasta no Explorer">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                   </svg>
@@ -457,21 +457,21 @@
                 <polyline points="17 21 17 13 7 13 7 21"></polyline>
                 <polyline points="7 3 7 8 15 8"></polyline>
               </svg>
-              Salvar Configurações
+              <span data-i18n="common.save_settings">Salvar Configurações</span>
             </button>
             <span class="action-feedback" id="providers-feedback"></span>
           </div>
         </div>
       </section>
 
-      <!-- PAGE: GERAL & SISTEMA -->
+      <!-- PAGE: CONFIGURAÇÕES -->
       <section class="page" id="page-settings">
         <div class="page-title-row">
-          <h1 class="page-title">Geral & Sistema</h1>
+          <h1 class="page-title" data-i18n="settings.title">Configurações</h1>
         </div>
 
         <div class="settings-group">
-          <h2 class="group-title">Configurações Gerais</h2>
+          <h2 class="group-title" data-i18n="settings.general_group">Configurações Gerais</h2>
 
           <!-- Steam Path -->
           <div class="settings-card">
@@ -483,13 +483,13 @@
                 </svg>
               </div>
               <div class="card-text">
-                <div class="card-name">Pasta de Instalação da Steam</div>
-                <div class="card-desc">Local onde se encontra o executável steam.exe e a bridge DLL</div>
+                <div class="card-name" data-i18n="settings.steam_dir_title">Pasta de Instalação da Steam</div>
+                <div class="card-desc" data-i18n="settings.steam_dir_desc">Local onde se encontra o executável steam.exe e a bridge DLL</div>
               </div>
             </div>
             <div class="card-right input-group">
               <input type="text" id="input-steam-dir" class="text-input" placeholder="C:\Program Files (x86)\Steam">
-              <button class="btn btn-icon" id="btn-explore-steam" title="Abrir pasta no Explorer">
+              <button class="btn btn-icon" id="btn-explore-steam" data-i18n-title="common.open_in_explorer" title="Abrir pasta no Explorer">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                 </svg>
@@ -497,6 +497,31 @@
             </div>
           </div>
 
+          <!-- Language Selector -->
+          <div class="settings-card" id="card-language">
+            <div class="card-left">
+              <div class="card-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="2" y1="12" x2="22" y2="12"></line>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name" data-i18n="settings.lang_title">Idioma da Interface</div>
+                <div class="card-desc" data-i18n="settings.lang_desc">Escolha o idioma de exibição do ChronoKeep (aplicado imediatamente)</div>
+              </div>
+            </div>
+            <div class="card-right">
+              <select id="select-language" class="select-input">
+                <option value="system" selected data-i18n="settings.lang_system">Seguir Sistema (Automático)</option>
+                <option value="pt-BR" data-i18n="settings.lang_pt_br">Português (Brasil)</option>
+                <option value="en-US" data-i18n="settings.lang_en_us">English (United States)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Theme Selector -->
           <div class="settings-card">
             <div class="card-left">
               <div class="card-icon-box">
@@ -513,15 +538,15 @@
                 </svg>
               </div>
               <div class="card-text">
-                <div class="card-name">Tema da Interface</div>
-                <div class="card-desc">Ajuste de cores e contraste do Fluent Design</div>
+                <div class="card-name" data-i18n="settings.theme_title">Tema da Interface</div>
+                <div class="card-desc" data-i18n="settings.theme_desc">Ajuste de cores e contraste do Fluent Design</div>
               </div>
             </div>
             <div class="card-right">
               <select id="select-theme" class="select-input">
-                <option value="system">Seguir Sistema</option>
-                <option value="dark" selected>Modo Escuro (Dark)</option>
-                <option value="light">Modo Claro (Light)</option>
+                <option value="system" data-i18n="settings.theme_system">Seguir Sistema</option>
+                <option value="dark" selected data-i18n="settings.theme_dark">Modo Escuro (Dark)</option>
+                <option value="light" data-i18n="settings.theme_light">Modo Claro (Light)</option>
               </select>
             </div>
           </div>
@@ -533,7 +558,7 @@
                 <polyline points="17 21 17 13 7 13 7 21"></polyline>
                 <polyline points="7 3 7 8 15 8"></polyline>
               </svg>
-              Salvar Configurações
+              <span data-i18n="common.save_settings">Salvar Configurações</span>
             </button>
             <span class="action-feedback" id="config-feedback"></span>
           </div>
@@ -541,23 +566,23 @@
 
         <!-- Settings Group: Atualizações de Componentes -->
         <div class="settings-group" style="margin-top: 28px;">
-          <h2 class="group-title">Atualizações de Componentes</h2>
+          <h2 class="group-title" data-i18n="settings.updates_group">Atualizações de Componentes</h2>
 
           <div class="update-card" id="card-updates">
             <div class="update-card-header">
               <div>
-                <h3 class="card-title">Status dos Componentes</h3>
-                <p class="card-subtitle">Verifique e atualize individualmente o Painel, o Serviço Daemon e a Bridge Steam Cloud.</p>
+                <h3 class="card-title" data-i18n="settings.updates_status_title">Status dos Componentes</h3>
+                <p class="card-subtitle" data-i18n="settings.updates_status_desc">Verifique e atualize individualmente o Painel, o Serviço Daemon e a Bridge Steam Cloud.</p>
               </div>
               <div class="update-header-actions">
                 <button class="btn btn-secondary" id="btn-check-updates">
                   <svg id="icon-check-updates" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
                   </svg>
-                  <span id="text-check-updates">Verificar Atualizações</span>
+                  <span id="text-check-updates" data-i18n="settings.updates_btn_check">Verificar Atualizações</span>
                 </button>
                 <button class="btn btn-primary" id="btn-update-all" style="display: none;">
-                  <span>Atualizar Todos</span>
+                  <span data-i18n="settings.updates_btn_all">Atualizar Todos</span>
                 </button>
               </div>
             </div>
@@ -578,18 +603,18 @@
                   </svg>
                 </div>
                 <div class="update-item-info">
-                  <div class="update-item-title">ChronoKeep (Painel Interface)</div>
+                  <div class="update-item-title" data-i18n="settings.comp_gui_title">ChronoKeep (Painel Interface)</div>
                   <div class="update-item-meta">
-                    <span class="meta-label">Versão instalada:</span>
-                    <span class="meta-val" id="meta-gui-cur">v0.1.9</span>
+                    <span class="meta-label" data-i18n="settings.meta_installed_ver">Versão instalada:</span>
+                    <span class="meta-val" id="meta-gui-cur">v0.1.13</span>
                     <span class="meta-sep">•</span>
-                    <span class="meta-label">Mais recente:</span>
+                    <span class="meta-label" data-i18n="settings.meta_latest">Mais recente:</span>
                     <span class="meta-val" id="meta-gui-latest">-</span>
                   </div>
                 </div>
                 <div class="update-item-action">
-                  <span class="badge-tag neutral" id="badge-gui">Não verificado</span>
-                  <button class="btn btn-sm btn-primary" id="btn-update-gui" style="display: none;">Atualizar</button>
+                  <span class="badge-tag neutral" id="badge-gui" data-i18n="settings.badge_not_checked">Não Verificado</span>
+                  <button class="btn btn-sm btn-primary" id="btn-update-gui" style="display: none;" data-i18n="settings.updates_btn_update">Atualizar</button>
                 </div>
               </div>
 
@@ -604,18 +629,18 @@
                   </svg>
                 </div>
                 <div class="update-item-info">
-                  <div class="update-item-title">chrono-daemon (Serviço de Sincronização)</div>
+                  <div class="update-item-title" data-i18n="settings.comp_daemon_title">chrono-daemon (Serviço de Sincronização)</div>
                   <div class="update-item-meta">
-                    <span class="meta-label">Status local:</span>
+                    <span class="meta-label" data-i18n="settings.meta_local_status">Status local:</span>
                     <span class="meta-val" id="meta-daemon-cur">-</span>
                     <span class="meta-sep">•</span>
-                    <span class="meta-label">Mais recente:</span>
+                    <span class="meta-label" data-i18n="settings.meta_latest">Mais recente:</span>
                     <span class="meta-val" id="meta-daemon-latest">-</span>
                   </div>
                 </div>
                 <div class="update-item-action">
-                  <span class="badge-tag neutral" id="badge-daemon">Não verificado</span>
-                  <button class="btn btn-sm btn-primary" id="btn-update-daemon" style="display: none;">Atualizar</button>
+                  <span class="badge-tag neutral" id="badge-daemon" data-i18n="settings.badge_not_checked">Não Verificado</span>
+                  <button class="btn btn-sm btn-primary" id="btn-update-daemon" style="display: none;" data-i18n="settings.updates_btn_update">Atualizar</button>
                 </div>
               </div>
 
@@ -629,18 +654,18 @@
                   </svg>
                 </div>
                 <div class="update-item-info">
-                  <div class="update-item-title">chronokeep.dll (Bridge Steam Cloud)</div>
+                  <div class="update-item-title" data-i18n="settings.comp_bridge_title">chronokeep.dll (Bridge Steam Cloud)</div>
                   <div class="update-item-meta">
-                    <span class="meta-label">Status local:</span>
+                    <span class="meta-label" data-i18n="settings.meta_local_status">Status local:</span>
                     <span class="meta-val" id="meta-bridge-cur">-</span>
                     <span class="meta-sep">•</span>
-                    <span class="meta-label">Mais recente:</span>
+                    <span class="meta-label" data-i18n="settings.meta_latest">Mais recente:</span>
                     <span class="meta-val" id="meta-bridge-latest">-</span>
                   </div>
                 </div>
                 <div class="update-item-action">
-                  <span class="badge-tag neutral" id="badge-bridge">Não verificado</span>
-                  <button class="btn btn-sm btn-primary" id="btn-update-bridge" style="display: none;">Atualizar</button>
+                  <span class="badge-tag neutral" id="badge-bridge" data-i18n="settings.badge_not_checked">Não Verificado</span>
+                  <button class="btn btn-sm btn-primary" id="btn-update-bridge" style="display: none;" data-i18n="settings.updates_btn_update">Atualizar</button>
                 </div>
               </div>
             </div>
@@ -649,15 +674,15 @@
 
         <!-- Settings Group: Desinstalação / Zona de Perigo -->
         <div class="settings-group" style="margin-top: 28px;">
-          <h2 class="group-title" style="color: var(--error-color);">Zona de Desinstalação</h2>
+          <h2 class="group-title" style="color: var(--error-color);" data-i18n="settings.danger_group">Zona de Desinstalação</h2>
 
           <div class="settings-card" style="border-color: rgba(255, 99, 132, 0.3);">
             <div class="card-left">
-              <div class="card-title">Desinstalar ChronoKeep da Steam</div>
-              <div class="card-desc">Remove as DLLs, o serviço de sincronização e desativa os redirecionamentos. Seus saves no Cofre local e no Google Drive são preservados.</div>
+              <div class="card-title" data-i18n="settings.uninstall_card_title">Desinstalar ChronoKeep da Steam</div>
+              <div class="card-desc" data-i18n="settings.uninstall_card_desc">Remove as DLLs, o serviço de sincronização e desativa os redirecionamentos. Seus saves no Cofre local e no Google Drive são preservados.</div>
             </div>
             <div class="card-right">
-              <button class="btn btn-secondary" id="btn-open-uninstall-modal" style="color: var(--error-color); border-color: rgba(255, 99, 132, 0.4);">
+              <button class="btn btn-secondary" id="btn-open-uninstall-modal" style="color: var(--error-color); border-color: rgba(255, 99, 132, 0.4);" data-i18n="settings.uninstall_btn">
                 Desinstalar ChronoKeep...
               </button>
             </div>
@@ -668,7 +693,7 @@
       <!-- PAGE 3: SAVES ÓRFÃOS -->
       <section class="page" id="page-cloud-saves">
         <div class="page-title-row">
-          <h1 class="page-title">Saves Órfãos</h1>
+          <h1 class="page-title" data-i18n="saves.title">Saves Órfãos</h1>
           <div class="page-actions">
             <button class="btn btn-secondary" id="btn-sync-selected" disabled>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -676,19 +701,19 @@
                 <polyline points="17 8 12 3 7 8"></polyline>
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
-              Sincronizar Selecionados (<span id="selected-count">0</span>)
+              <span data-i18n="saves.btn_sync_selected">Sincronizar Selecionados</span> (<span id="selected-count">0</span>)
             </button>
             <button class="btn btn-primary" id="btn-scan-saves">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"></circle>
                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
               </svg>
-              Escanear Saves no PC
+              <span data-i18n="saves.btn_scan">Escanear Saves no PC</span>
             </button>
           </div>
         </div>
 
-        <div class="sub-header-desc">
+        <div class="sub-header-desc" data-i18n="saves.subtitle">
           Varre os diretórios locais do Steam userdata e do Cofre para catalogar saves existentes que ainda não foram sincronizados com o Google Drive.
         </div>
 
@@ -696,15 +721,15 @@
         <div class="saves-tabs-bar">
           <div class="saves-tab-buttons">
             <button class="saves-tab-btn active" id="tab-btn-tools" data-tab="tools">
-              <span>🎮 Tools</span>
+              <span data-i18n="saves.tab_tools">🎮 Tools</span>
               <span class="tab-badge" id="count-tools">0</span>
             </button>
             <button class="saves-tab-btn" id="tab-btn-official" data-tab="official">
-              <span>🛡️ Steam Oficial</span>
+              <span data-i18n="saves.tab_official">🛡️ Steam Oficial</span>
               <span class="tab-badge" id="count-official">0</span>
             </button>
             <button class="saves-tab-btn" id="tab-btn-all" data-tab="all">
-              <span>📂 Todos</span>
+              <span data-i18n="saves.tab_all">📂 Todos</span>
               <span class="tab-badge" id="count-all">0</span>
             </button>
           </div>
@@ -712,7 +737,7 @@
           <div class="saves-search-wrapper">
             <div class="search-box">
               <span class="search-icon">🔍</span>
-              <input type="text" id="input-search-saves" placeholder="Filtrar por nome ou AppID...">
+              <input type="text" id="input-search-saves" data-i18n-placeholder="saves.search_placeholder" placeholder="Filtrar por nome ou AppID...">
             </div>
           </div>
         </div>
@@ -721,16 +746,16 @@
         <div class="saves-legend-card">
           <div class="legend-header">
             <span class="legend-icon">ℹ️</span>
-            <strong>Entenda as origens dos jogos e o papel do ChronoKeep:</strong>
+            <strong data-i18n="saves.legend_title">Entenda as origens dos jogos e o papel do ChronoKeep:</strong>
           </div>
           <div class="legend-grid">
             <div class="legend-item">
-              <span class="badge badge-tools">Tools</span>
-              <span class="legend-desc"><strong>SteamTools / GreenLuma:</strong> A nuvem da Valve não suporta esses títulos. O ChronoKeep é a <em>nuvem principal</em> e sincroniza seus saves com o Google Drive e Cofre local.</span>
+              <span class="badge badge-tools" data-i18n="saves.legend_badge_tools">Tools</span>
+              <span class="legend-desc" data-i18n-html="saves.legend_tools_html"><strong>SteamTools / GreenLuma:</strong> A nuvem da Valve não suporta esses títulos. O ChronoKeep é a <em>nuvem principal</em> e sincroniza seus saves com o Google Drive e Cofre local.</span>
             </div>
             <div class="legend-item">
-              <span class="badge badge-official">Steam Oficial</span>
-              <span class="legend-desc"><strong>Biblioteca Oficial Steam:</strong> A <em>Valve Steam Cloud</em> opera com prioridade total. O ChronoKeep atua como <em>backup de redundância</em> seguro caso deseje manter cópias extras.</span>
+              <span class="badge badge-official" data-i18n="saves.legend_badge_official">Steam Oficial</span>
+              <span class="legend-desc" data-i18n-html="saves.legend_official_html"><strong>Biblioteca Oficial Steam:</strong> A <em>Valve Steam Cloud</em> opera com prioridade total. O ChronoKeep atua como <em>backup de redundância</em> seguro caso deseje manter cópias extras.</span>
             </div>
           </div>
         </div>
@@ -741,8 +766,8 @@
             <div class="progress-header-left">
               <div class="fluent-spinner" id="sync-spinner"></div>
               <div class="progress-text-group">
-                <span class="progress-status-title" id="progress-status-title">Preparando sincronização...</span>
-                <span class="progress-status-detail" id="progress-status-detail">0 de 0 jogos • 0 B de 0 B</span>
+                <span class="progress-status-title" id="progress-status-title" data-i18n="saves.progress_preparing">Preparando sincronização...</span>
+                <span class="progress-status-detail" id="progress-status-detail" data-i18n="saves.progress_zero">0 de 0 jogos • 0 B de 0 B</span>
               </div>
             </div>
             <div class="progress-percent-badge" id="progress-percent-text">0%</div>
@@ -757,21 +782,21 @@
             <thead>
               <tr>
                 <th style="width: 40px; text-align: center;">
-                  <input type="checkbox" id="check-all-orphans" title="Selecionar todos">
+                  <input type="checkbox" id="check-all-orphans" data-i18n-title="saves.select_all" title="Selecionar todos">
                 </th>
-                <th style="width: 85px;">AppID</th>
-                <th>Jogo</th>
-                <th style="width: 140px;">Origem</th>
-                <th style="width: 110px;">Arquivos</th>
-                <th style="width: 110px;">Tamanho</th>
-                <th style="width: 150px;">No Cofre / Local</th>
-                <th style="width: 130px;">Na Nuvem</th>
-                <th style="width: 120px; text-align: center;">Ações</th>
+                <th style="width: 85px;" data-i18n="saves.col_appid">AppID</th>
+                <th data-i18n="saves.col_game">Jogo</th>
+                <th style="width: 140px;" data-i18n="saves.col_origin">Origem</th>
+                <th style="width: 110px;" data-i18n="saves.col_files">Arquivos</th>
+                <th style="width: 110px;" data-i18n="saves.col_size">Tamanho</th>
+                <th style="width: 150px;" data-i18n="saves.col_local">No Cofre / Local</th>
+                <th style="width: 130px;" data-i18n="saves.col_cloud">Na Nuvem</th>
+                <th style="width: 120px; text-align: center;" data-i18n="saves.col_actions">Ações</th>
               </tr>
             </thead>
             <tbody id="tbody-saves">
               <tr>
-                <td colspan="9" class="empty-state">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
+                <td colspan="9" class="empty-state" data-i18n="saves.empty_initial">Clique em "Escanear Saves no PC" para listar os jogos detectados.</td>
               </tr>
             </tbody>
           </table>
@@ -781,14 +806,14 @@
       <!-- PAGE: JOGOS & NUVEM (EM CONSTRUÇÃO) -->
       <section class="page" id="page-games">
         <div class="page-title-row">
-          <h1 class="page-title">Jogos & Nuvem</h1>
+          <h1 class="page-title" data-i18n="games.title">Jogos & Nuvem</h1>
         </div>
         <div class="construction-container">
           <div class="construction-card">
             <div class="construction-icon">🎮</div>
-            <h2>Em construção</h2>
-            <p>Esta seção exibirá todos os seus jogos identificados, capas oficiais, AppIDs, status detalhado de saves locais e na nuvem, com opção de habilitar ou pausar o backup individual de cada título.</p>
-            <span class="status-pill active">Em breve no ChronoKeep</span>
+            <h2 data-i18n="games.under_construction">Em construção</h2>
+            <p data-i18n="games.under_construction_desc">Esta seção exibirá todos os seus jogos identificados, capas oficiais, AppIDs, status detalhado de saves locais e na nuvem, com opção de habilitar ou pausar o backup individual de cada título.</p>
+            <span class="status-pill active" data-i18n="games.coming_soon">Em breve no ChronoKeep</span>
           </div>
         </div>
       </section>
@@ -796,26 +821,26 @@
       <!-- PAGE 4: LOGS DO SISTEMA -->
       <section class="page" id="page-logs">
         <div class="page-title-row">
-          <h1 class="page-title">Logs do Sistema</h1>
+          <h1 class="page-title" data-i18n="logs.title">Logs do Sistema</h1>
           <div class="page-actions">
             <select id="select-log-target" class="select-input">
-              <option value="daemon" selected>chrono_daemon.log (Serviço)</option>
-              <option value="bridge">chronokeep_bridge.log (DLL Bridge)</option>
+              <option value="daemon" selected data-i18n="logs.opt_daemon">chrono_daemon.log (Serviço)</option>
+              <option value="bridge" data-i18n="logs.opt_bridge">chronokeep_bridge.log (DLL Bridge)</option>
             </select>
-            <button class="btn btn-secondary" id="btn-refresh-log">Atualizar</button>
-            <button class="btn btn-secondary" id="btn-clear-log">Limpar</button>
+            <button class="btn btn-secondary" id="btn-refresh-log" data-i18n="logs.btn_refresh">Atualizar</button>
+            <button class="btn btn-secondary" id="btn-clear-log" data-i18n="logs.btn_clear">Limpar</button>
           </div>
         </div>
 
         <div class="terminal-container">
-          <pre id="log-output" class="terminal-body">Carregando logs...</pre>
+          <pre id="log-output" class="terminal-body" data-i18n="logs.loading">Carregando logs...</pre>
         </div>
       </section>
 
       <!-- PAGE 5: SOBRE -->
       <section class="page" id="page-about">
         <div class="page-title-row">
-          <h1 class="page-title">Sobre o ChronoKeep</h1>
+          <h1 class="page-title" data-i18n="about.title">Sobre o ChronoKeep</h1>
         </div>
 
         <div class="about-card">
@@ -825,7 +850,7 @@
             </div>
             <div>
               <h2 class="about-name">ChronoKeep</h2>
-              <p class="about-desc" id="about-version">v0.1.9</p>
+              <p class="about-desc" id="about-version">v0.1.13</p>
             </div>
           </div>
 
@@ -834,7 +859,7 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
               </svg>
-              <span>Repositório no GitHub</span>
+              <span data-i18n="about.btn_github">Repositório no GitHub</span>
             </button>
           </div>
         </div>
@@ -852,46 +877,46 @@
         <div class="dialog-logo-center">
           <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
         </div>
-        <h2 id="disclaimer-title" class="dialog-title">Aviso Importante & Isenção de Responsabilidade</h2>
-        <p class="dialog-subtitle">Por favor, leia atentamente antes de continuar</p>
+        <h2 id="disclaimer-title" class="dialog-title" data-i18n="modal.disclaimer_title">Aviso Importante & Isenção de Responsabilidade</h2>
+        <p class="dialog-subtitle" data-i18n="modal.disclaimer_subtitle">Por favor, leia atentamente antes de continuar</p>
       </div>
 
       <div class="dialog-body">
-        <p>O <strong>ChronoKeep</strong> é um software livre e open-source criado por um desenvolvedor independente, desenvolvido para gerenciar e preservar seus saves, conquistas e tempo de jogo conforme a sua necessidade.</p>
+        <p data-i18n-html="modal.disclaimer_p1_html">O <strong>ChronoKeep</strong> é um software livre e open-source criado por um desenvolvedor independente, desenvolvido para gerenciar e preservar seus saves, conquistas e tempo de jogo conforme a sua necessidade.</p>
 
-        <p>O aplicativo atua redirecionando as operações de sincronização em nuvem da Steam para o provedor de sua escolha (como o Google Drive) e permitindo resgatar saves antigos.</p>
+        <p data-i18n="modal.disclaimer_p2">O aplicativo atua redirecionando as operações de sincronização em nuvem da Steam para o provedor de sua escolha (como o Google Drive) e permitindo resgatar saves antigos.</p>
 
         <div class="dialog-callout safe">
           <div class="callout-icon">🛡️</div>
           <div class="callout-text">
-            <strong>Armazenamento Local Seguro (ChronoKeep Vault):</strong>
-            <p>Na prática, o risco de perda ou corrupção de arquivos é muito baixo, pois todos os dados são sempre guardados diretamente em seu disco local.</p>
+            <strong data-i18n="modal.disclaimer_safe_title">Armazenamento Local Seguro (ChronoKeep Vault):</strong>
+            <p data-i18n="modal.disclaimer_safe_desc">Na prática, o risco de perda ou corrupção de arquivos é muito baixo, pois todos os dados são sempre guardados diretamente em seu disco local.</p>
           </div>
         </div>
 
         <div class="dialog-callout warning">
           <div class="callout-icon">⚠️</div>
           <div class="callout-text">
-            <strong>Ressalvas e Limitações:</strong>
-            <p>Se você se preocupa com a integridade dos saves locais, o software preserva cópias no disco, mas como qualquer utilitário de sistema:</p>
+            <strong data-i18n="modal.disclaimer_warn_title">Ressalvas e Limitações:</strong>
+            <p data-i18n="modal.disclaimer_warn_desc">Se você se preocupa com a integridade dos saves locais, o software preserva cópias no disco, mas como qualquer utilitário de sistema:</p>
             <ul>
-              <li>Podem ocorrer corrupções em situações anômalas;</li>
-              <li>Risco residual de perda ou divergência de dados;</li>
-              <li>Não há garantia de sincronização com todos os jogos (alguns utilizam padrões proprietários fora da API Steam Cloud).</li>
+              <li data-i18n="modal.disclaimer_li1">Podem ocorrer corrupções em situações anômalas;</li>
+              <li data-i18n="modal.disclaimer_li2">Risco residual de perda ou divergência de dados;</li>
+              <li data-i18n="modal.disclaimer_li3">Não há garantia de sincronização com todos os jogos (alguns utilizam padrões proprietários fora da API Steam Cloud).</li>
             </ul>
           </div>
         </div>
 
-        <p><strong>Isenção de Responsabilidade:</strong> O desenvolvedor não se responsabiliza caso qualquer perda venha a ocorrer, mas caso note qualquer anormalidade, por favor <a href="https://github.com/leufrasiojunior/ChronoKeep/issues" class="dialog-link" id="link-disclaimer-issue">abra uma issue no GitHub</a> explicando o mais detalhado possível o ocorrido (informando o jogo e AppID se possuir) para que possamos investigar e solucionar.</p>
+        <p data-i18n-html="modal.disclaimer_p3_html"><strong>Isenção de Responsabilidade:</strong> O desenvolvedor não se responsabiliza caso qualquer perda venha a ocorrer, mas caso note qualquer anormalidade, por favor <a href="https://github.com/leufrasiojunior/ChronoKeep/issues" class="dialog-link" id="link-disclaimer-issue">abra uma issue no GitHub</a> explicando o mais detalhado possível o ocorrido (informando o jogo e AppID se possuir) para que possamos investigar e solucionar.</p>
 
-        <p>O ChronoKeep pode te ajudar caso precise reinstalar o Windows sem backup prévio, após falhas de software ou hardware, ou caso queira iniciar o jogo em um PC e continuar em outro com máxima confiabilidade.</p>
+        <p data-i18n="modal.disclaimer_p4">O ChronoKeep pode te ajudar caso precise reinstalar o Windows sem backup prévio, após falhas de software ou hardware, ou caso queira iniciar o jogo em um PC e continuar em outro com máxima confiabilidade.</p>
 
-        <p class="dialog-highlight-choice">A escolha de continuar é sua.</p>
+        <p class="dialog-highlight-choice" data-i18n="modal.disclaimer_choice">A escolha de continuar é sua.</p>
       </div>
 
       <div class="dialog-footer">
-        <button id="btn-disclaimer-cancel" class="btn btn-secondary">Cancelar</button>
-        <button id="btn-disclaimer-accept" class="btn btn-primary">Eu entendo os riscos</button>
+        <button id="btn-disclaimer-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+        <button id="btn-disclaimer-accept" class="btn btn-primary" data-i18n="modal.disclaimer_accept">Eu entendo os riscos</button>
       </div>
     </div>
   </div>
@@ -903,27 +928,27 @@
         <div class="dialog-logo-center">
           <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
         </div>
-        <h2 id="steam-restart-title" class="dialog-title">Reinicialização da Steam Necessária</h2>
-        <p class="dialog-subtitle">Atualização de componentes do ChronoKeep</p>
+        <h2 id="steam-restart-title" class="dialog-title" data-i18n="modal.steam_restart_title">Reinicialização da Steam Necessária</h2>
+        <p class="dialog-subtitle" data-i18n="modal.steam_restart_subtitle">Atualização de componentes do ChronoKeep</p>
       </div>
 
       <div class="dialog-body">
-        <p>A Steam está aberta no momento. Para aplicar a atualização de <strong id="steam-restart-component-name">componente</strong>, a Steam precisa ser encerrada temporariamente e será reaberta de forma automática ao concluir.</p>
+        <p data-i18n-html="modal.steam_restart_body_html">A Steam está aberta no momento. Para aplicar a atualização de <strong id="steam-restart-component-name">componente</strong>, a Steam precisa ser encerrada temporariamente e será reaberta de forma automática ao concluir.</p>
 
         <div class="dialog-callout warning">
           <div class="callout-icon">⚠️</div>
           <div class="callout-text">
-            <strong>Atenção ao progresso de jogos:</strong>
-            <p>Certifique-se de salvar o progresso dos seus jogos antes de continuar. Todos os processos da Steam serão finalizados para permitir a substituição segura dos arquivos.</p>
+            <strong data-i18n="modal.steam_restart_warn_title">Atenção ao progresso de jogos:</strong>
+            <p data-i18n="modal.steam_restart_warn_desc">Certifique-se de salvar o progresso dos seus jogos antes de continuar. Todos os processos da Steam serão finalizados para permitir a substituição segura dos arquivos.</p>
           </div>
         </div>
 
-        <p class="dialog-highlight-choice">Deseja prosseguir com o fechamento e reinicialização da Steam?</p>
+        <p class="dialog-highlight-choice" data-i18n="modal.steam_restart_choice">Deseja prosseguir com o fechamento e reinicialização da Steam?</p>
       </div>
 
       <div class="dialog-footer">
-        <button id="btn-steam-restart-cancel" class="btn btn-secondary">Cancelar</button>
-        <button id="btn-steam-restart-confirm" class="btn btn-primary">Continuar e Reiniciar Steam</button>
+        <button id="btn-steam-restart-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+        <button id="btn-steam-restart-confirm" class="btn btn-primary" data-i18n="modal.steam_restart_confirm">Continuar e Reiniciar Steam</button>
       </div>
     </div>
   </div>
@@ -935,26 +960,26 @@
         <div class="dialog-logo-center">
           <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
         </div>
-        <h2 id="uninstall-title" class="dialog-title">Desinstalar ChronoKeep da Steam</h2>
-        <p class="dialog-subtitle">Remoção de componentes e restauração de arquivos</p>
+        <h2 id="uninstall-title" class="dialog-title" data-i18n="modal.uninstall_title">Desinstalar ChronoKeep da Steam</h2>
+        <p class="dialog-subtitle" data-i18n="modal.uninstall_subtitle">Remoção de componentes e restauração de arquivos</p>
       </div>
 
       <div class="dialog-body">
         <div class="dialog-callout safe">
           <div class="callout-icon">🛡️</div>
           <div class="callout-text">
-            <strong>Seus saves estão protegidos:</strong>
-            <p>Todos os seus arquivos de save salvos no <strong>Cofre Local (Vault)</strong> e no <strong>Google Drive</strong> serão <strong>mantidos intactos</strong> e não serão apagados.</p>
+            <strong data-i18n="modal.uninstall_safe_title">Seus saves estão protegidos:</strong>
+            <p data-i18n-html="modal.uninstall_safe_desc_html">Todos os seus arquivos de save salvos no <strong>Cofre Local (Vault)</strong> e no <strong>Google Drive</strong> serão <strong>mantidos intactos</strong> e não serão apagados.</p>
           </div>
         </div>
 
         <div class="dialog-callout warning">
           <div class="callout-icon">⚠️</div>
           <div class="callout-text">
-            <strong>O que acontecerá:</strong>
-            <p>1. A Steam será temporariamente encerrada para descarregar as DLLs.</p>
-            <p>2. Os arquivos <code>chronokeep.dll</code>, <code>cloud_redirect.dll</code> e <code>chrono-daemon.exe</code> serão excluídos da pasta da Steam.</p>
-            <p>3. Todos os redirecionamentos de nuvem serão desativados e a Steam voltará ao estado original da Valve.</p>
+            <strong data-i18n="modal.uninstall_warn_title">O que acontecerá:</strong>
+            <p data-i18n="modal.uninstall_step1">1. A Steam será temporariamente encerrada para descarregar as DLLs.</p>
+            <p data-i18n-html="modal.uninstall_step2_html">2. Os arquivos <code>chronokeep.dll</code>, <code>cloud_redirect.dll</code> e <code>chrono-daemon.exe</code> serão excluídos da pasta da Steam.</p>
+            <p data-i18n="modal.uninstall_step3">3. Todos os redirecionamentos de nuvem serão desativados e a Steam voltará ao estado original da Valve.</p>
           </div>
         </div>
 
@@ -962,22 +987,23 @@
           <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px;">
             <input type="checkbox" id="check-restore-saves-on-uninstall" checked style="margin-top: 3px; accent-color: var(--accent-color);">
             <div>
-              <strong>Importar / Restaurar saves do Cofre para a Steam local (userdata)</strong>
-              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;">Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\userdata\...\remote</code> para que você continue com seu progresso na Steam local.</p>
+              <strong data-i18n="modal.uninstall_restore_title">Importar / Restaurar saves do Cofre para a Steam local (userdata)</strong>
+              <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.4;" data-i18n-html="modal.uninstall_restore_desc_html">Copia os saves mais recentes preservados no Cofre diretamente de volta para a pasta <code>Steam\userdata\...\remote</code> para que você continue com seu progresso na Steam local.</p>
             </div>
           </label>
         </div>
 
-        <p class="dialog-highlight-choice" style="color: var(--error-color);">Tem certeza de que deseja desinstalar o ChronoKeep da Steam?</p>
+        <p class="dialog-highlight-choice" style="color: var(--error-color);" data-i18n="modal.uninstall_choice">Tem certeza de que deseja desinstalar o ChronoKeep da Steam?</p>
       </div>
 
       <div class="dialog-footer">
-        <button id="btn-uninstall-cancel" class="btn btn-secondary">Cancelar</button>
-        <button id="btn-uninstall-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;">Sim, Desinstalar ChronoKeep</button>
+        <button id="btn-uninstall-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+        <button id="btn-uninstall-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;" data-i18n="modal.uninstall_confirm">Sim, Desinstalar ChronoKeep</button>
       </div>
     </div>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
