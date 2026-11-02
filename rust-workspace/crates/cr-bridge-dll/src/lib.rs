@@ -240,13 +240,54 @@ pub fn is_namespace_app(app_id: u32) -> bool {
 }
 
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+static LAST_DEBUG_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn GetTickCount64() -> u64;
+}
+
+#[cfg(target_os = "windows")]
+fn get_tick_count_ms() -> u64 {
+    unsafe { GetTickCount64() }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_tick_count_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 pub fn is_debug_mode() -> bool {
+    let now = get_tick_count_ms();
+    let last = LAST_DEBUG_CHECK.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= 500 {
+        LAST_DEBUG_CHECK.store(now, Ordering::Relaxed);
+        let steam_dir = get_steam_path();
+        if !steam_dir.is_empty() {
+            let enabled = cr_common::config::load_debug_mode(Path::new(&steam_dir));
+            let old = DEBUG_MODE.swap(enabled, Ordering::Relaxed);
+            if old != enabled {
+                log_line(&format!(
+                    "[Config] Modo Debug {}",
+                    if enabled { "ATIVADO" } else { "DESATIVADO" }
+                ));
+            }
+        }
+    }
     DEBUG_MODE.load(Ordering::Relaxed)
 }
 
 pub fn set_debug_mode(enabled: bool) {
-    DEBUG_MODE.store(enabled, Ordering::Relaxed);
+    let old = DEBUG_MODE.swap(enabled, Ordering::Relaxed);
+    if old != enabled {
+        log_line(&format!(
+            "[Config] Modo Debug {}",
+            if enabled { "ATIVADO" } else { "DESATIVADO" }
+        ));
+    }
 }
 
 pub fn log_debug(msg: &str) {
@@ -366,6 +407,11 @@ fn auto_seed_local_apps(steam_path: &str) {
             "[Init] Auto-descobertos {} AppIDs locais (stplug-in / AppList)",
             discovered.len()
         ));
+    } else {
+        log_debug(&format!(
+            "[Init] Auto-seed concluido sem novos AppIDs locais sob '{}'",
+            steam_path
+        ));
     }
 }
 
@@ -394,6 +440,12 @@ fn sync_session_with_service_opts(force: bool) {
             }
         }
     }
+
+    log_debug(&format!(
+        "[Session] Sincronizando sessao com chrono-daemon (acct={}, apps_count={})",
+        acct,
+        apps.len()
+    ));
 
     if ipc::push_session_update(port, &steam_path, acct, &apps) {
         if let Ok(mut guard) = last_session_store().lock() {
@@ -557,6 +609,11 @@ pub unsafe extern "C" fn CK_InstallTransportHooks() -> bool {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn CK_SetDebugMode(enabled: bool) {
+    set_debug_mode(enabled);
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn CK_DispatchCloudRpc(
     method: *const c_char,
     app_id: u32,
@@ -578,6 +635,10 @@ pub unsafe extern "C" fn CK_DispatchCloudRpc(
         return false;
     }
     if !is_namespace_app(app_id) {
+        log_debug(&format!(
+            "[CK_DispatchCloudRpc] Rejeitado: app={} fora do namespace gerenciado",
+            app_id
+        ));
         return false;
     }
 
@@ -603,13 +664,28 @@ pub unsafe extern "C" fn CK_DispatchCloudRpc(
         get_account_id()
     };
 
+    let rpc_detail = cr_proto::cloud_messages::extract_rpc_summary(method_str, req_slice);
+    log_debug(&format!(
+        "[CK_DispatchCloudRpc] Invocado: method={} app={} acct={}{} req_bytes={}B",
+        method_str, app_id, eff_acct, rpc_detail, req_slice.len()
+    ));
+
     let ipc::RpcForwardResult::Handled(res_code, resp_bytes) =
         ipc::forward_rpc(port, &steam_path, method_str, app_id, eff_acct, req_slice)
     else {
+        log_debug(&format!(
+            "[CK_DispatchCloudRpc] Falha no forward IPC para method={} app={}",
+            method_str, app_id
+        ));
         return false;
     };
 
     if resp_bytes.len() > resp_max_len as usize {
+        log_line(&format!(
+            "[CK_DispatchCloudRpc] ERRO: buffer de resposta pequeno demais (precisa {}B, max {}B)",
+            resp_bytes.len(),
+            resp_max_len
+        ));
         return false;
     }
 
@@ -620,9 +696,10 @@ pub unsafe extern "C" fn CK_DispatchCloudRpc(
     *eresult = res_code;
 
     log_line(&format!(
-        "[CK_DispatchCloudRpc] {} app={} -> eresult={} ({}B)",
+        "[CK_DispatchCloudRpc] {} app={}{} -> eresult={} ({}B)",
         method_str,
         app_id,
+        rpc_detail,
         res_code,
         resp_bytes.len()
     ));
