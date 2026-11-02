@@ -585,10 +585,16 @@
             </div>
             <div class="card-right input-group">
               <input type="password" id="input-settings-steam-api-key" class="text-input" placeholder="Cole sua Steam Web API Key aqui...">
-              <button class="btn btn-secondary btn-sm" id="btn-toggle-key-visibility" title="Mostrar/Ocultar chave">
+              <button class="btn btn-secondary btn-sm" id="btn-toggle-key-visibility" data-i18n-title="common.toggle_visibility" title="Mostrar/Ocultar chave">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                   <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+              <button class="btn btn-secondary btn-sm" id="btn-clear-settings-steam-api-key" data-i18n-title="settings.steam_api_key_clear" title="Apagar chave">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                 </svg>
               </button>
             </div>
@@ -1377,6 +1383,12 @@
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
               </button>
+              <button class="copy-badge-pill btn-ach-manage-key" id="btn-ach-manage-key" data-i18n-title="achievements.btn_manage_key" title="Gerenciar Chave da API">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                </svg>
+                <span data-i18n="achievements.key_badge">Chave API</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1393,6 +1405,22 @@
           <div class="ach-progress-bar-bg">
             <div class="ach-progress-bar-fill" id="ach-progress-fill" style="width: 0%;"></div>
           </div>
+        </div>
+
+        <!-- Filter Tabs (Todas, Conquistadas, Bloqueadas) -->
+        <div class="ach-tabs-row" id="ach-tabs-row" style="display: none;">
+          <button class="ach-tab-btn active" id="tab-ach-all" data-filter="all">
+            <span data-i18n="achievements.tab_all">Todas</span>
+            <span class="ach-tab-badge" id="ach-badge-all">0</span>
+          </button>
+          <button class="ach-tab-btn" id="tab-ach-unlocked" data-filter="unlocked">
+            <span data-i18n="achievements.tab_unlocked">Conquistadas</span>
+            <span class="ach-tab-badge success" id="ach-badge-unlocked">0</span>
+          </button>
+          <button class="ach-tab-btn" id="tab-ach-locked" data-filter="locked">
+            <span data-i18n="achievements.tab_locked">Bloqueadas</span>
+            <span class="ach-tab-badge" id="ach-badge-locked">0</span>
+          </button>
         </div>
 
         <!-- State 1: Missing API Key Tutorial Card -->
@@ -1430,7 +1458,10 @@
           <div class="api-key-input-row">
             <input type="text" id="input-modal-api-key" class="text-input" placeholder="Cole sua Steam Web API Key aqui..." data-i18n-placeholder="achievements.key_placeholder" />
             <button class="btn btn-primary" id="btn-save-modal-api-key" data-i18n="achievements.btn_save_key">Salvar e Carregar</button>
+            <button class="btn btn-secondary" id="btn-clear-modal-api-key" data-i18n="achievements.btn_clear_key" style="display: none;">Apagar Chave</button>
           </div>
+          <span class="action-feedback" id="modal-api-key-feedback"></span>
+        </div>
           <span class="action-feedback" id="modal-api-key-feedback"></span>
         </div>
 

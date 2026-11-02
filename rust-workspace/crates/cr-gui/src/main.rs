@@ -79,6 +79,7 @@ fn main() {
             get_game_achievements,
             get_steam_api_key,
             set_steam_api_key,
+            resolve_game_cover_url,
             open_steam_store,
         ])
         .run(tauri::generate_context!())

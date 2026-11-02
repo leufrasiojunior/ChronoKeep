@@ -29,6 +29,132 @@ use std::time::Duration;
 
 pub use crate::embedded::{get_embedded_bridge, get_embedded_daemon};
 
+pub fn is_system_app_id(app_id: u32) -> bool {
+    matches!(
+        app_id,
+        7 | 760 | 228980 | 241100 | 241300 | 250820 | 1070560 | 1391110 | 1628350 | 1826330 | 2180100
+            | 1493710 | 1458870 | 1580130 | 1887720 | 2348520 | 2805730 | 3219800
+    )
+}
+
+pub fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) & 0x3F] as char);
+        out.push(TABLE[(triple >> 12) & 0x3F] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(triple >> 6) & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[triple & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+pub fn find_local_appcache_image(steam_path: &Path, app_id: u32, img_name: &str) -> Option<String> {
+    let appcache_dir = steam_path.join("appcache").join("librarycache");
+    let app_dir = appcache_dir.join(app_id.to_string());
+    if app_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&app_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let candidate = p.join(img_name);
+                    if candidate.is_file() {
+                        if let Ok(bytes) = fs::read(&candidate) {
+                            if !bytes.is_empty() {
+                                let mime = if img_name.ends_with(".png") { "image/png" } else { "image/jpeg" };
+                                return Some(format!("data:{};base64,{}", mime, base64_encode(&bytes)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let direct_candidate = appcache_dir.join(format!("{}_{}", app_id, img_name));
+    if direct_candidate.is_file() {
+        if let Ok(bytes) = fs::read(&direct_candidate) {
+            if !bytes.is_empty() {
+                let mime = if img_name.ends_with(".png") { "image/png" } else { "image/jpeg" };
+                return Some(format!("data:{};base64,{}", mime, base64_encode(&bytes)));
+            }
+        }
+    }
+    None
+}
+
+pub fn get_active_steam_account(steam_path: &Path) -> u32 {
+    let loginusers = steam_path.join("config").join("loginusers.vdf");
+    if let Ok(content) = fs::read_to_string(&loginusers) {
+        let mut best_ts = 0u64;
+        let mut best_id64 = 0u64;
+        let mut current_id64 = 0u64;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 16 {
+                let inner = &trimmed[1..trimmed.len() - 1];
+                if let Ok(id64) = inner.parse::<u64>() {
+                    if id64 > 76561197960265728 {
+                        current_id64 = id64;
+                        if best_id64 == 0 {
+                            best_id64 = id64;
+                        }
+                    }
+                }
+            } else if trimmed.contains("\"MostRecent\"") && trimmed.contains("\"1\"") {
+                if current_id64 > 0 {
+                    return (current_id64 - 76561197960265728) as u32;
+                }
+            } else if trimmed.contains("\"timestamp\"") {
+                if let Some((_, val_part)) = trimmed.split_once("\"timestamp\"") {
+                    let ts_str = val_part.trim().trim_matches('"').trim();
+                    if let Ok(ts) = ts_str.parse::<u64>() {
+                        if ts > best_ts && current_id64 > 0 {
+                            best_ts = ts;
+                            best_id64 = current_id64;
+                        }
+                    }
+                }
+            }
+        }
+        if best_id64 > 76561197960265728 {
+            return (best_id64 - 76561197960265728) as u32;
+        }
+    }
+
+    let userdata_dir = steam_path.join("userdata");
+    if userdata_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&userdata_dir) {
+            let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
+            let mut target = 0u32;
+            for entry in entries.flatten() {
+                if let Ok(acct) = entry.file_name().to_string_lossy().parse::<u32>() {
+                    if acct > 0 {
+                        let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        if target == 0 || mtime > best_mtime {
+                            target = acct;
+                            best_mtime = mtime;
+                        }
+                    }
+                }
+            }
+            return target;
+        }
+    }
+    0
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SystemInfoDto {
     pub steam_dir: String,
@@ -1473,7 +1599,7 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
                             if !app_path.is_dir() { continue; }
                             let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
                             let Ok(app_id) = app_str.parse::<u32>() else { continue };
-                            if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                            if is_system_app_id(app_id) {
                                 continue;
                             }
 
@@ -1507,7 +1633,7 @@ pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) ->
                             if !app_path.is_dir() { continue; }
                             let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
                             let Ok(app_id) = app_str.parse::<u32>() else { continue };
-                            if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                            if is_system_app_id(app_id) {
                                 continue;
                             }
 
@@ -2055,18 +2181,24 @@ pub async fn get_games_catalog(
         // 5. Combine all known AppIDs
         let mut all_app_ids: BTreeSet<u32> = BTreeSet::new();
         for &app_id in tool_apps.keys() {
-            all_app_ids.insert(app_id);
+            if !is_system_app_id(app_id) {
+                all_app_ids.insert(app_id);
+            }
         }
         for &app_id in &official_installed {
-            all_app_ids.insert(app_id);
+            if !is_system_app_id(app_id) {
+                all_app_ids.insert(app_id);
+            }
         }
         for &app_id in save_info.keys() {
-            all_app_ids.insert(app_id);
+            if !is_system_app_id(app_id) {
+                all_app_ids.insert(app_id);
+            }
         }
 
         let playtime_map = load_all_local_playtime(steam_path, if target_account > 0 { Some(target_account) } else { None });
         for (&app_id, info) in &playtime_map {
-            if app_id != 7 && app_id != 760 && app_id != 241100 && app_id != 241300 {
+            if !is_system_app_id(app_id) {
                 if info.playtime_minutes > 0 || info.last_played_ts > 0 {
                     all_app_ids.insert(app_id);
                 }
@@ -2107,6 +2239,22 @@ pub async fn get_games_catalog(
                 (0, 0)
             };
 
+            let local_cover = find_local_appcache_image(steam_path, app_id, "library_capsule.jpg")
+                .or_else(|| find_local_appcache_image(steam_path, app_id, "library_600x900.jpg"));
+            let local_hero = find_local_appcache_image(steam_path, app_id, "library_hero.jpg");
+            let local_header = find_local_appcache_image(steam_path, app_id, "library_header.jpg")
+                .or_else(|| find_local_appcache_image(steam_path, app_id, "header.jpg"));
+
+            let cover_url = local_cover.unwrap_or_else(|| {
+                format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_600x900.jpg", app_id)
+            });
+            let hero_url = local_hero.unwrap_or_else(|| {
+                format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_hero.jpg", app_id)
+            });
+            let header_url = local_header.unwrap_or_else(|| {
+                format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/header.jpg", app_id)
+            });
+
             catalog.push(GameCatalogItemDto {
                 account_id: target_account,
                 app_id,
@@ -2121,9 +2269,9 @@ pub async fn get_games_catalog(
                 total_size_formatted: format_size(total_bytes),
                 playtime_minutes,
                 last_played_ts,
-                cover_url: format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_600x900.jpg", app_id),
-                hero_url: format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_hero.jpg", app_id),
-                header_url: format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/header.jpg", app_id),
+                cover_url,
+                hero_url,
+                header_url,
             });
         }
 
@@ -2152,226 +2300,374 @@ pub async fn get_games_catalog(
     .unwrap_or_default()
 }
 
-#[tauri::command]
-pub async fn get_game_achievements(
-    app_id: u32,
-    steam_dir: Option<String>,
-) -> GameAchievementsResultDto {
-    tauri::async_runtime::spawn_blocking(move || {
-        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-        let steam_path = Path::new(&s_dir);
+#[allow(dead_code, non_snake_case)]
+#[derive(Deserialize, Debug, Clone)]
+struct LocalCacheAchEntry {
+    strID: String,
+    #[serde(default)]
+    strName: Option<String>,
+    #[serde(default)]
+    strDescription: Option<String>,
+    #[serde(default)]
+    bAchieved: Option<bool>,
+    #[serde(default)]
+    rtUnlocked: Option<u64>,
+    #[serde(default)]
+    strImage: Option<String>,
+    #[serde(default)]
+    bHidden: Option<bool>,
+}
 
-        let api_key = match load_steam_api_key(steam_path) {
-            Some(k) if !k.trim().is_empty() => k.trim().to_string(),
-            _ => {
-                return GameAchievementsResultDto {
-                    has_api_key: false,
-                    achievements: Vec::new(),
-                    total: 0,
-                    unlocked: 0,
-                    error: None,
-                };
-            }
-        };
+#[allow(dead_code, non_snake_case)]
+#[derive(Deserialize, Debug)]
+struct LocalCacheAchData {
+    #[serde(default)]
+    nTotal: Option<u32>,
+    #[serde(default)]
+    nAchieved: Option<u32>,
+    #[serde(default)]
+    vecHighlight: Option<Vec<LocalCacheAchEntry>>,
+    #[serde(default)]
+    vecAchievedHidden: Option<Vec<LocalCacheAchEntry>>,
+    #[serde(default)]
+    vecUnachieved: Option<Vec<LocalCacheAchEntry>>,
+}
 
-        let lang = crate::i18n::current_lang(Some(steam_path));
-        let lang_param = if lang.is_pt() { "brazilian" } else { "english" };
+#[allow(dead_code, non_snake_case)]
+#[derive(Deserialize, Debug)]
+struct LocalCacheSection {
+    #[serde(default)]
+    data: Option<LocalCacheAchData>,
+}
 
-        // 1. Fetch GetSchemaForGame/v2
-        let schema_url = format!(
-            "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={}&appid={}&l={}",
-            api_key, app_id, lang_param
-        );
-        let schema_res = cr_common::http::https_download_url(&schema_url, 15_000);
-        let schema_bytes = match schema_res {
-            Some((200, b)) => b,
-            Some((status, b)) => {
-                let err_text = String::from_utf8_lossy(&b);
-                return GameAchievementsResultDto {
-                    has_api_key: true,
-                    achievements: Vec::new(),
-                    total: 0,
-                    unlocked: 0,
-                    error: Some(format!("Steam API HTTP {}: {}", status, err_text.trim())),
-                };
-            }
-            None => {
-                return GameAchievementsResultDto {
-                    has_api_key: true,
-                    achievements: Vec::new(),
-                    total: 0,
-                    unlocked: 0,
-                    error: Some(if lang.is_pt() {
-                        "Falha ao conectar à API da Steam (timeout ou sem internet).".to_string()
-                    } else {
-                        "Failed to connect to Steam API (timeout or no network).".to_string()
-                    }),
-                };
-            }
-        };
+fn parse_local_librarycache_achievements(json_str: &str) -> (HashMap<String, (bool, Option<u64>, bool)>, Vec<LocalCacheAchEntry>) {
+    let mut player_map = HashMap::new();
+    let mut all_entries = Vec::new();
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        return (player_map, all_entries);
+    };
 
-        #[allow(dead_code, non_snake_case)]
-        #[derive(Deserialize)]
-        struct SchemaAchievement {
-            name: String,
-            #[serde(default)]
-            displayName: Option<String>,
-            #[serde(default)]
-            description: Option<String>,
-            #[serde(default)]
-            icon: Option<String>,
-            #[serde(default)]
-            icongray: Option<String>,
-            #[serde(default)]
-            hidden: Option<u32>,
-        }
-        #[allow(dead_code, non_snake_case)]
-        #[derive(Deserialize)]
-        struct SchemaStats {
-            #[serde(default)]
-            achievements: Option<Vec<SchemaAchievement>>,
-        }
-        #[allow(dead_code, non_snake_case)]
-        #[derive(Deserialize)]
-        struct SchemaGame {
-            #[serde(default)]
-            availableGameStats: Option<SchemaStats>,
-        }
-        #[allow(dead_code)]
-        #[derive(Deserialize)]
-        struct SchemaRoot {
-            #[serde(default)]
-            game: Option<SchemaGame>,
-        }
+    let Some(arr) = val.as_array() else {
+        return (player_map, all_entries);
+    };
 
-        let schema: SchemaRoot = match serde_json::from_slice(&schema_bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                return GameAchievementsResultDto {
-                    has_api_key: true,
-                    achievements: Vec::new(),
-                    total: 0,
-                    unlocked: 0,
-                    error: Some(format!("JSON parse error: {}", e)),
-                };
-            }
-        };
+    let mut seen = HashSet::new();
+    for item in arr {
+        if let Some(section_arr) = item.as_array() {
+            if section_arr.len() >= 2 && section_arr[0].as_str() == Some("achievements") {
+                if let Ok(section) = serde_json::from_value::<LocalCacheSection>(section_arr[1].clone()) {
+                    if let Some(data) = section.data {
+                        // 1. Unlocked items from vecHighlight and vecAchievedHidden
+                        let mut unlocked_entries = Vec::new();
+                        if let Some(h) = data.vecHighlight {
+                            unlocked_entries.extend(h);
+                        }
+                        if let Some(h) = data.vecAchievedHidden {
+                            unlocked_entries.extend(h);
+                        }
+                        for entry in unlocked_entries {
+                            let achieved = entry.bAchieved.unwrap_or(true);
+                            let unlock_ts = entry.rtUnlocked.filter(|&t| t > 0);
+                            let is_hidden = entry.bHidden.unwrap_or(false);
+                            player_map.insert(entry.strID.clone(), (achieved, unlock_ts, is_hidden));
+                            if seen.insert(entry.strID.clone()) {
+                                all_entries.push(entry);
+                            }
+                        }
 
-        let schema_achievements = match schema.game.and_then(|g| g.availableGameStats).and_then(|s| s.achievements) {
-            Some(a) if !a.is_empty() => a,
-            _ => {
-                return GameAchievementsResultDto {
-                    has_api_key: true,
-                    achievements: Vec::new(),
-                    total: 0,
-                    unlocked: 0,
-                    error: None,
-                };
-            }
-        };
-
-        // 2. Identify Account ID & SteamID64 to fetch GetPlayerAchievements
-        let mut target_account = 0u32;
-        let userdata_dir = steam_path.join("userdata");
-        if userdata_dir.exists() {
-            if let Ok(entries) = fs::read_dir(&userdata_dir) {
-                let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
-                for entry in entries.flatten() {
-                    if let Ok(acct) = entry.file_name().to_string_lossy().parse::<u32>() {
-                        if acct > 0 {
-                            let cfg = entry.path().join("config").join("localconfig.vdf");
-                            let mtime = fs::metadata(&cfg).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                            if target_account == 0 || mtime > best_mtime {
-                                target_account = acct;
-                                best_mtime = mtime;
+                        // 2. Unachieved items from vecUnachieved
+                        if let Some(unach) = data.vecUnachieved {
+                            for entry in unach {
+                                let is_hidden = entry.bHidden.unwrap_or(false);
+                                player_map.insert(entry.strID.clone(), (false, None, is_hidden));
+                                if seen.insert(entry.strID.clone()) {
+                                    all_entries.push(entry);
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+    (player_map, all_entries)
+}
 
-        let mut player_map: HashMap<String, (bool, Option<u64>)> = HashMap::new();
+#[tauri::command]
+pub async fn resolve_game_cover_url(app_id: u32, steam_dir: Option<String>) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let steam_path = Path::new(&s_dir);
+        if let Some(img) = find_local_appcache_image(steam_path, app_id, "library_capsule.jpg")
+            .or_else(|| find_local_appcache_image(steam_path, app_id, "library_600x900.jpg"))
+            .or_else(|| find_local_appcache_image(steam_path, app_id, "library_header.jpg"))
+            .or_else(|| find_local_appcache_image(steam_path, app_id, "header.jpg")) {
+            return Some(img);
+        }
+
+        let url = format!("https://store.steampowered.com/api/appdetails?appids={}", app_id);
+        if let Some((200, bytes)) = cr_common::http::https_download_url(&url, 5_000) {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Some(app_obj) = val.get(&app_id.to_string()) {
+                    if let Some(data) = app_obj.get("data") {
+                        if let Some(hdr) = data.get("header_image").and_then(|v| v.as_str()) {
+                            return Some(hdr.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None)
+}
+
+#[tauri::command]
+pub async fn get_game_achievements(
+    app_id: u32,
+    steam_dir: Option<String>,
+    lang: Option<String>,
+) -> GameAchievementsResultDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let steam_path = Path::new(&s_dir);
+
+        let lang_str = lang.as_deref().unwrap_or("").to_lowercase();
+        let is_pt = if !lang_str.is_empty() {
+            lang_str.starts_with("pt")
+        } else {
+            crate::i18n::current_lang(Some(steam_path)).is_pt()
+        };
+        let lang_param = if is_pt { "brazilian" } else { "english" };
+
+        let target_account = get_active_steam_account(steam_path);
+
+        // 1. Check local librarycache JSON for user's actual achievements & unlock times
+        let mut player_map: HashMap<String, (bool, Option<u64>, bool)> = HashMap::new();
+        let mut local_achievements: Vec<LocalCacheAchEntry> = Vec::new();
         if target_account > 0 {
-            let steamid64 = 76561197960265728u64 + (target_account as u64);
-            let player_url = format!(
-                "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/?appid={}&key={}&steamid={}&l={}",
-                app_id, api_key, steamid64, lang_param
+            let cache_file = steam_path
+                .join("userdata")
+                .join(target_account.to_string())
+                .join("config")
+                .join("librarycache")
+                .join(format!("{}.json", app_id));
+            if cache_file.is_file() {
+                if let Ok(c) = fs::read_to_string(&cache_file) {
+                    let (pm, entries) = parse_local_librarycache_achievements(&c);
+                    player_map = pm;
+                    local_achievements = entries;
+                }
+            }
+        }
+
+        let api_key = match load_steam_api_key(steam_path) {
+            Some(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
+            _ => None,
+        };
+
+        // 2. If API Key is present, query Web API schema
+        if let Some(ref key) = api_key {
+            let schema_url = format!(
+                "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={}&appid={}&l={}",
+                key, app_id, lang_param
             );
 
-            if let Some((200, pbytes)) = cr_common::http::https_download_url(&player_url, 15_000) {
-                #[allow(dead_code)]
+            if let Some((200, schema_bytes)) = cr_common::http::https_download_url(&schema_url, 15_000) {
+                #[allow(dead_code, non_snake_case)]
                 #[derive(Deserialize)]
-                struct PlayerAchEntry {
-                    apiname: String,
+                struct SchemaAchievement {
+                    name: String,
                     #[serde(default)]
-                    achieved: u32,
+                    displayName: Option<String>,
                     #[serde(default)]
-                    unlocktime: u64,
+                    description: Option<String>,
+                    #[serde(default)]
+                    icon: Option<String>,
+                    #[serde(default)]
+                    icongray: Option<String>,
+                    #[serde(default)]
+                    hidden: Option<u32>,
+                }
+                #[allow(dead_code, non_snake_case)]
+                #[derive(Deserialize)]
+                struct SchemaStats {
+                    #[serde(default)]
+                    achievements: Option<Vec<SchemaAchievement>>,
+                }
+                #[allow(dead_code, non_snake_case)]
+                #[derive(Deserialize)]
+                struct SchemaGame {
+                    #[serde(default)]
+                    availableGameStats: Option<SchemaStats>,
                 }
                 #[allow(dead_code)]
                 #[derive(Deserialize)]
-                struct PlayerStats {
+                struct SchemaRoot {
                     #[serde(default)]
-                    achievements: Option<Vec<PlayerAchEntry>>,
-                    #[serde(default)]
-                    success: Option<bool>,
-                }
-                #[allow(dead_code)]
-                #[derive(Deserialize)]
-                struct PlayerRoot {
-                    #[serde(default)]
-                    playerstats: Option<PlayerStats>,
+                    game: Option<SchemaGame>,
                 }
 
-                if let Ok(proot) = serde_json::from_slice::<PlayerRoot>(&pbytes) {
-                    if let Some(list) = proot.playerstats.and_then(|ps| ps.achievements) {
-                        for item in list {
-                            let unlocked = item.achieved == 1;
-                            let ts = if unlocked && item.unlocktime > 0 { Some(item.unlocktime) } else { None };
-                            player_map.insert(item.apiname, (unlocked, ts));
+                if let Ok(schema) = serde_json::from_slice::<SchemaRoot>(&schema_bytes) {
+                    if let Some(schema_achievements) = schema.game.and_then(|g| g.availableGameStats).and_then(|s| s.achievements) {
+                        if !schema_achievements.is_empty() {
+                            // Also try GetPlayerAchievements if public
+                            if target_account > 0 {
+                                let steamid64 = 76561197960265728u64 + (target_account as u64);
+                                let player_url = format!(
+                                    "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/?appid={}&key={}&steamid={}&l={}",
+                                    app_id, key, steamid64, lang_param
+                                );
+                                if let Some((200, pbytes)) = cr_common::http::https_download_url(&player_url, 10_000) {
+                                    #[allow(dead_code)]
+                                    #[derive(Deserialize)]
+                                    struct PlayerAchEntry {
+                                        apiname: String,
+                                        #[serde(default)]
+                                        achieved: u32,
+                                        #[serde(default)]
+                                        unlocktime: u64,
+                                    }
+                                    #[allow(dead_code)]
+                                    #[derive(Deserialize)]
+                                    struct PlayerStats {
+                                        #[serde(default)]
+                                        achievements: Option<Vec<PlayerAchEntry>>,
+                                    }
+                                    #[allow(dead_code)]
+                                    #[derive(Deserialize)]
+                                    struct PlayerRoot {
+                                        #[serde(default)]
+                                        playerstats: Option<PlayerStats>,
+                                    }
+                                    if let Ok(proot) = serde_json::from_slice::<PlayerRoot>(&pbytes) {
+                                        if let Some(list) = proot.playerstats.and_then(|ps| ps.achievements) {
+                                            for item in list {
+                                                let unlocked = item.achieved == 1;
+                                                let ts = if unlocked && item.unlocktime > 0 { Some(item.unlocktime) } else { None };
+                                                player_map.entry(item.apiname)
+                                                    .and_modify(|e| {
+                                                        e.0 = e.0 || unlocked;
+                                                        if ts.is_some() { e.1 = ts; }
+                                                    })
+                                                    .or_insert((unlocked, ts, false));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            let mut result_items: Vec<AchievementItemDto> = Vec::new();
+                            let mut unlocked_count = 0;
+
+                            for s in schema_achievements {
+                                let (is_unlocked, unlock_ts, local_hidden) = player_map
+                                    .get(&s.name)
+                                    .cloned()
+                                    .unwrap_or((false, None, false));
+                                if is_unlocked {
+                                    unlocked_count += 1;
+                                }
+                                let is_hidden = s.hidden.unwrap_or(0) == 1 || local_hidden;
+                                result_items.push(AchievementItemDto {
+                                    name: s.name,
+                                    display_name: s.displayName.unwrap_or_else(|| "???".to_string()),
+                                    description: s.description.unwrap_or_default(),
+                                    icon: s.icon.unwrap_or_default(),
+                                    icon_gray: s.icongray.unwrap_or_default(),
+                                    unlocked: is_unlocked,
+                                    unlock_time: unlock_ts,
+                                    hidden: is_hidden,
+                                });
+                            }
+
+                            result_items.sort_by(|a, b| {
+                                match (a.unlocked, b.unlocked) {
+                                    (true, false) => std::cmp::Ordering::Less,
+                                    (false, true) => std::cmp::Ordering::Greater,
+                                    (true, true) => b.unlock_time.unwrap_or(0).cmp(&a.unlock_time.unwrap_or(0)),
+                                    (false, false) => a.display_name.cmp(&b.display_name),
+                                }
+                            });
+
+                            let total = result_items.len();
+                            return GameAchievementsResultDto {
+                                has_api_key: true,
+                                achievements: result_items,
+                                total,
+                                unlocked: unlocked_count,
+                                error: None,
+                            };
                         }
                     }
                 }
             }
         }
 
-        let mut result_items: Vec<AchievementItemDto> = Vec::new();
-        let mut unlocked_count = 0;
-
-        for s in schema_achievements {
-            let (is_unlocked, unlock_ts) = player_map.get(&s.name).cloned().unwrap_or((false, None));
-            if is_unlocked {
-                unlocked_count += 1;
+        // 3. Fallback: If Web API failed or no key, but local librarycache has achievements!
+        if !local_achievements.is_empty() {
+            let mut result_items: Vec<AchievementItemDto> = Vec::new();
+            let mut unlocked_count = 0;
+            for entry in local_achievements {
+                let unlocked = entry.bAchieved.unwrap_or(false);
+                let unlock_ts = entry.rtUnlocked.filter(|&t| t > 0);
+                if unlocked {
+                    unlocked_count += 1;
+                }
+                let is_hidden = entry.bHidden.unwrap_or(false);
+                result_items.push(AchievementItemDto {
+                    name: entry.strID.clone(),
+                    display_name: entry.strName.unwrap_or_else(|| entry.strID),
+                    description: entry.strDescription.unwrap_or_default(),
+                    icon: entry.strImage.clone().unwrap_or_default(),
+                    icon_gray: entry.strImage.unwrap_or_default(),
+                    unlocked,
+                    unlock_time: unlock_ts,
+                    hidden: is_hidden,
+                });
             }
-            result_items.push(AchievementItemDto {
-                name: s.name,
-                display_name: s.displayName.unwrap_or_else(|| "???".to_string()),
-                description: s.description.unwrap_or_default(),
-                icon: s.icon.unwrap_or_default(),
-                icon_gray: s.icongray.unwrap_or_default(),
-                unlocked: is_unlocked,
-                unlock_time: unlock_ts,
-                hidden: s.hidden.unwrap_or(0) == 1,
+
+            result_items.sort_by(|a, b| {
+                match (a.unlocked, b.unlocked) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    (true, true) => b.unlock_time.unwrap_or(0).cmp(&a.unlock_time.unwrap_or(0)),
+                    (false, false) => a.display_name.cmp(&b.display_name),
+                }
             });
+
+            let total = result_items.len();
+            return GameAchievementsResultDto {
+                has_api_key: true,
+                achievements: result_items,
+                total,
+                unlocked: unlocked_count,
+                error: None,
+            };
         }
 
-        result_items.sort_by(|a, b| {
-            match (a.unlocked, b.unlocked) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                (true, true) => b.unlock_time.unwrap_or(0).cmp(&a.unlock_time.unwrap_or(0)),
-                (false, false) => a.display_name.cmp(&b.display_name),
+        // 4. No local cache and no valid API Key / response
+        if api_key.is_none() {
+            GameAchievementsResultDto {
+                has_api_key: false,
+                achievements: Vec::new(),
+                total: 0,
+                unlocked: 0,
+                error: None,
             }
-        });
-
-        let total = result_items.len();
-        GameAchievementsResultDto {
-            has_api_key: true,
-            achievements: result_items,
-            total,
-            unlocked: unlocked_count,
-            error: None,
+        } else {
+            GameAchievementsResultDto {
+                has_api_key: true,
+                achievements: Vec::new(),
+                total: 0,
+                unlocked: 0,
+                error: Some(if is_pt {
+                    "Não foi possível obter a lista de conquistas deste jogo na Steam.".to_string()
+                } else {
+                    "Unable to retrieve the achievements list for this game from Steam.".to_string()
+                }),
+            }
         }
     })
     .await

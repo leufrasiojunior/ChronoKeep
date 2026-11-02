@@ -1096,6 +1096,21 @@ function setupActionHandlers() {
     }
   });
 
+  document.getElementById("btn-clear-settings-steam-api-key")?.addEventListener("click", async () => {
+    const input = document.getElementById("input-settings-steam-api-key");
+    if (input) input.value = "";
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      await invokeBackend("set_steam_api_key", {
+        steamDir: inputSteam || appConfig.steam_dir || null,
+        key: "",
+      });
+      showToast(t("settings.steam_api_key_cleared"));
+    } catch (e) {
+      console.warn("Failed to clear steam api key:", e);
+    }
+  });
+
   document.getElementById("link-settings-get-key")?.addEventListener("click", (e) => {
     e.preventDefault();
     invokeBackend("open_url", { url: "https://steamcommunity.com/dev/apikey" });
@@ -1681,7 +1696,7 @@ try {
   currentGamesViewMode = localStorage.getItem("chronokeep_games_view_mode") || "grid";
 } catch (_) {}
 
-function handleCoverError(img, appId, gameName) {
+async function handleCoverError(img, appId, gameName) {
   if (!img) return;
   // Stage 1: Try horizontal header.jpg
   if (!img.dataset.triedHeader) {
@@ -1697,7 +1712,21 @@ function handleCoverError(img, appId, gameName) {
     return;
   }
 
-  // Stage 3: All CDN images failed (unreleased / private / test app)
+  // Stage 3: Try resolving via backend (local librarycache or Steam store appdetails)
+  if (!img.dataset.triedResolved) {
+    img.dataset.triedResolved = "1";
+    try {
+      const resolved = await invokeBackend("resolve_game_cover_url", { appId: Number(appId) });
+      if (resolved) {
+        img.src = resolved;
+        return;
+      }
+    } catch (e) {
+      console.debug("[ChronoKeep Cover] resolve_game_cover_url error:", e);
+    }
+  }
+
+  // Stage 4: All CDN images failed (unreleased / private / test app)
   console.debug(`[ChronoKeep Cover] AppID ${appId} (${gameName}) has no store CDN images. Displaying Fluent Art Cover.`);
   const wrap = img.parentElement;
   if (!wrap) return;
@@ -2056,8 +2085,8 @@ function openGameDetailModal(game) {
   // Save Files count & size
   const savesCountEl = document.getElementById("detail-saves-count");
   const savesSizeEl = document.getElementById("detail-saves-size");
-  if (savesCountEl) savesCountEl.textContent = t("games.detail_files_fmt", { count: game.file_count, size: game.total_size_formatted });
-  if (savesSizeEl) savesSizeEl.textContent = game.total_bytes > 0 ? `${game.total_bytes.toLocaleString()} bytes` : "-";
+  if (savesCountEl) savesCountEl.textContent = t("games.detail_files_fmt", { count: game.file_count, size: formatBytes(game.total_bytes) });
+  if (savesSizeEl) savesSizeEl.textContent = game.total_bytes > 0 ? formatBytes(game.total_bytes) : "-";
 
   // Actions
   const btnSteam = document.getElementById("btn-detail-open-steam");
@@ -2086,6 +2115,92 @@ function openGameDetailModal(game) {
 }
 window.openGameDetailModal = openGameDetailModal;
 
+let currentAchievementsList = [];
+let activeAchievementsFilter = "all"; // "all" | "unlocked" | "locked"
+const revealedSpoilers = new Set();
+
+function renderAchievementsList() {
+  const listContainer = document.getElementById("ach-list-container");
+  if (!listContainer) return;
+  listContainer.innerHTML = "";
+
+  const filtered = currentAchievementsList.filter((ach) => {
+    if (activeAchievementsFilter === "unlocked") return ach.unlocked;
+    if (activeAchievementsFilter === "locked") return !ach.unlocked;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    listContainer.innerHTML = `<div class="empty-state" style="padding: 24px 0; color: var(--text-secondary); text-align: center;">${escapeHtml(t("games.empty_desc"))}</div>`;
+    return;
+  }
+
+  for (const ach of filtered) {
+    const itemEl = document.createElement("div");
+    itemEl.className = `achievement-item ${ach.unlocked ? "unlocked" : "locked"}`;
+
+    const iconUrl = ach.unlocked
+      ? (ach.icon || ach.icon_gray)
+      : (ach.icon_gray || ach.icon);
+
+    let unlockDateStr = "";
+    if (ach.unlocked && ach.unlock_time) {
+      const d = new Date(ach.unlock_time * 1000);
+      const dateStr = d.toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      unlockDateStr = t("achievements.unlocked_at", { date: dateStr });
+    }
+
+    const isHiddenLocked = !ach.unlocked && ach.hidden;
+    const isRevealed = revealedSpoilers.has(ach.name);
+
+    const displayName = isHiddenLocked && !isRevealed
+      ? t("achievements.hidden_title")
+      : (ach.display_name || ach.name);
+
+    const description = isHiddenLocked && !isRevealed
+      ? t("achievements.hidden_desc")
+      : (ach.description || "");
+
+    let spoilerBtnHtml = "";
+    if (isHiddenLocked) {
+      spoilerBtnHtml = `
+        <button class="btn-reveal-spoiler" onclick="event.stopPropagation(); toggleAchievementSpoiler('${escapeHtml(ach.name).replace(/'/g, "\\'")}')">
+          👁️ ${isRevealed ? escapeHtml(t("achievements.btn_hide_spoiler")) : escapeHtml(t("achievements.btn_reveal_spoiler"))}
+        </button>
+      `;
+    }
+
+    itemEl.innerHTML = `
+      <div class="ach-icon-box">
+        ${iconUrl ? `<img src="${escapeHtml(iconUrl)}" alt="${escapeHtml(displayName)}" loading="lazy" />` : `<span>🏆</span>`}
+      </div>
+      <div class="ach-texts">
+        <span class="ach-name select-text ${isHiddenLocked && !isRevealed ? "spoiler-hidden-mask" : ""}">${escapeHtml(displayName)}</span>
+        ${description ? `<span class="ach-desc select-text ${isHiddenLocked && !isRevealed ? "spoiler-hidden-mask" : ""}">${escapeHtml(description)}</span>` : ""}
+        ${unlockDateStr ? `<span class="ach-unlock-date select-text">${escapeHtml(unlockDateStr)}</span>` : ""}
+        ${spoilerBtnHtml}
+      </div>
+      <span class="ach-status-badge ${ach.unlocked ? "unlocked" : "locked"}">
+        ${ach.unlocked ? escapeHtml(t("achievements.status_unlocked")) : escapeHtml(t("achievements.status_locked"))}
+      </span>
+    `;
+    listContainer.appendChild(itemEl);
+  }
+}
+
+function toggleAchievementSpoiler(name) {
+  if (revealedSpoilers.has(name)) {
+    revealedSpoilers.delete(name);
+  } else {
+    revealedSpoilers.add(name);
+  }
+  renderAchievementsList();
+}
+window.toggleAchievementSpoiler = toggleAchievementSpoiler;
+
 async function openAchievementsModal(game) {
   if (!game) return;
   currentAchievementsGame = game;
@@ -2109,6 +2224,7 @@ async function openAchievementsModal(game) {
 
   // Reset sections
   const progressBox = document.getElementById("ach-progress-container");
+  const tabsRow = document.getElementById("ach-tabs-row");
   const keyCard = document.getElementById("ach-key-missing-card");
   const loadingState = document.getElementById("ach-loading-state");
   const errorState = document.getElementById("ach-error-state");
@@ -2116,6 +2232,7 @@ async function openAchievementsModal(game) {
   const listContainer = document.getElementById("ach-list-container");
 
   if (progressBox) progressBox.style.display = "none";
+  if (tabsRow) tabsRow.style.display = "none";
   if (keyCard) keyCard.style.display = "none";
   if (loadingState) loadingState.style.display = "flex";
   if (errorState) errorState.style.display = "none";
@@ -2129,6 +2246,7 @@ async function openAchievementsModal(game) {
     const res = await invokeBackend("get_game_achievements", {
       appId: game.app_id,
       steamDir: inputSteam || appConfig.steam_dir || null,
+      lang: currentLanguage,
     });
 
     if (loadingState) loadingState.style.display = "none";
@@ -2159,60 +2277,38 @@ async function openAchievementsModal(game) {
       return;
     }
 
+    currentAchievementsList = res.achievements || [];
+    revealedSpoilers.clear();
+
+    const unlockedCount = res.unlocked || 0;
+    const totalCount = res.total || 0;
+    const lockedCount = Math.max(0, totalCount - unlockedCount);
+
     // Display progress
     if (progressBox) {
       progressBox.style.display = "block";
-      const percent = res.total > 0 ? Math.round((res.unlocked / res.total) * 100) : 0;
+      const percent = totalCount > 0 ? Math.round((unlockedCount / totalCount) * 100) : 0;
       document.getElementById("ach-progress-text").textContent = t("achievements.progress_fmt", {
-        unlocked: res.unlocked,
-        total: res.total,
+        unlocked: unlockedCount,
+        total: totalCount,
         percent: percent,
       });
       document.getElementById("ach-progress-percent").textContent = `${percent}%`;
       document.getElementById("ach-progress-fill").style.width = `${percent}%`;
     }
 
-    // Render achievements
-    if (listContainer) {
-      listContainer.innerHTML = "";
-      for (const ach of res.achievements) {
-        const itemEl = document.createElement("div");
-        itemEl.className = `achievement-item ${ach.unlocked ? "unlocked" : "locked"}`;
-
-        const iconUrl = ach.unlocked
-          ? (ach.icon || ach.icon_gray)
-          : (ach.icon_gray || ach.icon);
-
-        let unlockDateStr = "";
-        if (ach.unlocked && ach.unlock_time) {
-          const d = new Date(ach.unlock_time * 1000);
-          const dateStr = d.toLocaleString(undefined, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          });
-          unlockDateStr = t("achievements.unlocked_at", { date: dateStr });
-        }
-
-        const isHidden = !ach.unlocked && ach.hidden;
-        const displayName = isHidden ? t("achievements.hidden_title") : (ach.display_name || ach.name);
-        const description = isHidden ? t("achievements.hidden_desc") : (ach.description || "");
-
-        itemEl.innerHTML = `
-          <div class="ach-icon-box">
-            ${iconUrl ? `<img src="${escapeHtml(iconUrl)}" alt="${escapeHtml(displayName)}" loading="lazy" />` : `<span>🏆</span>`}
-          </div>
-          <div class="ach-texts">
-            <span class="ach-name select-text">${escapeHtml(displayName)}</span>
-            ${description ? `<span class="ach-desc select-text">${escapeHtml(description)}</span>` : ""}
-            ${unlockDateStr ? `<span class="ach-unlock-date select-text">${escapeHtml(unlockDateStr)}</span>` : ""}
-          </div>
-          <span class="ach-status-badge ${ach.unlocked ? "unlocked" : "locked"}">
-            ${ach.unlocked ? escapeHtml(t("achievements.status_unlocked")) : escapeHtml(t("achievements.status_locked"))}
-          </span>
-        `;
-        listContainer.appendChild(itemEl);
-      }
+    // Display and update Filter Tabs
+    if (tabsRow && totalCount > 0) {
+      tabsRow.style.display = "flex";
+      const badgeAll = document.getElementById("ach-badge-all");
+      const badgeUnlocked = document.getElementById("ach-badge-unlocked");
+      const badgeLocked = document.getElementById("ach-badge-locked");
+      if (badgeAll) badgeAll.textContent = totalCount;
+      if (badgeUnlocked) badgeUnlocked.textContent = unlockedCount;
+      if (badgeLocked) badgeLocked.textContent = lockedCount;
     }
+
+    renderAchievementsList();
   } catch (err) {
     if (loadingState) loadingState.style.display = "none";
     if (errorState) {
@@ -2305,10 +2401,80 @@ function setupGamesToolbarAndModals() {
     if (e.target.id === "modal-achievements") closeAch();
   });
 
+  // Achievements Filter Tabs (Todas, Conquistadas, Bloqueadas)
+  const achTabs = document.querySelectorAll(".ach-tab-btn[data-filter]");
+  achTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      achTabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      activeAchievementsFilter = tab.getAttribute("data-filter") || "all";
+      renderAchievementsList();
+    });
+  });
+
+  // Manage API Key button in modal header
+  document.getElementById("btn-ach-manage-key")?.addEventListener("click", async () => {
+    const keyCard = document.getElementById("ach-key-missing-card");
+    if (!keyCard) return;
+    if (keyCard.style.display === "flex") {
+      keyCard.style.display = "none";
+    } else {
+      keyCard.style.display = "flex";
+      try {
+        const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+        const currentKey = await invokeBackend("get_steam_api_key", {
+          steamDir: inputSteam || appConfig.steam_dir || null,
+        });
+        const inputModalKey = document.getElementById("input-modal-api-key");
+        const btnClearModalKey = document.getElementById("btn-clear-modal-api-key");
+        if (inputModalKey) inputModalKey.value = currentKey || "";
+        if (btnClearModalKey) {
+          btnClearModalKey.style.display = currentKey ? "inline-flex" : "none";
+        }
+      } catch (_) {}
+    }
+  });
+
+  // Clear / Delete Key from Achievements Modal Tutorial
+  document.getElementById("btn-clear-modal-api-key")?.addEventListener("click", async () => {
+    const input = document.getElementById("input-modal-api-key");
+    if (input) input.value = "";
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      await invokeBackend("set_steam_api_key", {
+        steamDir: inputSteam || appConfig.steam_dir || null,
+        key: "",
+      });
+      showToast(t("achievements.toast_key_cleared"));
+      const settingsInput = document.getElementById("input-settings-steam-api-key");
+      if (settingsInput) settingsInput.value = "";
+      if (currentAchievementsGame) {
+        openAchievementsModal(currentAchievementsGame);
+      }
+    } catch (err) {
+      showToast(String(err));
+    }
+  });
+
   // Edit Key button from error state
-  document.getElementById("btn-ach-edit-key")?.addEventListener("click", () => {
+  document.getElementById("btn-ach-edit-key")?.addEventListener("click", async () => {
     document.getElementById("ach-error-state").style.display = "none";
-    document.getElementById("ach-key-missing-card").style.display = "flex";
+    const keyCard = document.getElementById("ach-key-missing-card");
+    if (keyCard) {
+      keyCard.style.display = "flex";
+      try {
+        const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+        const currentKey = await invokeBackend("get_steam_api_key", {
+          steamDir: inputSteam || appConfig.steam_dir || null,
+        });
+        const inputModalKey = document.getElementById("input-modal-api-key");
+        const btnClearModalKey = document.getElementById("btn-clear-modal-api-key");
+        if (inputModalKey) inputModalKey.value = currentKey || "";
+        if (btnClearModalKey) {
+          btnClearModalKey.style.display = currentKey ? "inline-flex" : "none";
+        }
+      } catch (_) {}
+    }
   });
 
   // Save Key from Achievements Modal Tutorial

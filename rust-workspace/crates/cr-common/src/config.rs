@@ -168,15 +168,20 @@ pub fn save_steam_api_key(steam_dir: &Path, key: &str) -> Result<(), std::io::Er
         let trimmed = line.trim();
         if let Some((k, _)) = trimmed.split_once('=') {
             if k.trim().eq_ignore_ascii_case("steam_api_key") || k.trim().eq_ignore_ascii_case("api_key") {
-                *line = format!("steam_api_key={}", clean_key);
+                if clean_key.is_empty() {
+                    *line = String::new();
+                } else {
+                    *line = format!("steam_api_key={}", clean_key);
+                }
                 found = true;
                 break;
             }
         }
     }
-    if !found {
+    if !found && !clean_key.is_empty() {
         lines.push(format!("steam_api_key={}", clean_key));
     }
+    lines.retain(|l| !l.trim().is_empty());
     let updated = lines.join("\r\n") + "\r\n";
     fs::write(&ini_path, updated)
 }
