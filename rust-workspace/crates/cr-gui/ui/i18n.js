@@ -887,4 +887,5 @@ window.ChronoI18n = {
   applyI18nToDOM,
 };
 window.t = t;
+window.getLocale = getLocale;
 window.applyI18nToDOM = applyI18nToDOM;
