@@ -55,6 +55,59 @@ pub fn extract_app_id(method: &str, fields: &[ProtoField<'_>]) -> u32 {
         .unwrap_or(0)
 }
 
+/// Reliably extracts a download filename from `fields` or `req_bytes`, with multi-level fallbacks
+/// for truncated or non-standard protobuf payloads.
+pub fn extract_download_filename<'a>(fields: &'a [ProtoField<'a>], req_bytes: &'a [u8]) -> String {
+    // 1. Direct standard field 2 lookup
+    if let Some(s) = find_field(fields, 2).and_then(|f| f.as_str()) {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    // 2. Scan all parsed fields for a non-empty string that looks like a path or file
+    for f in fields {
+        if let Some(s) = f.as_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() && (trimmed.contains('.') || trimmed.contains('/') || trimmed.contains('%')) {
+                return trimmed.to_string();
+            }
+        }
+    }
+
+    // 3. Fallback: scan raw bytes for embedded ASCII filename strings
+    extract_embedded_filename_from_bytes(req_bytes)
+}
+
+/// Scans a byte slice for printable ASCII sequences containing path/file indicators ('.', '/', '%').
+pub fn extract_embedded_filename_from_bytes(bytes: &[u8]) -> String {
+    let mut best = String::new();
+    let mut current = Vec::new();
+    for &b in bytes {
+        if b >= 0x20 && b <= 0x7E {
+            current.push(b);
+        } else {
+            if current.len() > best.len() {
+                if let Ok(s) = std::str::from_utf8(&current) {
+                    if s.contains('.') || s.contains('/') || s.contains('%') {
+                        best = s.to_string();
+                    }
+                }
+            }
+            current.clear();
+        }
+    }
+    if current.len() > best.len() {
+        if let Ok(s) = std::str::from_utf8(&current) {
+            if s.contains('.') || s.contains('/') || s.contains('%') {
+                best = s.to_string();
+            }
+        }
+    }
+    best
+}
+
 /// Splits a Steam Cloud path like `%WinAppDataLocal%MyGame/save.dat` into
 /// `("%WinAppDataLocal%", "MyGame/save.dat")`. Strips repeated/nested tokens cleanly.
 pub fn split_root_token(raw_filename: &str) -> (String, String) {
@@ -310,5 +363,31 @@ mod tests {
         let (tok, clean) = split_root_token("%WinMyDocuments%%WinMyDocuments%/preferences_data");
         assert_eq!(tok, "%WinMyDocuments%");
         assert_eq!(clean, "preferences_data");
+    }
+
+    #[test]
+    fn test_extract_download_filename_normal() {
+        let mut w = ProtoWriter::new();
+        w.write_varint(1, 2868840);
+        w.write_str(2, "%WinMyDocuments%profile.save");
+        let bytes = w.into_bytes();
+        let fields = crate::wire::parse_message(&bytes);
+        assert_eq!(
+            extract_download_filename(&fields, &bytes),
+            "%WinMyDocuments%profile.save"
+        );
+    }
+
+    #[test]
+    fn test_extract_download_filename_from_raw_fallback() {
+        // Raw bytes with corrupted varint tag where parse_message yields no string fields
+        let raw = b"\x08\xe8\x8c\xaf\x01\xFF\xFF%WinMyDocuments%profile1/saves/history/1793546464.run\x00";
+        let fields = crate::wire::parse_message(raw);
+        let extracted = extract_download_filename(&fields, raw);
+        assert!(
+            extracted.contains("history/1793546464.run"),
+            "Fallback must recover filename from raw payload, got: {}",
+            extracted
+        );
     }
 }
