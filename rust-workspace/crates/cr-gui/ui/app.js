@@ -1641,22 +1641,96 @@ async function syncGameSave(appId, accountId, btn, totalBytes = 0, gameName = ""
 window.syncGameSave = syncGameSave;
 
 // --------------------------------------------------------------------------
+// Clipboard & Copy Helpers
+// --------------------------------------------------------------------------
+async function copyTextToClipboard(text, successMsg = null) {
+  if (!text) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(String(text));
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = String(text);
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    if (successMsg) {
+      showToast(successMsg);
+    }
+  } catch (err) {
+    console.warn("Clipboard copy failed:", err);
+  }
+}
+window.copyTextToClipboard = copyTextToClipboard;
+
+// --------------------------------------------------------------------------
 // Games Catalog, Details & Achievements Controller
 // --------------------------------------------------------------------------
 let gamesCatalog = [];
 let activeGameFilter = "tools"; // "tools" | "official" | "all"
 let gamesSearchQuery = "";
+let currentGamesViewMode = "grid"; // "grid" | "list"
 let selectedGame = null;
 let currentAchievementsGame = null;
+
+try {
+  currentGamesViewMode = localStorage.getItem("chronokeep_games_view_mode") || "grid";
+} catch (_) {}
+
+function handleCoverError(img, appId, gameName) {
+  if (!img) return;
+  // Stage 1: Try horizontal header.jpg
+  if (!img.dataset.triedHeader) {
+    img.dataset.triedHeader = "1";
+    img.src = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+    img.classList.add("fallback-header");
+    return;
+  }
+  // Stage 2: Try capsule_616x353.jpg
+  if (!img.dataset.triedCapsule) {
+    img.dataset.triedCapsule = "1";
+    img.src = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/capsule_616x353.jpg`;
+    return;
+  }
+
+  // Stage 3: All CDN images failed (unreleased / private / test app)
+  console.debug(`[ChronoKeep Cover] AppID ${appId} (${gameName}) has no store CDN images. Displaying Fluent Art Cover.`);
+  const wrap = img.parentElement;
+  if (!wrap) return;
+  img.style.display = "none";
+
+  let art = wrap.querySelector(".fluent-art-cover");
+  if (!art) {
+    art = document.createElement("div");
+    art.className = "fluent-art-cover";
+    const hue = (Number(appId) * 137) % 360;
+    art.style.background = `radial-gradient(circle at 50% 30%, hsl(${hue}, 55%, 24%) 0%, hsl(${(hue + 45) % 360}, 50%, 10%) 100%)`;
+    art.innerHTML = `
+      <div class="art-icon-circle">🎮</div>
+      <div class="art-game-title select-text">${escapeHtml(gameName)}</div>
+      <div class="art-game-appid">AppID ${appId}</div>
+    `;
+    wrap.appendChild(art);
+  } else {
+    art.style.display = "flex";
+  }
+}
+window.handleCoverError = handleCoverError;
 
 async function loadGamesCatalog() {
   const loadingEl = document.getElementById("games-loading-state");
   const emptyEl = document.getElementById("games-empty-state");
   const gridEl = document.getElementById("games-grid");
+  const listEl = document.getElementById("games-list-view");
 
   if (loadingEl) loadingEl.style.display = "flex";
   if (emptyEl) emptyEl.style.display = "none";
   if (gridEl) gridEl.style.display = "none";
+  if (listEl) listEl.style.display = "none";
 
   try {
     const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -1693,10 +1767,15 @@ function updateGamesCounts() {
 
 function renderGamesCatalog() {
   const gridEl = document.getElementById("games-grid");
+  const listViewEl = document.getElementById("games-list-view");
+  const tableBody = document.getElementById("games-table-tbody");
   const emptyEl = document.getElementById("games-empty-state");
-  if (!gridEl) return;
 
-  gridEl.innerHTML = "";
+  // Sync active view switcher buttons
+  const btnGrid = document.getElementById("btn-view-grid");
+  const btnList = document.getElementById("btn-view-list");
+  if (btnGrid) btnGrid.classList.toggle("active", currentGamesViewMode === "grid");
+  if (btnList) btnList.classList.toggle("active", currentGamesViewMode === "list");
 
   // 1. Filter by active tab (tools, official, all)
   let filtered = gamesCatalog.filter((game) => {
@@ -1717,15 +1796,29 @@ function renderGamesCatalog() {
 
   if (filtered.length === 0) {
     if (emptyEl) emptyEl.style.display = "flex";
-    gridEl.style.display = "none";
+    if (gridEl) gridEl.style.display = "none";
+    if (listViewEl) listViewEl.style.display = "none";
     return;
   }
 
   if (emptyEl) emptyEl.style.display = "none";
-  gridEl.style.display = "grid";
+
+  if (currentGamesViewMode === "grid") {
+    if (gridEl) gridEl.style.display = "grid";
+    if (listViewEl) listViewEl.style.display = "none";
+    renderGamesGridView(filtered, gridEl);
+  } else {
+    if (gridEl) gridEl.style.display = "none";
+    if (listViewEl) listViewEl.style.display = "block";
+    renderGamesListView(filtered, tableBody);
+  }
+}
+
+function renderGamesGridView(filtered, gridEl) {
+  if (!gridEl) return;
+  gridEl.innerHTML = "";
 
   for (const game of filtered) {
-    // Playtime string
     let playtimeStr = "";
     if (game.playtime_minutes > 0) {
       const h = Math.floor(game.playtime_minutes / 60);
@@ -1735,7 +1828,6 @@ function renderGamesCatalog() {
         : t("games.playtime_minutes_only", { minutes: m });
     }
 
-    // Cloud sync badge
     let cloudBadgeHtml = "";
     if (game.cloud_status === "synced") {
       cloudBadgeHtml = `<span class="game-badge cloud-synced" title="${escapeHtml(t("games.cloud_synced"))}">
@@ -1747,9 +1839,11 @@ function renderGamesCatalog() {
       cloudBadgeHtml = `<span class="game-badge cloud-local" title="${escapeHtml(t("games.cloud_local"))}">Local</span>`;
     }
 
-    // Origin badge
     const originClass = game.origin === "tools" ? "origin-tools" : "origin-official";
     const originBadgeHtml = `<span class="game-badge ${originClass}">${escapeHtml(game.origin_label)}</span>`;
+
+    const escapedName = escapeHtml(game.name);
+    const rawSafeName = game.name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 
     const card = document.createElement("div");
     card.className = "game-card";
@@ -1759,15 +1853,18 @@ function renderGamesCatalog() {
           ${originBadgeHtml}
           ${cloudBadgeHtml}
         </div>
-        <img class="game-card-cover" src="${escapeHtml(game.cover_url)}" alt="${escapeHtml(game.name)}" loading="lazy"
-             onerror="if(!this.dataset.fallback){this.dataset.fallback=1; this.src='${escapeHtml(game.header_url)}'; this.classList.add('fallback-header');} else { this.style.display='none'; this.nextElementSibling.style.display='flex'; }" />
-        <div class="card-placeholder-text" style="display: none;">${escapeHtml(game.name)}</div>
+        <img class="game-card-cover" src="${escapeHtml(game.cover_url)}" alt="${escapedName}" loading="lazy"
+             onerror="handleCoverError(this, ${game.app_id}, '${rawSafeName}')" />
       </div>
       <div class="game-card-info">
-        <span class="game-card-title" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</span>
+        <span class="game-card-title select-text" title="${escapedName}">${escapedName}</span>
         <div class="game-card-sub">
-          <span>AppID ${game.app_id}</span>
-          ${playtimeStr ? `<span>${escapeHtml(playtimeStr)}</span>` : ""}
+          <button class="copy-badge-pill" style="padding: 1px 6px; font-size: 10px;"
+                  onclick="event.stopPropagation(); copyTextToClipboard('${game.app_id}', t('games.toast_appid_copied', { id: '${game.app_id}' }))"
+                  title="${escapeHtml(t("common.copy_appid"))}">
+            AppID ${game.app_id}
+          </button>
+          ${playtimeStr ? `<span class="select-text">${escapeHtml(playtimeStr)}</span>` : ""}
         </div>
       </div>
     `;
@@ -1777,7 +1874,94 @@ function renderGamesCatalog() {
   }
 }
 
+function renderGamesListView(filtered, tableBody) {
+  if (!tableBody) return;
+  tableBody.innerHTML = "";
+
+  for (const game of filtered) {
+    let playtimeStr = "";
+    if (game.playtime_minutes > 0) {
+      const h = Math.floor(game.playtime_minutes / 60);
+      const m = game.playtime_minutes % 60;
+      playtimeStr = h > 0
+        ? t("games.playtime_hours", { hours: h, minutes: m })
+        : t("games.playtime_minutes_only", { minutes: m });
+    }
+
+    let cloudBadgeHtml = "";
+    if (game.cloud_status === "synced") {
+      cloudBadgeHtml = `<span class="status-pill active" title="${escapeHtml(t("games.cloud_synced"))}">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+        ${escapeHtml(t("games.cloud_synced"))}
+      </span>`;
+    } else if (game.cloud_status === "local_only") {
+      cloudBadgeHtml = `<span class="status-pill warning" title="${escapeHtml(t("games.cloud_local"))}">
+        ${escapeHtml(t("games.cloud_local"))}
+      </span>`;
+    } else {
+      cloudBadgeHtml = `<span class="status-pill offline">${escapeHtml(t("games.cloud_none"))}</span>`;
+    }
+
+    const originClass = game.origin === "tools" ? "badge-tools" : "badge-official";
+    const originBadgeHtml = `<span class="badge ${originClass}">${escapeHtml(game.origin_label)}</span>`;
+
+    const escapedName = escapeHtml(game.name);
+    const rawSafeName = game.name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+    let syncDateStr = "-";
+    if (game.last_sync_ts && game.last_sync_ts > 0) {
+      const d = new Date(game.last_sync_ts * 1000);
+      syncDateStr = d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+    }
+
+    const tr = document.createElement("tr");
+    tr.className = "game-list-row";
+    tr.innerHTML = `
+      <td>
+        <div class="game-list-thumb-wrap">
+          <img class="game-list-thumb" src="${escapeHtml(game.header_url)}" alt="${escapedName}" loading="lazy"
+               onerror="handleCoverError(this, ${game.app_id}, '${rawSafeName}')" />
+        </div>
+      </td>
+      <td>
+        <div class="game-list-title-cell">
+          <span class="game-list-name select-text">${escapedName}</span>
+          <button class="copy-badge-pill btn-copy-appid-cell"
+                  onclick="event.stopPropagation(); copyTextToClipboard('${game.app_id}', t('games.toast_appid_copied', { id: '${game.app_id}' }))"
+                  title="${escapeHtml(t("common.copy_appid"))}">
+            AppID ${game.app_id}
+            <svg class="copy-pill-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+      </td>
+      <td>${originBadgeHtml}</td>
+      <td>${cloudBadgeHtml}</td>
+      <td><span class="select-text">${playtimeStr || "-"}</span></td>
+      <td><span class="select-text">${game.file_count > 0 ? `${game.file_count} (${game.total_size_formatted})` : "-"}</span></td>
+      <td style="text-align: right;">
+        <div class="row-actions" onclick="event.stopPropagation();" style="display: flex; gap: 6px; justify-content: flex-end;">
+          <button class="btn btn-secondary btn-sm" onclick="openGameDetailModal(gamesCatalog.find(g => g.app_id === ${game.app_id}))">
+            ${escapeHtml(t("common.view_details"))}
+          </button>
+          <button class="btn btn-icon btn-sm" onclick="invokeBackend('open_steam_store', { appId: ${game.app_id} })" title="${escapeHtml(t("games.btn_steam_store"))}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2a10 10 0 0 0-10 10c0 4.6 3.1 8.5 7.4 9.6l3-4.3a3.5 3.5 0 0 1-1.4-2.8c0-1.9 1.6-3.5 3.5-3.5a3.5 3.5 0 0 1 3.5 3.5c0 1.9-1.6 3.5-3.5 3.5h-.4l-2.6 3.8A10 10 0 0 0 22 12c0-5.5-4.5-10-10-10z"></path>
+            </svg>
+          </button>
+        </div>
+      </td>
+    `;
+
+    tr.addEventListener("click", () => openGameDetailModal(game));
+    tableBody.appendChild(tr);
+  }
+}
+
 function openGameDetailModal(game) {
+  if (!game) return;
   selectedGame = game;
   const modal = document.getElementById("modal-game-detail");
   if (!modal) return;
@@ -1796,6 +1980,23 @@ function openGameDetailModal(game) {
   if (originBadge) {
     originBadge.textContent = game.origin_label;
     originBadge.className = `badge-pill ${game.origin === "tools" ? "badge-origin" : ""}`;
+  }
+
+  // Copy buttons in modal
+  const btnCopyAppId = document.getElementById("btn-copy-detail-appid");
+  if (btnCopyAppId) {
+    btnCopyAppId.onclick = (e) => {
+      e.stopPropagation();
+      copyTextToClipboard(game.app_id, t("games.toast_appid_copied", { id: game.app_id }));
+    };
+  }
+
+  const btnCopyTitle = document.getElementById("btn-copy-detail-title");
+  if (btnCopyTitle) {
+    btnCopyTitle.onclick = (e) => {
+      e.stopPropagation();
+      copyTextToClipboard(game.name, t("games.toast_title_copied"));
+    };
   }
 
   // Cloud status & Last sync time
@@ -1883,13 +2084,28 @@ function openGameDetailModal(game) {
 
   modal.style.display = "flex";
 }
+window.openGameDetailModal = openGameDetailModal;
 
 async function openAchievementsModal(game) {
+  if (!game) return;
   currentAchievementsGame = game;
   const modal = document.getElementById("modal-achievements");
   if (!modal) return;
 
-  document.getElementById("modal-ach-game-name").textContent = `${game.name} (AppID ${game.app_id})`;
+  document.getElementById("modal-ach-game-name").textContent = `${game.name}`;
+
+  const achBadgeAppId = document.getElementById("ach-badge-appid");
+  if (achBadgeAppId) {
+    achBadgeAppId.textContent = `AppID ${game.app_id}`;
+  }
+  const btnCopyAchAppId = document.getElementById("btn-copy-ach-appid");
+  if (btnCopyAchAppId) {
+    btnCopyAchAppId.style.display = "inline-flex";
+    btnCopyAchAppId.onclick = (e) => {
+      e.stopPropagation();
+      copyTextToClipboard(game.app_id, t("games.toast_appid_copied", { id: game.app_id }));
+    };
+  }
 
   // Reset sections
   const progressBox = document.getElementById("ach-progress-container");
@@ -1986,9 +2202,9 @@ async function openAchievementsModal(game) {
             ${iconUrl ? `<img src="${escapeHtml(iconUrl)}" alt="${escapeHtml(displayName)}" loading="lazy" />` : `<span>🏆</span>`}
           </div>
           <div class="ach-texts">
-            <span class="ach-name">${escapeHtml(displayName)}</span>
-            ${description ? `<span class="ach-desc">${escapeHtml(description)}</span>` : ""}
-            ${unlockDateStr ? `<span class="ach-unlock-date">${escapeHtml(unlockDateStr)}</span>` : ""}
+            <span class="ach-name select-text">${escapeHtml(displayName)}</span>
+            ${description ? `<span class="ach-desc select-text">${escapeHtml(description)}</span>` : ""}
+            ${unlockDateStr ? `<span class="ach-unlock-date select-text">${escapeHtml(unlockDateStr)}</span>` : ""}
           </div>
           <span class="ach-status-badge ${ach.unlocked ? "unlocked" : "locked"}">
             ${ach.unlocked ? escapeHtml(t("achievements.status_unlocked")) : escapeHtml(t("achievements.status_locked"))}
@@ -2005,6 +2221,7 @@ async function openAchievementsModal(game) {
     }
   }
 }
+window.openAchievementsModal = openAchievementsModal;
 
 function setupGamesToolbarAndModals() {
   // Filter chips (Tools, Official, All)
@@ -2017,6 +2234,30 @@ function setupGamesToolbarAndModals() {
       renderGamesCatalog();
     });
   });
+
+  // View mode switcher (Grid vs List)
+  const btnGrid = document.getElementById("btn-view-grid");
+  const btnList = document.getElementById("btn-view-list");
+
+  if (btnGrid) {
+    btnGrid.addEventListener("click", () => {
+      currentGamesViewMode = "grid";
+      try {
+        localStorage.setItem("chronokeep_games_view_mode", "grid");
+      } catch (_) {}
+      renderGamesCatalog();
+    });
+  }
+
+  if (btnList) {
+    btnList.addEventListener("click", () => {
+      currentGamesViewMode = "list";
+      try {
+        localStorage.setItem("chronokeep_games_view_mode", "list");
+      } catch (_) {}
+      renderGamesCatalog();
+    });
+  }
 
   // Search input
   const searchInput = document.getElementById("games-search-input");

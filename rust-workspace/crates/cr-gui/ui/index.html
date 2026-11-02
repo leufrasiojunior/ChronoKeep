@@ -889,9 +889,31 @@
             <input type="text" id="games-search-input" class="text-input games-search-input" placeholder="Buscar por título ou AppID..." data-i18n-placeholder="games.search_placeholder" />
             <button id="btn-clear-games-search" class="search-clear-btn" style="display: none;" title="Limpar busca">&times;</button>
           </div>
+
+          <!-- View Mode Switcher (Grid vs List) -->
+          <div class="games-view-switcher">
+            <button class="view-switch-btn active" id="btn-view-grid" data-i18n-title="games.view_grid" title="Visualização em grade" aria-label="Visualização em grade">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+            </button>
+            <button class="view-switch-btn" id="btn-view-list" data-i18n-title="games.view_list" title="Visualização em lista" aria-label="Visualização em lista">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <!-- Games Grid Container -->
+        <!-- Games Container (Grid & List Views) -->
         <div class="games-content-container">
           <!-- Loading state -->
           <div id="games-loading-state" class="state-placeholder" style="display: none;">
@@ -906,8 +928,26 @@
             <p id="games-empty-desc" data-i18n="games.empty_desc">Nenhum jogo corresponde ao filtro ou busca selecionada.</p>
           </div>
 
-          <!-- Responsive Grid -->
+          <!-- Responsive Grid View -->
           <div id="games-grid" class="games-grid"></div>
+
+          <!-- Responsive List / Table View -->
+          <div id="games-list-view" class="games-list-container" style="display: none;">
+            <table class="games-table">
+              <thead>
+                <tr>
+                  <th style="width: 72px;"></th>
+                  <th data-i18n="games.th_game">Jogo</th>
+                  <th data-i18n="games.th_origin">Origem</th>
+                  <th data-i18n="games.th_status">Status de Sincronização</th>
+                  <th data-i18n="games.th_playtime">Tempo de Jogo</th>
+                  <th data-i18n="games.detail_saves_label">Arquivos de Save</th>
+                  <th style="text-align: right;" data-i18n="games.th_actions">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="games-table-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -1216,9 +1256,23 @@
         <div class="game-detail-hero-content">
           <div class="game-detail-hero-badges">
             <span class="badge-pill badge-origin" id="detail-badge-origin">SteamTools</span>
-            <span class="badge-pill" id="detail-badge-appid">AppID 2868840</span>
+            <button class="copy-badge-pill" id="btn-copy-detail-appid" data-i18n-title="common.copy_appid" title="Copiar AppID" aria-label="Copiar AppID">
+              <span id="detail-badge-appid">AppID 2868840</span>
+              <svg class="copy-pill-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
           </div>
-          <h2 class="game-detail-title" id="modal-detail-title">Título do Jogo</h2>
+          <div class="game-detail-title-wrapper">
+            <h2 class="game-detail-title select-text" id="modal-detail-title">Título do Jogo</h2>
+            <button class="btn-copy-icon" id="btn-copy-detail-title" data-i18n-title="common.copy_title" title="Copiar Título" aria-label="Copiar Título">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1313,8 +1367,17 @@
             <span class="ach-trophy-icon">🏆</span>
           </div>
           <div class="ach-title-block">
-            <h2 id="modal-ach-title" class="dialog-title" data-i18n="achievements.title">Conquistas</h2>
-            <p id="modal-ach-game-name" class="dialog-subtitle">Nome do Jogo</p>
+            <h2 id="modal-ach-title" class="dialog-title select-text" data-i18n="achievements.title">Conquistas</h2>
+            <div class="ach-game-subtitle-row">
+              <p id="modal-ach-game-name" class="dialog-subtitle select-text">Nome do Jogo</p>
+              <button class="copy-badge-pill btn-copy-ach-appid" id="btn-copy-ach-appid" data-i18n-title="common.copy_appid" title="Copiar AppID">
+                <span id="ach-badge-appid">AppID</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
         <button class="dialog-close-btn" id="btn-close-ach-modal" title="Fechar">&times;</button>
