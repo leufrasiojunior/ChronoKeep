@@ -80,7 +80,7 @@
             <rect x="2" y="6" width="20" height="12" rx="2"></rect>
             <path d="M6 12h4m-2-2v4m7-3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path>
           </svg>
-          <span class="nav-label" data-i18n="nav.games">Jogos & Nuvem</span>
+          <span class="nav-label" data-i18n="nav.games">Jogos</span>
         </button>
 
         <button class="nav-item" data-page="logs">
@@ -561,6 +561,39 @@
             </div>
           </div>
 
+          <!-- Steam Web API Key -->
+          <div class="settings-card">
+            <div class="card-left">
+              <div class="card-icon-box amber">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                </svg>
+              </div>
+              <div class="card-text">
+                <div class="card-name card-name-row">
+                  <span data-i18n="settings.steam_api_key_title">Chave da Steam Web API</span>
+                  <a href="https://steamcommunity.com/dev/apikey" id="link-settings-get-key" class="info-help-btn" data-i18n-title="settings.steam_api_key_get" title="Obter chave gratuita na Valve" target="_blank">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                  </a>
+                </div>
+                <div class="card-desc" data-i18n="settings.steam_api_key_desc">Utilizada para consultar conquistas e detalhes oficiais na aba Jogos</div>
+              </div>
+            </div>
+            <div class="card-right input-group">
+              <input type="password" id="input-settings-steam-api-key" class="text-input" placeholder="Cole sua Steam Web API Key aqui...">
+              <button class="btn btn-secondary btn-sm" id="btn-toggle-key-visibility" title="Mostrar/Ocultar chave">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+
           <div class="form-actions-row">
             <button class="btn btn-primary" id="btn-save-config">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -813,18 +846,68 @@
         </div>
       </section>
 
-      <!-- PAGE: JOGOS & NUVEM (EM CONSTRUÇÃO) -->
+      <!-- PAGE: JOGOS -->
       <section class="page" id="page-games">
         <div class="page-title-row">
-          <h1 class="page-title" data-i18n="games.title">Jogos & Nuvem</h1>
-        </div>
-        <div class="construction-container">
-          <div class="construction-card">
-            <div class="construction-icon">🎮</div>
-            <h2 data-i18n="games.under_construction">Em construção</h2>
-            <p data-i18n="games.under_construction_desc">Esta seção exibirá todos os seus jogos identificados, capas oficiais, AppIDs, status detalhado de saves locais e na nuvem, com opção de habilitar ou pausar o backup individual de cada título.</p>
-            <span class="status-pill active" data-i18n="games.coming_soon">Em breve no ChronoKeep</span>
+          <div class="title-with-desc">
+            <h1 class="page-title" data-i18n="games.title">Jogos</h1>
+            <p class="page-subtitle" data-i18n="games.subtitle">Catálogo unificado de jogos gerenciados por ferramentas (Tools) e oficiais da Steam</p>
           </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary" id="btn-refresh-games">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span data-i18n="games.btn_refresh">Atualizar</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter & Search Toolbar -->
+        <div class="games-toolbar">
+          <div class="games-filters-group">
+            <button class="filter-chip active" data-filter="tools">
+              <span data-i18n="games.filter_tools">Tools (stplug-in / AppList)</span>
+              <span class="chip-count" id="games-count-tools">0</span>
+            </button>
+            <button class="filter-chip" data-filter="official">
+              <span data-i18n="games.filter_official">Oficiais</span>
+              <span class="chip-count" id="games-count-official">0</span>
+            </button>
+            <button class="filter-chip" data-filter="all">
+              <span data-i18n="games.filter_all">Todos</span>
+              <span class="chip-count" id="games-count-all">0</span>
+            </button>
+          </div>
+
+          <div class="games-search-box">
+            <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="games-search-input" class="text-input games-search-input" placeholder="Buscar por título ou AppID..." data-i18n-placeholder="games.search_placeholder" />
+            <button id="btn-clear-games-search" class="search-clear-btn" style="display: none;" title="Limpar busca">&times;</button>
+          </div>
+        </div>
+
+        <!-- Games Grid Container -->
+        <div class="games-content-container">
+          <!-- Loading state -->
+          <div id="games-loading-state" class="state-placeholder" style="display: none;">
+            <div class="spinner"></div>
+            <p data-i18n="games.loading">Carregando catálogo de jogos...</p>
+          </div>
+
+          <!-- Empty state -->
+          <div id="games-empty-state" class="state-placeholder" style="display: none;">
+            <div class="empty-icon">🎮</div>
+            <h3 data-i18n="games.empty_title">Nenhum jogo encontrado</h3>
+            <p id="games-empty-desc" data-i18n="games.empty_desc">Nenhum jogo corresponde ao filtro ou busca selecionada.</p>
+          </div>
+
+          <!-- Responsive Grid -->
+          <div id="games-grid" class="games-grid"></div>
         </div>
       </section>
 
@@ -1119,6 +1202,204 @@
           <button id="btn-dep-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
           <button id="btn-dep-proceed" class="btn btn-primary" data-i18n="modal.dep_btn_proceed">Continuar Instalação</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DETALHES DO JOGO -->
+  <div id="modal-game-detail" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog game-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-detail-title">
+      <!-- Hero Banner Top -->
+      <div class="game-detail-hero" id="detail-hero-banner">
+        <div class="game-detail-hero-overlay"></div>
+        <button class="dialog-close-btn" id="btn-close-detail-modal" title="Fechar">&times;</button>
+        <div class="game-detail-hero-content">
+          <div class="game-detail-hero-badges">
+            <span class="badge-pill badge-origin" id="detail-badge-origin">SteamTools</span>
+            <span class="badge-pill" id="detail-badge-appid">AppID 2868840</span>
+          </div>
+          <h2 class="game-detail-title" id="modal-detail-title">Título do Jogo</h2>
+        </div>
+      </div>
+
+      <div class="dialog-body game-detail-body">
+        <!-- Status & Stats Row -->
+        <div class="detail-stats-grid">
+          <!-- Cloud Status Card -->
+          <div class="detail-stat-card">
+            <div class="detail-stat-icon-box" id="detail-cloud-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+              </svg>
+            </div>
+            <div class="detail-stat-texts">
+              <span class="detail-stat-label" data-i18n="games.detail_cloud_label">Sincronização na Nuvem</span>
+              <span class="detail-stat-value" id="detail-cloud-status">Sincronizado</span>
+              <span class="detail-stat-sub" id="detail-cloud-last-sync">Última atualização: -</span>
+            </div>
+          </div>
+
+          <!-- Playtime Card -->
+          <div class="detail-stat-card">
+            <div class="detail-stat-icon-box purple">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </div>
+            <div class="detail-stat-texts">
+              <span class="detail-stat-label" data-i18n="games.detail_playtime_label">Tempo de Jogo</span>
+              <span class="detail-stat-value" id="detail-playtime-val">0 horas</span>
+              <span class="detail-stat-sub" id="detail-last-played">Última sessão: -</span>
+            </div>
+          </div>
+
+          <!-- Local Saves Card -->
+          <div class="detail-stat-card">
+            <div class="detail-stat-icon-box cyan">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+            </div>
+            <div class="detail-stat-texts">
+              <span class="detail-stat-label" data-i18n="games.detail_saves_label">Arquivos de Save</span>
+              <span class="detail-stat-value" id="detail-saves-count">0 arquivos</span>
+              <span class="detail-stat-sub" id="detail-saves-size">Tamanho: 0 KB</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions / Navigation Links Bar -->
+        <div class="detail-actions-row">
+          <button class="btn btn-primary" id="btn-detail-open-steam">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2a10 10 0 0 0-10 10c0 4.6 3.1 8.5 7.4 9.6l3-4.3a3.5 3.5 0 0 1-1.4-2.8c0-1.9 1.6-3.5 3.5-3.5a3.5 3.5 0 0 1 3.5 3.5c0 1.9-1.6 3.5-3.5 3.5h-.4l-2.6 3.8A10 10 0 0 0 22 12c0-5.5-4.5-10-10-10z"></path>
+            </svg>
+            <span data-i18n="games.btn_steam_store">Abrir na Loja Steam</span>
+          </button>
+
+          <button class="btn btn-secondary" id="btn-detail-open-steamdb">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+            <span>SteamDB</span>
+          </button>
+
+          <button class="btn btn-secondary" id="btn-detail-open-achievements">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+            <span data-i18n="games.btn_view_achievements">Ver Conquistas</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <button class="btn btn-secondary" id="btn-detail-close" data-i18n="common.close">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CONQUISTAS -->
+  <div id="modal-achievements" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog achievements-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-ach-title">
+      <div class="dialog-header">
+        <div class="ach-header-content">
+          <div class="dialog-logo-center">
+            <span class="ach-trophy-icon">🏆</span>
+          </div>
+          <div class="ach-title-block">
+            <h2 id="modal-ach-title" class="dialog-title" data-i18n="achievements.title">Conquistas</h2>
+            <p id="modal-ach-game-name" class="dialog-subtitle">Nome do Jogo</p>
+          </div>
+        </div>
+        <button class="dialog-close-btn" id="btn-close-ach-modal" title="Fechar">&times;</button>
+      </div>
+
+      <div class="dialog-body ach-dialog-body">
+        <!-- Summary / Progress Bar -->
+        <div id="ach-progress-container" class="ach-progress-box" style="display: none;">
+          <div class="ach-progress-labels">
+            <span class="ach-progress-text" id="ach-progress-text">0 de 0 conquistas (0%)</span>
+            <span class="ach-progress-percent" id="ach-progress-percent">0%</span>
+          </div>
+          <div class="ach-progress-bar-bg">
+            <div class="ach-progress-bar-fill" id="ach-progress-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- State 1: Missing API Key Tutorial Card -->
+        <div id="ach-key-missing-card" class="ach-tutorial-card" style="display: none;">
+          <div class="dialog-callout warning">
+            <div class="callout-icon">🔑</div>
+            <div class="callout-text">
+              <strong data-i18n="achievements.tutorial_title">Chave da Steam Web API Necessária</strong>
+              <p data-i18n="achievements.tutorial_desc">Para consultar suas conquistas e status oficiais na Valve, é necessário cadastrar uma chave gratuita da Steam Web API.</p>
+            </div>
+          </div>
+
+          <div class="tutorial-steps-list">
+            <div class="step-item">
+              <span class="step-number">1</span>
+              <div class="step-content">
+                <span data-i18n="achievements.step1_text">Acesse a página oficial da Valve:</span>
+                <a href="https://steamcommunity.com/dev/apikey" id="link-open-apikey" class="dialog-link" target="_blank">https://steamcommunity.com/dev/apikey</a>
+              </div>
+            </div>
+            <div class="step-item">
+              <span class="step-number">2</span>
+              <div class="step-content">
+                <span data-i18n="achievements.step2_text">No campo <strong>Nome de Domínio</strong> (Domain Name), digite <code>localhost</code> ou <code>chronokeep</code> e confirme.</span>
+              </div>
+            </div>
+            <div class="step-item">
+              <span class="step-number">3</span>
+              <div class="step-content">
+                <span data-i18n="achievements.step3_text">Copie a chave (Key) de 32 caracteres gerada e cole no campo abaixo:</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="api-key-input-row">
+            <input type="text" id="input-modal-api-key" class="text-input" placeholder="Cole sua Steam Web API Key aqui..." data-i18n-placeholder="achievements.key_placeholder" />
+            <button class="btn btn-primary" id="btn-save-modal-api-key" data-i18n="achievements.btn_save_key">Salvar e Carregar</button>
+          </div>
+          <span class="action-feedback" id="modal-api-key-feedback"></span>
+        </div>
+
+        <!-- State 2: Loading Spinner -->
+        <div id="ach-loading-state" class="state-placeholder" style="display: none;">
+          <div class="spinner"></div>
+          <p data-i18n="achievements.loading">Consultando conquistas na Steam API...</p>
+        </div>
+
+        <!-- State 3: Error Message -->
+        <div id="ach-error-state" class="dialog-callout warning" style="display: none;">
+          <div class="callout-icon">⚠️</div>
+          <div class="callout-text">
+            <strong data-i18n="achievements.error_title">Erro ao carregar conquistas</strong>
+            <p id="ach-error-message">Detalhes do erro...</p>
+            <button class="btn btn-secondary btn-sm" id="btn-ach-edit-key" style="margin-top: 8px;" data-i18n="achievements.btn_change_key">Trocar Chave da API</button>
+          </div>
+        </div>
+
+        <!-- State 4: No Achievements for this Game -->
+        <div id="ach-empty-state" class="state-placeholder" style="display: none;">
+          <div class="empty-icon">🎮</div>
+          <h3 data-i18n="achievements.no_achievements_title">Sem Conquistas</h3>
+          <p data-i18n="achievements.no_achievements_desc">Este jogo não possui conquistas registradas na Steam.</p>
+        </div>
+
+        <!-- State 5: Achievements List -->
+        <div id="ach-list-container" class="achievements-list"></div>
+      </div>
+
+      <div class="dialog-footer">
+        <button class="btn btn-secondary" id="btn-ach-close" data-i18n="common.close">Fechar</button>
       </div>
     </div>
   </div>

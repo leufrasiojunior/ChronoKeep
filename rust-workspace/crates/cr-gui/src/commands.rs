@@ -9,7 +9,8 @@ use crate::service_mgr::{
 };
 use cr_common::config::{
     check_daemon_health, detect_default_steam_dir, detect_default_vault_dir, is_gdrive_connected,
-    resolve_service_port, DEFAULT_SERVICE_PORT,
+    load_all_local_playtime, load_steam_api_key, resolve_service_port, save_steam_api_key,
+    DEFAULT_SERVICE_PORT,
 };
 use cr_common::fs_utils::{collect_files_recursive, format_size};
 use cr_common::manifest::parse_manifest;
@@ -19,7 +20,7 @@ use cr_common::gdrive::{
 };
 use cr_common::http::{extract_json_str, url_decode, url_encode};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -88,6 +89,47 @@ pub struct GameSaveItemDto {
     pub in_cloud: bool,
     pub origin: String,
     pub origin_label: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GameCatalogItemDto {
+    pub account_id: u32,
+    pub app_id: u32,
+    pub name: String,
+    pub origin: String,
+    pub origin_label: String,
+    pub in_cloud: bool,
+    pub cloud_status: String,
+    pub last_sync_ts: Option<u64>,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub total_size_formatted: String,
+    pub playtime_minutes: u64,
+    pub last_played_ts: u64,
+    pub cover_url: String,
+    pub hero_url: String,
+    pub header_url: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AchievementItemDto {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub icon: String,
+    pub icon_gray: String,
+    pub unlocked: bool,
+    pub unlock_time: Option<u64>,
+    pub hidden: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GameAchievementsResultDto {
+    pub has_api_key: bool,
+    pub achievements: Vec<AchievementItemDto>,
+    pub total: usize,
+    pub unlocked: usize,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1814,5 +1856,531 @@ pub async fn update_component(
             format!("Error in update task: {}", e)
         }
     })?
+}
+
+#[tauri::command]
+pub fn get_steam_api_key(steam_dir: Option<String>) -> Option<String> {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    load_steam_api_key(Path::new(&s_dir))
+}
+
+#[tauri::command]
+pub fn set_steam_api_key(steam_dir: Option<String>, key: String) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    match save_steam_api_key(s_path, &key) {
+        Ok(()) => OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "Chave da Steam Web API salva com sucesso!".to_string()
+            } else {
+                "Steam Web API key saved successfully!".to_string()
+            },
+        },
+        Err(e) => OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                format!("Erro ao salvar chave: {}", e)
+            } else {
+                format!("Error saving key: {}", e)
+            },
+        },
+    }
+}
+
+#[tauri::command]
+pub fn open_steam_store(app_id: u32) -> OperationResult {
+    let url = format!("steam://store/{}", app_id);
+    open_url(url)
+}
+
+#[tauri::command]
+pub async fn get_games_catalog(
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+    account_id: Option<u32>,
+) -> Vec<GameCatalogItemDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
+        let lang = crate::i18n::current_lang(Some(steam_path));
+
+        // 1. Identify primary account
+        let mut target_account = account_id.unwrap_or(0);
+        let userdata_dir = steam_path.join("userdata");
+        if target_account == 0 && userdata_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&userdata_dir) {
+                let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(acct) = acct_str.parse::<u32>() else { continue };
+                    if acct == 0 { continue; }
+                    let cfg = p.join("config").join("localconfig.vdf");
+                    let mtime = fs::metadata(&cfg).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    if target_account == 0 || mtime > best_mtime {
+                        target_account = acct;
+                        best_mtime = mtime;
+                    }
+                }
+            }
+        }
+        if target_account == 0 && vault_path.exists() {
+            if let Ok(entries) = fs::read_dir(vault_path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    if let Ok(acct) = acct_str.parse::<u32>() {
+                        if acct > 0 {
+                            target_account = acct;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Discover tool apps
+        let tool_apps = scan_local_tool_apps(steam_path);
+
+        // 3. Discover official installed apps
+        let libraries = get_steam_library_folders(steam_path);
+        let mut official_installed: HashSet<u32> = HashSet::new();
+        for lib in &libraries {
+            let steamapps = lib.join("steamapps");
+            if let Ok(entries) = fs::read_dir(&steamapps) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("appmanifest_") && name_str.ends_with(".acf") {
+                        if let Some(id_str) = name_str.strip_prefix("appmanifest_").and_then(|s| s.strip_suffix(".acf")) {
+                            if let Ok(app_id) = id_str.parse::<u32>() {
+                                if app_id != 7 && app_id != 760 && app_id != 241100 && app_id != 241300 {
+                                    official_installed.insert(app_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Discover save files from userdata and vault for target_account
+        let mut save_info: HashMap<u32, (usize, u64, bool, Option<u64>)> = HashMap::new();
+
+        if target_account > 0 {
+            let user_acct_dir = userdata_dir.join(target_account.to_string());
+            if user_acct_dir.exists() {
+                if let Ok(apps) = fs::read_dir(&user_acct_dir) {
+                    for app_entry in apps.flatten() {
+                        let app_path = app_entry.path();
+                        if !app_path.is_dir() { continue; }
+                        let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 { continue; }
+
+                        let remote_dir = app_path.join("remote");
+                        let mut files: Vec<(String, PathBuf)> = Vec::new();
+                        if remote_dir.exists() {
+                            collect_files_recursive(&remote_dir, &remote_dir, &mut files);
+                        }
+                        if !files.is_empty() {
+                            let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                            save_info.insert(app_id, (files.len(), total_bytes, false, None));
+                        }
+                    }
+                }
+            }
+
+            let vault_acct_dir = vault_path.join(target_account.to_string());
+            if vault_acct_dir.exists() {
+                if let Ok(apps) = fs::read_dir(&vault_acct_dir) {
+                    for app_entry in apps.flatten() {
+                        let app_path = app_entry.path();
+                        if !app_path.is_dir() { continue; }
+                        let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 { continue; }
+
+                        let manifest_p = app_path.join("manifest.tsv");
+                        let (in_cloud, last_sync_ts) = if manifest_p.exists() {
+                            if let Ok(c) = fs::read_to_string(&manifest_p) {
+                                let m = parse_manifest(&c);
+                                let is_cloud = m.change_number > 0 && !m.files.is_empty();
+                                let max_file_ts = m.files.values().map(|f| f.timestamp).max().unwrap_or(0);
+                                let sync_ts = if max_file_ts > 0 {
+                                    Some(max_file_ts)
+                                } else if is_cloud {
+                                    fs::metadata(&manifest_p).ok().and_then(|meta| meta.modified().ok())
+                                        .and_then(|st| st.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+                                        .map(|d| d.as_secs())
+                                } else {
+                                    None
+                                };
+                                (is_cloud, sync_ts)
+                            } else {
+                                (false, None)
+                            }
+                        } else {
+                            (false, None)
+                        };
+
+                        let files_dir = app_path.join("files");
+                        let scan_target = if files_dir.exists() { &files_dir } else { &app_path };
+                        let mut files: Vec<(String, PathBuf)> = Vec::new();
+                        collect_files_recursive(scan_target, scan_target, &mut files);
+                        files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                        let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                        save_info.entry(app_id)
+                            .and_modify(|e| {
+                                e.0 = e.0.max(files.len());
+                                e.1 = e.1.max(total_bytes);
+                                e.2 = e.2 || in_cloud;
+                                if last_sync_ts.is_some() {
+                                    e.3 = last_sync_ts;
+                                }
+                            })
+                            .or_insert((files.len(), total_bytes, in_cloud, last_sync_ts));
+                    }
+                }
+            }
+        }
+
+        // 5. Combine all known AppIDs
+        let mut all_app_ids: BTreeSet<u32> = BTreeSet::new();
+        for &app_id in tool_apps.keys() {
+            all_app_ids.insert(app_id);
+        }
+        for &app_id in &official_installed {
+            all_app_ids.insert(app_id);
+        }
+        for &app_id in save_info.keys() {
+            all_app_ids.insert(app_id);
+        }
+
+        let playtime_map = load_all_local_playtime(steam_path, if target_account > 0 { Some(target_account) } else { None });
+        for (&app_id, info) in &playtime_map {
+            if app_id != 7 && app_id != 760 && app_id != 241100 && app_id != 241300 {
+                if info.playtime_minutes > 0 || info.last_played_ts > 0 {
+                    all_app_ids.insert(app_id);
+                }
+            }
+        }
+
+        // 6. Resolve Names
+        let mut cache = load_app_names_cache();
+        let all_ids_vec: Vec<u32> = all_app_ids.iter().copied().collect();
+        resolve_game_names_batch(&all_ids_vec, &libraries, &mut cache);
+        save_app_names_cache(&cache);
+
+        // 7. Assemble GameCatalogItemDto
+        let mut catalog: Vec<GameCatalogItemDto> = Vec::with_capacity(all_app_ids.len());
+        for app_id in all_app_ids {
+            let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
+            let (origin, origin_label) = if let Some(&tool_name) = tool_apps.get(&app_id) {
+                ("tools".to_string(), tool_name.to_string())
+            } else {
+                (
+                    "official".to_string(),
+                    if lang.is_pt() { "Steam Oficial".to_string() } else { "Official Steam".to_string() },
+                )
+            };
+
+            let (file_count, total_bytes, in_cloud, last_sync_ts) = save_info.get(&app_id).cloned().unwrap_or((0, 0, false, None));
+            let cloud_status = if in_cloud {
+                "synced".to_string()
+            } else if file_count > 0 {
+                "local_only".to_string()
+            } else {
+                "none".to_string()
+            };
+
+            let (playtime_minutes, last_played_ts) = if let Some(info) = playtime_map.get(&app_id) {
+                (info.playtime_minutes, info.last_played_ts)
+            } else {
+                (0, 0)
+            };
+
+            catalog.push(GameCatalogItemDto {
+                account_id: target_account,
+                app_id,
+                name,
+                origin,
+                origin_label,
+                in_cloud,
+                cloud_status,
+                last_sync_ts,
+                file_count,
+                total_bytes,
+                total_size_formatted: format_size(total_bytes),
+                playtime_minutes,
+                last_played_ts,
+                cover_url: format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_600x900.jpg", app_id),
+                hero_url: format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_hero.jpg", app_id),
+                header_url: format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/header.jpg", app_id),
+            });
+        }
+
+        // 8. Default sort: Tools first, then official. Within each group: last_played_ts desc, then in_cloud, then name
+        catalog.sort_by(|a, b| {
+            let a_is_tool = a.origin == "tools";
+            let b_is_tool = b.origin == "tools";
+            match (a_is_tool, b_is_tool) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    if a.last_played_ts != b.last_played_ts {
+                        b.last_played_ts.cmp(&a.last_played_ts)
+                    } else if a.in_cloud != b.in_cloud {
+                        b.in_cloud.cmp(&a.in_cloud)
+                    } else {
+                        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                    }
+                }
+            }
+        });
+
+        catalog
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn get_game_achievements(
+    app_id: u32,
+    steam_dir: Option<String>,
+) -> GameAchievementsResultDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let steam_path = Path::new(&s_dir);
+
+        let api_key = match load_steam_api_key(steam_path) {
+            Some(k) if !k.trim().is_empty() => k.trim().to_string(),
+            _ => {
+                return GameAchievementsResultDto {
+                    has_api_key: false,
+                    achievements: Vec::new(),
+                    total: 0,
+                    unlocked: 0,
+                    error: None,
+                };
+            }
+        };
+
+        let lang = crate::i18n::current_lang(Some(steam_path));
+        let lang_param = if lang.is_pt() { "brazilian" } else { "english" };
+
+        // 1. Fetch GetSchemaForGame/v2
+        let schema_url = format!(
+            "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={}&appid={}&l={}",
+            api_key, app_id, lang_param
+        );
+        let schema_res = cr_common::http::https_download_url(&schema_url, 15_000);
+        let schema_bytes = match schema_res {
+            Some((200, b)) => b,
+            Some((status, b)) => {
+                let err_text = String::from_utf8_lossy(&b);
+                return GameAchievementsResultDto {
+                    has_api_key: true,
+                    achievements: Vec::new(),
+                    total: 0,
+                    unlocked: 0,
+                    error: Some(format!("Steam API HTTP {}: {}", status, err_text.trim())),
+                };
+            }
+            None => {
+                return GameAchievementsResultDto {
+                    has_api_key: true,
+                    achievements: Vec::new(),
+                    total: 0,
+                    unlocked: 0,
+                    error: Some(if lang.is_pt() {
+                        "Falha ao conectar à API da Steam (timeout ou sem internet).".to_string()
+                    } else {
+                        "Failed to connect to Steam API (timeout or no network).".to_string()
+                    }),
+                };
+            }
+        };
+
+        #[allow(dead_code, non_snake_case)]
+        #[derive(Deserialize)]
+        struct SchemaAchievement {
+            name: String,
+            #[serde(default)]
+            displayName: Option<String>,
+            #[serde(default)]
+            description: Option<String>,
+            #[serde(default)]
+            icon: Option<String>,
+            #[serde(default)]
+            icongray: Option<String>,
+            #[serde(default)]
+            hidden: Option<u32>,
+        }
+        #[allow(dead_code, non_snake_case)]
+        #[derive(Deserialize)]
+        struct SchemaStats {
+            #[serde(default)]
+            achievements: Option<Vec<SchemaAchievement>>,
+        }
+        #[allow(dead_code, non_snake_case)]
+        #[derive(Deserialize)]
+        struct SchemaGame {
+            #[serde(default)]
+            availableGameStats: Option<SchemaStats>,
+        }
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        struct SchemaRoot {
+            #[serde(default)]
+            game: Option<SchemaGame>,
+        }
+
+        let schema: SchemaRoot = match serde_json::from_slice(&schema_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                return GameAchievementsResultDto {
+                    has_api_key: true,
+                    achievements: Vec::new(),
+                    total: 0,
+                    unlocked: 0,
+                    error: Some(format!("JSON parse error: {}", e)),
+                };
+            }
+        };
+
+        let schema_achievements = match schema.game.and_then(|g| g.availableGameStats).and_then(|s| s.achievements) {
+            Some(a) if !a.is_empty() => a,
+            _ => {
+                return GameAchievementsResultDto {
+                    has_api_key: true,
+                    achievements: Vec::new(),
+                    total: 0,
+                    unlocked: 0,
+                    error: None,
+                };
+            }
+        };
+
+        // 2. Identify Account ID & SteamID64 to fetch GetPlayerAchievements
+        let mut target_account = 0u32;
+        let userdata_dir = steam_path.join("userdata");
+        if userdata_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&userdata_dir) {
+                let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
+                for entry in entries.flatten() {
+                    if let Ok(acct) = entry.file_name().to_string_lossy().parse::<u32>() {
+                        if acct > 0 {
+                            let cfg = entry.path().join("config").join("localconfig.vdf");
+                            let mtime = fs::metadata(&cfg).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                            if target_account == 0 || mtime > best_mtime {
+                                target_account = acct;
+                                best_mtime = mtime;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut player_map: HashMap<String, (bool, Option<u64>)> = HashMap::new();
+        if target_account > 0 {
+            let steamid64 = 76561197960265728u64 + (target_account as u64);
+            let player_url = format!(
+                "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/?appid={}&key={}&steamid={}&l={}",
+                app_id, api_key, steamid64, lang_param
+            );
+
+            if let Some((200, pbytes)) = cr_common::http::https_download_url(&player_url, 15_000) {
+                #[allow(dead_code)]
+                #[derive(Deserialize)]
+                struct PlayerAchEntry {
+                    apiname: String,
+                    #[serde(default)]
+                    achieved: u32,
+                    #[serde(default)]
+                    unlocktime: u64,
+                }
+                #[allow(dead_code)]
+                #[derive(Deserialize)]
+                struct PlayerStats {
+                    #[serde(default)]
+                    achievements: Option<Vec<PlayerAchEntry>>,
+                    #[serde(default)]
+                    success: Option<bool>,
+                }
+                #[allow(dead_code)]
+                #[derive(Deserialize)]
+                struct PlayerRoot {
+                    #[serde(default)]
+                    playerstats: Option<PlayerStats>,
+                }
+
+                if let Ok(proot) = serde_json::from_slice::<PlayerRoot>(&pbytes) {
+                    if let Some(list) = proot.playerstats.and_then(|ps| ps.achievements) {
+                        for item in list {
+                            let unlocked = item.achieved == 1;
+                            let ts = if unlocked && item.unlocktime > 0 { Some(item.unlocktime) } else { None };
+                            player_map.insert(item.apiname, (unlocked, ts));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result_items: Vec<AchievementItemDto> = Vec::new();
+        let mut unlocked_count = 0;
+
+        for s in schema_achievements {
+            let (is_unlocked, unlock_ts) = player_map.get(&s.name).cloned().unwrap_or((false, None));
+            if is_unlocked {
+                unlocked_count += 1;
+            }
+            result_items.push(AchievementItemDto {
+                name: s.name,
+                display_name: s.displayName.unwrap_or_else(|| "???".to_string()),
+                description: s.description.unwrap_or_default(),
+                icon: s.icon.unwrap_or_default(),
+                icon_gray: s.icongray.unwrap_or_default(),
+                unlocked: is_unlocked,
+                unlock_time: unlock_ts,
+                hidden: s.hidden.unwrap_or(0) == 1,
+            });
+        }
+
+        result_items.sort_by(|a, b| {
+            match (a.unlocked, b.unlocked) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                (true, true) => b.unlock_time.unwrap_or(0).cmp(&a.unlock_time.unwrap_or(0)),
+                (false, false) => a.display_name.cmp(&b.display_name),
+            }
+        });
+
+        let total = result_items.len();
+        GameAchievementsResultDto {
+            has_api_key: true,
+            achievements: result_items,
+            total,
+            unlocked: unlocked_count,
+            error: None,
+        }
+    })
+    .await
+    .unwrap_or_else(|e| GameAchievementsResultDto {
+        has_api_key: false,
+        achievements: Vec::new(),
+        total: 0,
+        unlocked: 0,
+        error: Some(e.to_string()),
+    })
 }
 

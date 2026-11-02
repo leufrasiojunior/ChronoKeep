@@ -453,6 +453,8 @@ function navigateToPage(pageId, targetElementId = null) {
     loadLogs();
   } else if (pageId === "cloud-saves") {
     scanSaves();
+  } else if (pageId === "games") {
+    loadGamesCatalog();
   } else if (pageId === "about") {
     if (!lastUpdateCheckResult) {
       checkForUpdates(false);
@@ -707,6 +709,15 @@ async function loadInitialData() {
         checkLogAuto.checked = stored !== "false";
         updateLogAutoRefreshState();
       }
+
+      // Load Steam Web API Key
+      try {
+        const apiKey = await invokeBackend("get_steam_api_key", { steamDir: appConfig.steam_dir });
+        if (apiKey) {
+          const keyInput = document.getElementById("input-settings-steam-api-key");
+          if (keyInput) keyInput.value = apiKey;
+        }
+      } catch (_) {}
     } else {
       applyLanguage(appConfig.language || "system", true);
     }
@@ -920,6 +931,17 @@ function setupActionHandlers() {
 
     const res = await invokeBackend("save_config", { cfg: newCfg });
     if (res && res.success) {
+      // Also persist Steam Web API key if changed
+      const apiKeyInput = document.getElementById("input-settings-steam-api-key");
+      if (apiKeyInput) {
+        try {
+          await invokeBackend("set_steam_api_key", {
+            steamDir: newCfg.steam_dir || appConfig.steam_dir,
+            key: apiKeyInput.value.trim(),
+          });
+        } catch (_) {}
+      }
+
       appConfig = { ...appConfig, ...newCfg };
       applyTheme(newCfg.theme);
       applyLanguage(newCfg.language, true);
@@ -1065,6 +1087,27 @@ function setupActionHandlers() {
 
   // Manual Upload Limit Help Modal
   setupUploadLimitHelpModal();
+
+  // Steam API Key helper handlers
+  document.getElementById("btn-toggle-key-visibility")?.addEventListener("click", () => {
+    const input = document.getElementById("input-settings-steam-api-key");
+    if (input) {
+      input.type = input.type === "password" ? "text" : "password";
+    }
+  });
+
+  document.getElementById("link-settings-get-key")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    invokeBackend("open_url", { url: "https://steamcommunity.com/dev/apikey" });
+  });
+
+  document.getElementById("link-open-apikey")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    invokeBackend("open_url", { url: "https://steamcommunity.com/dev/apikey" });
+  });
+
+  // Games tab toolbar & modals setup
+  setupGamesToolbarAndModals();
 }
 
 // --------------------------------------------------------------------------
@@ -1596,6 +1639,466 @@ async function syncGameSave(appId, accountId, btn, totalBytes = 0, gameName = ""
   }
 }
 window.syncGameSave = syncGameSave;
+
+// --------------------------------------------------------------------------
+// Games Catalog, Details & Achievements Controller
+// --------------------------------------------------------------------------
+let gamesCatalog = [];
+let activeGameFilter = "tools"; // "tools" | "official" | "all"
+let gamesSearchQuery = "";
+let selectedGame = null;
+let currentAchievementsGame = null;
+
+async function loadGamesCatalog() {
+  const loadingEl = document.getElementById("games-loading-state");
+  const emptyEl = document.getElementById("games-empty-state");
+  const gridEl = document.getElementById("games-grid");
+
+  if (loadingEl) loadingEl.style.display = "flex";
+  if (emptyEl) emptyEl.style.display = "none";
+  if (gridEl) gridEl.style.display = "none";
+
+  try {
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const inputVault = document.getElementById("input-vault-dir")?.value?.trim();
+    const list = await invokeBackend("get_games_catalog", {
+      steamDir: inputSteam || appConfig.steam_dir || null,
+      vaultDir: inputVault || appConfig.vault_dir || null,
+    });
+    gamesCatalog = Array.isArray(list) ? list : [];
+  } catch (err) {
+    console.error("Failed to load games catalog:", err);
+    gamesCatalog = [];
+  } finally {
+    if (loadingEl) loadingEl.style.display = "none";
+  }
+
+  updateGamesCounts();
+  renderGamesCatalog();
+}
+
+function updateGamesCounts() {
+  const toolsCount = gamesCatalog.filter((g) => g.origin === "tools").length;
+  const officialCount = gamesCatalog.filter((g) => g.origin === "official").length;
+  const allCount = gamesCatalog.length;
+
+  const countToolsEl = document.getElementById("games-count-tools");
+  const countOfficialEl = document.getElementById("games-count-official");
+  const countAllEl = document.getElementById("games-count-all");
+
+  if (countToolsEl) countToolsEl.textContent = toolsCount;
+  if (countOfficialEl) countOfficialEl.textContent = officialCount;
+  if (countAllEl) countAllEl.textContent = allCount;
+}
+
+function renderGamesCatalog() {
+  const gridEl = document.getElementById("games-grid");
+  const emptyEl = document.getElementById("games-empty-state");
+  if (!gridEl) return;
+
+  gridEl.innerHTML = "";
+
+  // 1. Filter by active tab (tools, official, all)
+  let filtered = gamesCatalog.filter((game) => {
+    if (activeGameFilter === "tools") return game.origin === "tools";
+    if (activeGameFilter === "official") return game.origin === "official";
+    return true;
+  });
+
+  // 2. Filter by search query
+  if (gamesSearchQuery) {
+    const q = gamesSearchQuery.toLowerCase();
+    filtered = filtered.filter((game) => {
+      const matchName = game.name && game.name.toLowerCase().includes(q);
+      const matchId = String(game.app_id).includes(q);
+      return matchName || matchId;
+    });
+  }
+
+  if (filtered.length === 0) {
+    if (emptyEl) emptyEl.style.display = "flex";
+    gridEl.style.display = "none";
+    return;
+  }
+
+  if (emptyEl) emptyEl.style.display = "none";
+  gridEl.style.display = "grid";
+
+  for (const game of filtered) {
+    // Playtime string
+    let playtimeStr = "";
+    if (game.playtime_minutes > 0) {
+      const h = Math.floor(game.playtime_minutes / 60);
+      const m = game.playtime_minutes % 60;
+      playtimeStr = h > 0
+        ? t("games.playtime_hours", { hours: h, minutes: m })
+        : t("games.playtime_minutes_only", { minutes: m });
+    }
+
+    // Cloud sync badge
+    let cloudBadgeHtml = "";
+    if (game.cloud_status === "synced") {
+      cloudBadgeHtml = `<span class="game-badge cloud-synced" title="${escapeHtml(t("games.cloud_synced"))}">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+        </svg> Cloud
+      </span>`;
+    } else if (game.cloud_status === "local_only") {
+      cloudBadgeHtml = `<span class="game-badge cloud-local" title="${escapeHtml(t("games.cloud_local"))}">Local</span>`;
+    }
+
+    // Origin badge
+    const originClass = game.origin === "tools" ? "origin-tools" : "origin-official";
+    const originBadgeHtml = `<span class="game-badge ${originClass}">${escapeHtml(game.origin_label)}</span>`;
+
+    const card = document.createElement("div");
+    card.className = "game-card";
+    card.innerHTML = `
+      <div class="game-card-cover-wrap">
+        <div class="game-card-badges">
+          ${originBadgeHtml}
+          ${cloudBadgeHtml}
+        </div>
+        <img class="game-card-cover" src="${escapeHtml(game.cover_url)}" alt="${escapeHtml(game.name)}" loading="lazy"
+             onerror="if(!this.dataset.fallback){this.dataset.fallback=1; this.src='${escapeHtml(game.header_url)}'; this.classList.add('fallback-header');} else { this.style.display='none'; this.nextElementSibling.style.display='flex'; }" />
+        <div class="card-placeholder-text" style="display: none;">${escapeHtml(game.name)}</div>
+      </div>
+      <div class="game-card-info">
+        <span class="game-card-title" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</span>
+        <div class="game-card-sub">
+          <span>AppID ${game.app_id}</span>
+          ${playtimeStr ? `<span>${escapeHtml(playtimeStr)}</span>` : ""}
+        </div>
+      </div>
+    `;
+
+    card.addEventListener("click", () => openGameDetailModal(game));
+    gridEl.appendChild(card);
+  }
+}
+
+function openGameDetailModal(game) {
+  selectedGame = game;
+  const modal = document.getElementById("modal-game-detail");
+  if (!modal) return;
+
+  // Hero background
+  const heroBanner = document.getElementById("detail-hero-banner");
+  if (heroBanner) {
+    heroBanner.style.backgroundImage = `url('${game.hero_url}'), url('${game.header_url}')`;
+  }
+
+  // Titles & Badges
+  document.getElementById("modal-detail-title").textContent = game.name;
+  document.getElementById("detail-badge-appid").textContent = `AppID ${game.app_id}`;
+
+  const originBadge = document.getElementById("detail-badge-origin");
+  if (originBadge) {
+    originBadge.textContent = game.origin_label;
+    originBadge.className = `badge-pill ${game.origin === "tools" ? "badge-origin" : ""}`;
+  }
+
+  // Cloud status & Last sync time
+  const cloudStatusEl = document.getElementById("detail-cloud-status");
+  const cloudSyncEl = document.getElementById("detail-cloud-last-sync");
+  const cloudIconBox = document.getElementById("detail-cloud-icon-box");
+
+  if (game.cloud_status === "synced") {
+    if (cloudStatusEl) cloudStatusEl.textContent = t("games.cloud_synced");
+    if (cloudIconBox) cloudIconBox.className = "detail-stat-icon-box emerald";
+  } else if (game.cloud_status === "local_only") {
+    if (cloudStatusEl) cloudStatusEl.textContent = t("games.cloud_local");
+    if (cloudIconBox) cloudIconBox.className = "detail-stat-icon-box amber";
+  } else {
+    if (cloudStatusEl) cloudStatusEl.textContent = t("games.cloud_none");
+    if (cloudIconBox) cloudIconBox.className = "detail-stat-icon-box";
+  }
+
+  if (game.last_sync_ts && game.last_sync_ts > 0) {
+    const d = new Date(game.last_sync_ts * 1000);
+    const dateStr = d.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    if (cloudSyncEl) cloudSyncEl.textContent = t("games.detail_last_sync", { date: dateStr });
+  } else {
+    if (cloudSyncEl) cloudSyncEl.textContent = t("games.detail_never_synced");
+  }
+
+  // Playtime & Last Played
+  const playtimeValEl = document.getElementById("detail-playtime-val");
+  const lastPlayedEl = document.getElementById("detail-last-played");
+
+  if (game.playtime_minutes > 0) {
+    const h = Math.floor(game.playtime_minutes / 60);
+    const m = game.playtime_minutes % 60;
+    if (playtimeValEl) {
+      playtimeValEl.textContent = h > 0
+        ? t("games.playtime_hours", { hours: h, minutes: m })
+        : t("games.playtime_minutes_only", { minutes: m });
+    }
+  } else {
+    if (playtimeValEl) playtimeValEl.textContent = t("games.playtime_zero");
+  }
+
+  if (game.last_played_ts && game.last_played_ts > 0) {
+    const d = new Date(game.last_played_ts * 1000);
+    const dateStr = d.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    if (lastPlayedEl) lastPlayedEl.textContent = t("games.detail_last_played", { date: dateStr });
+  } else {
+    if (lastPlayedEl) lastPlayedEl.textContent = t("games.detail_never_played");
+  }
+
+  // Save Files count & size
+  const savesCountEl = document.getElementById("detail-saves-count");
+  const savesSizeEl = document.getElementById("detail-saves-size");
+  if (savesCountEl) savesCountEl.textContent = t("games.detail_files_fmt", { count: game.file_count, size: game.total_size_formatted });
+  if (savesSizeEl) savesSizeEl.textContent = game.total_bytes > 0 ? `${game.total_bytes.toLocaleString()} bytes` : "-";
+
+  // Actions
+  const btnSteam = document.getElementById("btn-detail-open-steam");
+  if (btnSteam) {
+    btnSteam.onclick = () => {
+      invokeBackend("open_steam_store", { appId: game.app_id });
+    };
+  }
+
+  const btnSteamDb = document.getElementById("btn-detail-open-steamdb");
+  if (btnSteamDb) {
+    btnSteamDb.onclick = () => {
+      invokeBackend("open_url", { url: `https://steamdb.info/app/${game.app_id}/` });
+    };
+  }
+
+  const btnAch = document.getElementById("btn-detail-open-achievements");
+  if (btnAch) {
+    btnAch.onclick = () => {
+      modal.style.display = "none";
+      openAchievementsModal(game);
+    };
+  }
+
+  modal.style.display = "flex";
+}
+
+async function openAchievementsModal(game) {
+  currentAchievementsGame = game;
+  const modal = document.getElementById("modal-achievements");
+  if (!modal) return;
+
+  document.getElementById("modal-ach-game-name").textContent = `${game.name} (AppID ${game.app_id})`;
+
+  // Reset sections
+  const progressBox = document.getElementById("ach-progress-container");
+  const keyCard = document.getElementById("ach-key-missing-card");
+  const loadingState = document.getElementById("ach-loading-state");
+  const errorState = document.getElementById("ach-error-state");
+  const emptyState = document.getElementById("ach-empty-state");
+  const listContainer = document.getElementById("ach-list-container");
+
+  if (progressBox) progressBox.style.display = "none";
+  if (keyCard) keyCard.style.display = "none";
+  if (loadingState) loadingState.style.display = "flex";
+  if (errorState) errorState.style.display = "none";
+  if (emptyState) emptyState.style.display = "none";
+  if (listContainer) listContainer.innerHTML = "";
+
+  modal.style.display = "flex";
+
+  try {
+    const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+    const res = await invokeBackend("get_game_achievements", {
+      appId: game.app_id,
+      steamDir: inputSteam || appConfig.steam_dir || null,
+    });
+
+    if (loadingState) loadingState.style.display = "none";
+
+    if (!res) {
+      if (errorState) {
+        errorState.style.display = "flex";
+        document.getElementById("ach-error-message").textContent = t("common.unknown_error");
+      }
+      return;
+    }
+
+    if (!res.has_api_key) {
+      if (keyCard) keyCard.style.display = "flex";
+      return;
+    }
+
+    if (res.error) {
+      if (errorState) {
+        errorState.style.display = "flex";
+        document.getElementById("ach-error-message").textContent = res.error;
+      }
+      return;
+    }
+
+    if (res.total === 0) {
+      if (emptyState) emptyState.style.display = "flex";
+      return;
+    }
+
+    // Display progress
+    if (progressBox) {
+      progressBox.style.display = "block";
+      const percent = res.total > 0 ? Math.round((res.unlocked / res.total) * 100) : 0;
+      document.getElementById("ach-progress-text").textContent = t("achievements.progress_fmt", {
+        unlocked: res.unlocked,
+        total: res.total,
+        percent: percent,
+      });
+      document.getElementById("ach-progress-percent").textContent = `${percent}%`;
+      document.getElementById("ach-progress-fill").style.width = `${percent}%`;
+    }
+
+    // Render achievements
+    if (listContainer) {
+      listContainer.innerHTML = "";
+      for (const ach of res.achievements) {
+        const itemEl = document.createElement("div");
+        itemEl.className = `achievement-item ${ach.unlocked ? "unlocked" : "locked"}`;
+
+        const iconUrl = ach.unlocked
+          ? (ach.icon || ach.icon_gray)
+          : (ach.icon_gray || ach.icon);
+
+        let unlockDateStr = "";
+        if (ach.unlocked && ach.unlock_time) {
+          const d = new Date(ach.unlock_time * 1000);
+          const dateStr = d.toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          });
+          unlockDateStr = t("achievements.unlocked_at", { date: dateStr });
+        }
+
+        const isHidden = !ach.unlocked && ach.hidden;
+        const displayName = isHidden ? t("achievements.hidden_title") : (ach.display_name || ach.name);
+        const description = isHidden ? t("achievements.hidden_desc") : (ach.description || "");
+
+        itemEl.innerHTML = `
+          <div class="ach-icon-box">
+            ${iconUrl ? `<img src="${escapeHtml(iconUrl)}" alt="${escapeHtml(displayName)}" loading="lazy" />` : `<span>🏆</span>`}
+          </div>
+          <div class="ach-texts">
+            <span class="ach-name">${escapeHtml(displayName)}</span>
+            ${description ? `<span class="ach-desc">${escapeHtml(description)}</span>` : ""}
+            ${unlockDateStr ? `<span class="ach-unlock-date">${escapeHtml(unlockDateStr)}</span>` : ""}
+          </div>
+          <span class="ach-status-badge ${ach.unlocked ? "unlocked" : "locked"}">
+            ${ach.unlocked ? escapeHtml(t("achievements.status_unlocked")) : escapeHtml(t("achievements.status_locked"))}
+          </span>
+        `;
+        listContainer.appendChild(itemEl);
+      }
+    }
+  } catch (err) {
+    if (loadingState) loadingState.style.display = "none";
+    if (errorState) {
+      errorState.style.display = "flex";
+      document.getElementById("ach-error-message").textContent = String(err);
+    }
+  }
+}
+
+function setupGamesToolbarAndModals() {
+  // Filter chips (Tools, Official, All)
+  const chips = document.querySelectorAll(".filter-chip[data-filter]");
+  chips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      chips.forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      activeGameFilter = chip.getAttribute("data-filter") || "tools";
+      renderGamesCatalog();
+    });
+  });
+
+  // Search input
+  const searchInput = document.getElementById("games-search-input");
+  const clearBtn = document.getElementById("btn-clear-games-search");
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      gamesSearchQuery = e.target.value.trim();
+      if (clearBtn) clearBtn.style.display = gamesSearchQuery ? "block" : "none";
+      renderGamesCatalog();
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      if (searchInput) searchInput.value = "";
+      gamesSearchQuery = "";
+      clearBtn.style.display = "none";
+      renderGamesCatalog();
+    });
+  }
+
+  // Refresh button
+  document.getElementById("btn-refresh-games")?.addEventListener("click", () => {
+    loadGamesCatalog();
+  });
+
+  // Game Detail Modal Close
+  const closeDetail = () => {
+    const m = document.getElementById("modal-game-detail");
+    if (m) m.style.display = "none";
+  };
+  document.getElementById("btn-close-detail-modal")?.addEventListener("click", closeDetail);
+  document.getElementById("btn-detail-close")?.addEventListener("click", closeDetail);
+  document.getElementById("modal-game-detail")?.addEventListener("click", (e) => {
+    if (e.target.id === "modal-game-detail") closeDetail();
+  });
+
+  // Achievements Modal Close
+  const closeAch = () => {
+    const m = document.getElementById("modal-achievements");
+    if (m) m.style.display = "none";
+  };
+  document.getElementById("btn-close-ach-modal")?.addEventListener("click", closeAch);
+  document.getElementById("btn-ach-close")?.addEventListener("click", closeAch);
+  document.getElementById("modal-achievements")?.addEventListener("click", (e) => {
+    if (e.target.id === "modal-achievements") closeAch();
+  });
+
+  // Edit Key button from error state
+  document.getElementById("btn-ach-edit-key")?.addEventListener("click", () => {
+    document.getElementById("ach-error-state").style.display = "none";
+    document.getElementById("ach-key-missing-card").style.display = "flex";
+  });
+
+  // Save Key from Achievements Modal Tutorial
+  document.getElementById("btn-save-modal-api-key")?.addEventListener("click", async () => {
+    const input = document.getElementById("input-modal-api-key");
+    const key = input ? input.value.trim() : "";
+    if (!key) return;
+
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const res = await invokeBackend("set_steam_api_key", {
+        steamDir: inputSteam || appConfig.steam_dir || null,
+        key: key,
+      });
+      if (res && res.success) {
+        showToast(t("achievements.key_saved"));
+        // Sync settings input as well
+        const settingsInput = document.getElementById("input-settings-steam-api-key");
+        if (settingsInput) settingsInput.value = key;
+
+        if (currentAchievementsGame) {
+          openAchievementsModal(currentAchievementsGame);
+        }
+      } else {
+        showToast(res ? res.message : "Error saving key");
+      }
+    } catch (err) {
+      showToast(String(err));
+    }
+  });
+}
 
 // --------------------------------------------------------------------------
 // Component Updater Controller
