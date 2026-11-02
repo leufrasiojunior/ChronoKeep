@@ -108,6 +108,61 @@ pub fn extract_embedded_filename_from_bytes(bytes: &[u8]) -> String {
     best
 }
 
+/// Returns a concise human-readable summary of the parameters inside a Cloud RPC request.
+pub fn extract_rpc_summary(method: &str, req_bytes: &[u8]) -> String {
+    use crate::wire::parse_message;
+    let fields = parse_message(req_bytes);
+    match method {
+        RPC_GET_CHANGELIST => {
+            let cn = find_field(&fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
+            format!(" synced_cn={}", cn)
+        }
+        RPC_FILE_DOWNLOAD => {
+            let fname = extract_download_filename(&fields, req_bytes);
+            if !fname.is_empty() {
+                format!(" file='{}'", fname)
+            } else {
+                String::new()
+            }
+        }
+        RPC_DELETE_FILE => {
+            if let Some(fname) = find_field(&fields, 2).and_then(|f| f.as_str()) {
+                format!(" file='{}'", fname)
+            } else {
+                String::new()
+            }
+        }
+        RPC_BEGIN_UPLOAD => {
+            let fname = find_field(&fields, 6).and_then(|f| f.as_str()).unwrap_or("");
+            let sz = find_field(&fields, 3).and_then(|f| f.as_u64()).unwrap_or(0);
+            if !fname.is_empty() {
+                format!(" file='{}' (sz={}B)", fname, sz)
+            } else {
+                format!(" sz={}B", sz)
+            }
+        }
+        RPC_COMMIT_UPLOAD => {
+            let fname = find_field(&fields, 4).and_then(|f| f.as_str()).unwrap_or("");
+            let sz = find_field(&fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
+            if !fname.is_empty() {
+                format!(" file='{}' (sz={}B)", fname, sz)
+            } else {
+                format!(" sz={}B", sz)
+            }
+        }
+        RPC_BEGIN_BATCH => {
+            let build = find_field(&fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
+            format!(" build_id={}", build)
+        }
+        RPC_COMPLETE_BATCH => {
+            let batch_id = find_field(&fields, 2).and_then(|f| f.as_u64()).unwrap_or(0);
+            let er = find_field(&fields, 3).and_then(|f| f.as_u64()).unwrap_or(0);
+            format!(" batch_id={} eresult={}", batch_id, er)
+        }
+        _ => String::new(),
+    }
+}
+
 /// Splits a Steam Cloud path like `%WinAppDataLocal%MyGame/save.dat` into
 /// `("%WinAppDataLocal%", "MyGame/save.dat")`. Strips repeated/nested tokens cleanly.
 pub fn split_root_token(raw_filename: &str) -> (String, String) {
@@ -389,5 +444,21 @@ mod tests {
             "Fallback must recover filename from raw payload, got: {}",
             extracted
         );
+    }
+
+    #[test]
+    fn test_extract_rpc_summary() {
+        let mut w = ProtoWriter::new();
+        w.write_varint(1, 100);
+        w.write_varint(2, 42); // synced_cn = 42
+        let bytes = w.into_bytes();
+        assert_eq!(extract_rpc_summary(RPC_GET_CHANGELIST, &bytes), " synced_cn=42");
+
+        let mut w2 = ProtoWriter::new();
+        w2.write_varint(1, 100);
+        w2.write_varint(2, 555); // batch_id = 555
+        w2.write_varint(3, 1);   // eresult = 1
+        let bytes2 = w2.into_bytes();
+        assert_eq!(extract_rpc_summary(RPC_COMPLETE_BATCH, &bytes2), " batch_id=555 eresult=1");
     }
 }

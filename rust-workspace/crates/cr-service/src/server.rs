@@ -323,31 +323,7 @@ pub fn handle_connection(
 }
 
 fn extract_rpc_log_detail(method: &str, req_bytes: &[u8]) -> String {
-    use cr_proto::cloud_messages::{
-        extract_download_filename, RPC_BEGIN_UPLOAD, RPC_COMMIT_UPLOAD, RPC_DELETE_FILE,
-        RPC_FILE_DOWNLOAD,
-    };
-    use cr_proto::wire::{find_field, parse_message};
-
-    let fields = parse_message(req_bytes);
-    if method == RPC_FILE_DOWNLOAD {
-        let fname = extract_download_filename(&fields, req_bytes);
-        if !fname.is_empty() {
-            return format!(" file='{}'", fname);
-        }
-    }
-
-    let field_num = match method {
-        RPC_DELETE_FILE => 2,
-        RPC_COMMIT_UPLOAD => 4,
-        RPC_BEGIN_UPLOAD => 6,
-        _ => return String::new(),
-    };
-    if let Some(fname) = find_field(&fields, field_num).and_then(|f| f.as_str()) {
-        format!(" file='{}'", fname)
-    } else {
-        String::new()
-    }
+    cr_proto::cloud_messages::extract_rpc_summary(method, req_bytes)
 }
 
 fn parse_blob_route(path: &str, prefix: &str) -> Option<(u32, u32, String)> {

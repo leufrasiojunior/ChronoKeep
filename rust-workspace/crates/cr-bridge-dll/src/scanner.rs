@@ -22,7 +22,22 @@ pub unsafe fn resolve_steamclient_symbols(module_base: usize) -> Option<SteamCli
         return None;
     }
 
+    crate::log_debug(&format!(
+        "[Scanner] Escaneando secoes PE em steamclient64.dll (base=0x{:X})...",
+        module_base
+    ));
+
     let (text, rdata, data) = parse_pe_sections(module_base)?;
+    crate::log_debug(&format!(
+        "[Scanner] Secoes PE mapeadas: .text=0x{:X} ({}KB), .rdata=0x{:X} ({}KB), .data=0x{:X} ({}KB)",
+        text.base,
+        text.size / 1024,
+        rdata.base,
+        rdata.size / 1024,
+        data.base,
+        data.size / 1024
+    ));
+
     let transport_vtable = resolve_vtable_by_rtti(
         module_base,
         text,
@@ -30,9 +45,25 @@ pub unsafe fn resolve_steamclient_symbols(module_base: usize) -> Option<SteamCli
         data,
         b".?AVCClientUnifiedServiceTransport@@\0",
     )?;
+    crate::log_debug(&format!(
+        "[Scanner] RTTI VTable localizada em 0x{:X} (RVA 0x{:X})",
+        transport_vtable,
+        transport_vtable - module_base
+    ));
 
     let serialize_to_array = resolve_serialize_to_array(text)?;
+    crate::log_debug(&format!(
+        "[Scanner] SerializeToArray localizado em 0x{:X} (RVA 0x{:X})",
+        serialize_to_array,
+        serialize_to_array - module_base
+    ));
+
     let parse_from_array = resolve_parse_from_array(text, serialize_to_array)?;
+    crate::log_debug(&format!(
+        "[Scanner] ParseFromArray localizado em 0x{:X} (RVA 0x{:X})",
+        parse_from_array,
+        parse_from_array - module_base
+    ));
 
     Some(SteamClientSymbols {
         module_base,
