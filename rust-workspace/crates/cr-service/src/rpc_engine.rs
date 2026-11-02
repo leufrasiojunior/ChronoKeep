@@ -138,7 +138,7 @@ pub fn dispatch_rpc(
         }
         RPC_FILE_DOWNLOAD => {
             let mut guard = engine.lock().ok()?;
-            Some(guard.on_file_download(account_id, resolved_app_id, &fields))
+            Some(guard.on_file_download(account_id, resolved_app_id, &fields, req_bytes))
         }
         RPC_CONFLICT | RPC_TRANSFER_REPORT | RPC_SYNC_STATS => Some((ERESULT_OK, Vec::new())),
         _ => None,
@@ -780,6 +780,61 @@ impl RpcEngine {
             }
         }
 
+        let (_, target_clean) = split_root_token(clean_filename);
+
+        // Fallback: consulta metadados registrados no remotecache.vdf da Steam
+        let vdf_records = self.vault.read_remotecache_records(account_id, app_id);
+        if let Some(rec) = find_record_ci(&vdf_records, clean_filename) {
+            return Some(rec.clone());
+        }
+
+        // Fallback: verifica se o arquivo já reside no disco físico do Vault
+        if let Some(disk_path) = self.vault.resolve_file_disk_path(account_id, app_id, clean_filename) {
+            if let Ok(meta) = std::fs::metadata(&disk_path) {
+                if let Ok(bytes) = std::fs::read(&disk_path) {
+                    let ts = meta
+                        .modified()
+                        .ok()
+                        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or_else(now_unix);
+                    return Some(CloudFileRecord {
+                        filename: target_clean.clone(),
+                        root_token: self.vault.effective_root_token_for_file(account_id, app_id, clean_filename),
+                        sha1: sha1_digest(&bytes),
+                        timestamp: ts,
+                        raw_size: bytes.len() as u64,
+                        persist_state: 0,
+                        platforms_to_sync: 0xFFFF_FFFF,
+                    });
+                }
+            }
+        }
+
+        // Fallback: verifica se o arquivo reside na pasta nativa do jogo (AutoCloud)
+        let root_tok = self.vault.effective_root_token_for_file(account_id, app_id, clean_filename);
+        if let Some(ac_path) = self.vault.resolve_autocloud_local_path(account_id, app_id, &root_tok, clean_filename) {
+            if let Ok(meta) = std::fs::metadata(&ac_path) {
+                if let Ok(bytes) = std::fs::read(&ac_path) {
+                    let ts = meta
+                        .modified()
+                        .ok()
+                        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or_else(now_unix);
+                    return Some(CloudFileRecord {
+                        filename: target_clean,
+                        root_token: root_tok,
+                        sha1: sha1_digest(&bytes),
+                        timestamp: ts,
+                        raw_size: bytes.len() as u64,
+                        persist_state: 0,
+                        platforms_to_sync: 0xFFFF_FFFF,
+                    });
+                }
+            }
+        }
+
         None
     }
 
@@ -894,7 +949,9 @@ impl RpcEngine {
                 }
                 Some((ERESULT_OK, Vec::new()))
             }
-            RPC_FILE_DOWNLOAD => Some(self.on_file_download(account_id, resolved_app_id, &fields)),
+            RPC_FILE_DOWNLOAD => {
+                Some(self.on_file_download(account_id, resolved_app_id, &fields, req_bytes))
+            }
             RPC_DELETE_FILE => {
                 if let Some((_, _, assigned_cn, _)) =
                     self.delete_file_inner(account_id, resolved_app_id, &fields)
@@ -1278,14 +1335,24 @@ impl RpcEngine {
         account_id: u32,
         app_id: u32,
         fields: &[ProtoField<'_>],
+        req_bytes: &[u8],
     ) -> (i32, Vec<u8>) {
-        let raw_filename = find_field(fields, 2).and_then(|f| f.as_str()).unwrap_or("");
-        let (_, clean_name) = split_root_token(raw_filename);
-        if clean_name.is_empty() {
-            return (ERESULT_FAIL, Vec::new());
-        }
+        let raw_filename = cr_proto::cloud_messages::extract_download_filename(fields, req_bytes);
+        let (_, clean_name) = split_root_token(&raw_filename);
+        let effective_name = if !clean_name.is_empty() {
+            clean_name
+        } else if !raw_filename.is_empty() {
+            raw_filename.clone()
+        } else {
+            String::new()
+        };
 
-        let expected = self.lookup_expected_file_record(account_id, app_id, &clean_name);
+        let expected = if !effective_name.is_empty() {
+            self.lookup_expected_file_record(account_id, app_id, &effective_name)
+        } else {
+            None
+        };
+
         let (resolved_name, file_size, sha1, timestamp) = if let Some(entry) = expected {
             (
                 entry.filename,
@@ -1293,15 +1360,33 @@ impl RpcEngine {
                 entry.sha1,
                 entry.timestamp,
             )
-        } else if let Some(bytes) = self.vault.read_save_file(account_id, app_id, &clean_name) {
+        } else if let Some(bytes) = self.vault.read_save_file(account_id, app_id, &effective_name) {
             (
-                clean_name.clone(),
+                effective_name.clone(),
                 bytes.len() as u64,
                 sha1_digest(&bytes),
                 now_unix(),
             )
         } else {
-            return (ERESULT_FAIL, Vec::new());
+            // Em caso de corrida com download da nuvem ou inicialização rápida da Steam:
+            // NÃO retornar ERESULT_FAIL (código 2), pois isso causa "result Timeout / Erro de sincronização" na Steam!
+            // Retorna ERESULT_OK apontando para o endpoint HTTP local. O endpoint /download/ possui
+            // toda a inteligência de espera, pre-warm e download sob demanda do Google Drive.
+            if let Some(ref lp) = self.log_path {
+                crate::lifecycle::log_debug(
+                    lp,
+                    &format!(
+                        "[ClientFileDownload] Arquivo '{}' nao localizado no manifest (app={}); respondendo rota HTTP para pre-warm",
+                        effective_name, app_id
+                    ),
+                );
+            }
+            (
+                effective_name.clone(),
+                0,
+                sha1_digest(&[]),
+                now_unix(),
+            )
         };
 
         let url_host = format!("127.0.0.1:{}", self.listen_port);
@@ -1353,13 +1438,28 @@ impl RpcEngine {
 
 fn find_record_ci<'a>(
     map: &'a HashMap<String, CloudFileRecord>,
-    clean_name: &str,
+    target_name: &str,
 ) -> Option<&'a CloudFileRecord> {
-    map.get(clean_name).or_else(|| {
-        map.iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(clean_name))
-            .map(|(_, v)| v)
-    })
+    let (_, clean_target) = split_root_token(target_name);
+    if let Some(r) = map.get(target_name) {
+        return Some(r);
+    }
+    if !clean_target.is_empty() {
+        if let Some(r) = map.get(&clean_target) {
+            return Some(r);
+        }
+    }
+    map.iter()
+        .find(|(k, _)| {
+            if k.eq_ignore_ascii_case(target_name) {
+                return true;
+            }
+            let (_, clean_k) = split_root_token(k);
+            clean_k.eq_ignore_ascii_case(&clean_target)
+                || clean_k.eq_ignore_ascii_case(target_name)
+                || k.eq_ignore_ascii_case(&clean_target)
+        })
+        .map(|(_, v)| v)
 }
 
 #[cfg(test)]
@@ -1476,5 +1576,54 @@ mod tests {
         assert!(is_only_delta);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_on_file_download_unknown_file_returns_ok_with_prewarm_route() {
+        let (base, vault) = temp_vault("dl_prewarm");
+        let mut engine = RpcEngine::new(vault, 39771, None);
+
+        let mut pw = ProtoWriter::new();
+        pw.write_varint(1, 2868840); // app_id
+        pw.write_str(2, "profile1/saves/history/1793546464.run"); // filename
+        let req_bytes = pw.into_bytes();
+        let fields = parse_message(&req_bytes);
+
+        let (eresult, resp) = engine.on_file_download(12345, 2868840, &fields, &req_bytes);
+        assert_eq!(eresult, ERESULT_OK);
+        assert!(!resp.is_empty());
+
+        let resp_fields = parse_message(&resp);
+        let host = find_field(&resp_fields, 7).and_then(|f| f.as_str()).unwrap();
+        let path = find_field(&resp_fields, 8).and_then(|f| f.as_str()).unwrap();
+        assert_eq!(host, "127.0.0.1:39771");
+        assert!(path.contains("profile1/saves/history/1793546464.run"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_find_record_ci_with_and_without_root_tokens() {
+        let mut records = HashMap::new();
+        records.insert(
+            "saves/prefs.save".to_string(),
+            CloudFileRecord {
+                filename: "saves/prefs.save".to_string(),
+                root_token: "%WinMyDocuments%".to_string(),
+                sha1: [1u8; 20],
+                timestamp: 1000,
+                raw_size: 100,
+                persist_state: 0,
+                platforms_to_sync: 0xFFFF_FFFF,
+            },
+        );
+
+        // Matching direct clean name
+        assert!(find_record_ci(&records, "saves/prefs.save").is_some());
+        // Matching case-insensitive
+        assert!(find_record_ci(&records, "Saves/Prefs.Save").is_some());
+        // Matching with root token prepended in query
+        assert!(find_record_ci(&records, "%WinMyDocuments%/saves/prefs.save").is_some());
+        assert!(find_record_ci(&records, "%winmydocuments%saves/prefs.save").is_some());
     }
 }

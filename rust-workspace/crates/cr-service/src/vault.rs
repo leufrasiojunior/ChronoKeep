@@ -533,6 +533,93 @@ impl VaultStorage {
         out
     }
 
+    pub fn read_remotecache_records(
+        &self,
+        account_id: u32,
+        app_id: u32,
+    ) -> HashMap<String, CloudFileRecord> {
+        let mut out = HashMap::new();
+        let Some(ref steam_root) = self.steam_path else {
+            return out;
+        };
+        let vdf_path = steam_root
+            .join("userdata")
+            .join(account_id.to_string())
+            .join(app_id.to_string())
+            .join("remotecache.vdf");
+        let Ok(content) = fs::read_to_string(vdf_path) else {
+            return out;
+        };
+
+        let app_str = app_id.to_string();
+        let mut current_file: Option<String> = None;
+        let mut cur_root_id: u32 = 0;
+        let mut cur_time: u64 = 0;
+        let mut cur_size: u64 = 0;
+        let mut cur_sha = [0u8; 20];
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "}" {
+                if let Some(fname) = current_file.take() {
+                    let (tok, clean) = cr_proto::cloud_messages::split_root_token(&fname);
+                    if !clean.is_empty() {
+                        let effective_tok = if !tok.is_empty() {
+                            tok
+                        } else {
+                            root_id_to_token(cur_root_id)
+                        };
+                        out.insert(
+                            clean.clone(),
+                            CloudFileRecord {
+                                filename: clean,
+                                root_token: effective_tok,
+                                sha1: cur_sha,
+                                timestamp: cur_time,
+                                raw_size: cur_size,
+                                persist_state: 0,
+                                platforms_to_sync: 0xFFFF_FFFF,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split('"').collect();
+            if parts.len() >= 4 {
+                let key = parts[1];
+                let val = parts[3];
+                if current_file.is_some() {
+                    if key.eq_ignore_ascii_case("root") {
+                        cur_root_id = val.parse::<u32>().unwrap_or(0);
+                    } else if key.eq_ignore_ascii_case("remotetime")
+                        || (key.eq_ignore_ascii_case("time") && cur_time == 0)
+                    {
+                        cur_time = val.parse::<u64>().unwrap_or(0);
+                    } else if key.eq_ignore_ascii_case("size") {
+                        cur_size = val.parse::<u64>().unwrap_or(0);
+                    } else if key.eq_ignore_ascii_case("sha") {
+                        if let Some(vec) = cr_proto::sha1::from_hex(val) {
+                            if vec.len() == 20 {
+                                cur_sha.copy_from_slice(&vec);
+                            }
+                        }
+                    }
+                }
+            } else if parts.len() >= 2 && current_file.is_none() {
+                let key = parts[1];
+                if key != app_str && !key.is_empty() {
+                    current_file = Some(key.to_string());
+                    cur_root_id = 0;
+                    cur_time = 0;
+                    cur_size = 0;
+                    cur_sha = [0u8; 20];
+                }
+            }
+        }
+        out
+    }
+
     fn read_remotecache_metadata(
         &self,
         account_id: u32,
@@ -666,16 +753,37 @@ impl VaultStorage {
 
     pub fn load_manifest_raw(&self, account_id: u32, app_id: u32) -> AppManifest {
         let path = self.manifest_path(account_id, app_id);
-        let Ok(content) = fs::read_to_string(&path) else {
+        let mut content = fs::read_to_string(&path);
+        if content.is_err() && path.exists() {
+            // Mitigação contra corrida de I/O no Windows: reintenta brevemente se o arquivo estiver bloqueado temporariamente
+            for _ in 0..3 {
+                std::thread::sleep(std::time::Duration::from_millis(15));
+                content = fs::read_to_string(&path);
+                if content.is_ok() {
+                    break;
+                }
+            }
+        }
+        let Ok(s) = content else {
             return AppManifest::default();
         };
-        Self::parse_app_manifest_str(&content)
+        Self::parse_app_manifest_str(&s)
     }
 
     pub fn load_cloud_manifest(&self, account_id: u32, app_id: u32) -> Option<AppManifest> {
         let path = self.cloud_manifest_path(account_id, app_id);
-        let content = fs::read_to_string(&path).ok()?;
-        Some(Self::parse_app_manifest_str(&content))
+        let mut content = fs::read_to_string(&path);
+        if content.is_err() && path.exists() {
+            for _ in 0..3 {
+                std::thread::sleep(std::time::Duration::from_millis(15));
+                content = fs::read_to_string(&path);
+                if content.is_ok() {
+                    break;
+                }
+            }
+        }
+        let s = content.ok()?;
+        Some(Self::parse_app_manifest_str(&s))
     }
 
     pub fn save_cloud_manifest(

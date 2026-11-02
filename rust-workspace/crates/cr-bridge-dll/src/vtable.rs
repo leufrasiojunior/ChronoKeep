@@ -90,6 +90,11 @@ pub fn install_vtable_hooks() -> bool {
             return false;
         }
 
+        crate::log_debug(&format!(
+            "[VtHook] steamclient64.dll detectada em 0x{:X}. Resolvendo simbolos...",
+            sc_base
+        ));
+
         let Some(syms) = resolve_steamclient_symbols(sc_base) else {
             log_line("[VtHook] ERRO: Falha ao resolver simbolos RTTI/Protobuf em steamclient64.dll");
             return false;
@@ -101,6 +106,14 @@ pub fn install_vtable_hooks() -> bool {
         FN_PARSE.store(syms.parse_from_array, Ordering::Release);
 
         let vtable_ptr = syms.transport_vtable as *mut usize;
+        crate::log_debug(&format!(
+            "[VtHook] VTable original slots: Slot4=0x{:X}, Slot5=0x{:X}, Slot7=0x{:X}, Slot8=0x{:X}",
+            *vtable_ptr.add(4),
+            *vtable_ptr.add(5),
+            *vtable_ptr.add(7),
+            *vtable_ptr.add(8)
+        ));
+
         let mut old_prot = 0u32;
         if VirtualProtect(
             vtable_ptr.add(4) as *mut std::ffi::c_void,
@@ -132,6 +145,13 @@ pub fn install_vtable_hooks() -> bool {
         );
 
         HOOK_INSTALLED.store(true, Ordering::Release);
+        crate::log_debug(&format!(
+            "[VtHook] Novos slots na vtable: Slot4=0x{:X}, Slot5=0x{:X}, Slot7=0x{:X}, Slot8=0x{:X}",
+            hooked_slot4 as *const () as usize,
+            hooked_slot5 as *const () as usize,
+            hooked_slot7 as *const () as usize,
+            hooked_slot8 as *const () as usize
+        ));
         log_line("[VtHook] Hooks instalados com sucesso nos Slots 4, 5, 7 e 8!");
         true
     }
@@ -213,20 +233,31 @@ unsafe extern "C" fn hooked_slot4(
     };
 
     if !method.starts_with("Cloud.") || !is_handled_cloud_rpc(method) {
+        if crate::is_debug_mode() && method.starts_with("Cloud.") {
+            crate::log_debug(&format!("[Slot4] Metodo Cloud nao tratado: {} -> passthrough", method));
+        }
         return orig(thisptr, method_name, req_body, resp_body, flags);
     }
 
     let Some(req_bytes) = serialize_body(req_body) else {
+        crate::log_debug(&format!("[Slot4] SerializeToArray falhou para {}", method));
         return orig(thisptr, method_name, req_body, resp_body, flags);
     };
 
     let fields = parse_message(&req_bytes);
     let app_id = extract_app_id(method, &fields);
+    let rpc_detail = cr_proto::cloud_messages::extract_rpc_summary(method, &req_bytes);
+
     if is_valve_system_app(app_id) || !is_namespace_app(app_id) {
-        if !is_valve_system_app(app_id) {
+        if is_valve_system_app(app_id) {
+            crate::log_debug(&format!(
+                "[Slot4] Valve system AppID={} ({}) -> passthrough nativo",
+                app_id, method
+            ));
+        } else {
             log_line(&format!(
-                "[Slot4] PASSTHROUGH {} app={} (não é namespace app -> enviado para a Valve)",
-                method, app_id
+                "[Slot4] PASSTHROUGH {} app={}{} (não é namespace app -> enviado para a Valve)",
+                method, app_id, rpc_detail
             ));
         }
         return orig(thisptr, method_name, req_body, resp_body, flags);
@@ -237,21 +268,25 @@ unsafe extern "C" fn hooked_slot4(
     let account_id = get_account_id();
 
     crate::log_debug(&format!(
-        "[Slot4] RPC interceptada: method={} app={} acct={} req_bytes={}B",
-        method, app_id, account_id, req_bytes.len()
+        "[Slot4] RPC interceptada: method={} app={} acct={}{} req_bytes={}B",
+        method, app_id, account_id, rpc_detail, req_bytes.len()
     ));
 
     let (eresult, resp_bytes) =
         match ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes) {
             RpcForwardResult::Handled(er, bytes) => (er, bytes),
             RpcForwardResult::UnhandledPassthrough => {
+                crate::log_debug(&format!(
+                    "[Slot4] Repassando para a Valve por indicacao do daemon: {} app={}",
+                    method, app_id
+                ));
                 return orig(thisptr, method_name, req_body, resp_body, flags);
             }
             RpcForwardResult::TransportError => {
                 // Isolamento estrito de namespace: nunca encaminhar AppID gerenciado (stplug-in/lua) à Valve!
                 log_line(&format!(
-                    "[Slot4] ERRO IPC com chrono-daemon em {} app={} -> retornando ERESULT_FAIL local",
-                    method, app_id
+                    "[Slot4] ERRO IPC com chrono-daemon em {} app={}{} -> retornando ERESULT_FAIL local",
+                    method, app_id, rpc_detail
                 ));
                 if !flags.is_null() {
                     *flags.add(2) = 1;
@@ -265,10 +300,15 @@ unsafe extern "C" fn hooked_slot4(
     if !resp_body.is_null() && !resp_bytes.is_empty() {
         if !parse_into_body(resp_body, &resp_bytes) {
             log_line(&format!(
-                "[Slot4] ERRO: ParseFromArray falhou em {} app={}",
-                method, app_id
+                "[Slot4] ERRO: ParseFromArray falhou em {} app={}{}",
+                method, app_id, rpc_detail
             ));
             return false;
+        } else {
+            crate::log_debug(&format!(
+                "[Slot4] ParseFromArray concluiu com sucesso ({}B)",
+                resp_bytes.len()
+            ));
         }
     }
 
@@ -279,9 +319,10 @@ unsafe extern "C" fn hooked_slot4(
     }
 
     log_line(&format!(
-        "[Slot4] INTERCEPT {} app={} -> eresult={} ({}B)",
+        "[Slot4] INTERCEPT {} app={}{} -> eresult={} ({}B)",
         method,
         app_id,
+        rpc_detail,
         eresult,
         resp_bytes.len()
     ));
@@ -305,22 +346,33 @@ unsafe extern "C" fn hooked_slot5(
     };
 
     if !method.starts_with("Cloud.") || !is_handled_cloud_rpc(method) {
+        if crate::is_debug_mode() && method.starts_with("Cloud.") {
+            crate::log_debug(&format!("[Slot5] Metodo Cloud nao tratado: {} -> passthrough", method));
+        }
         return orig(thisptr, method_name, request_msg, response_msg, flags);
     }
 
     // CProtoBufMsg layout: +40 = header*, +48 = body*
     let req_body = *((request_msg as usize + 48) as *const *mut std::ffi::c_void);
     let Some(req_bytes) = serialize_body(req_body) else {
+        crate::log_debug(&format!("[Slot5] SerializeToArray falhou para {}", method));
         return orig(thisptr, method_name, request_msg, response_msg, flags);
     };
 
     let fields = parse_message(&req_bytes);
     let app_id = extract_app_id(method, &fields);
+    let rpc_detail = cr_proto::cloud_messages::extract_rpc_summary(method, &req_bytes);
+
     if is_valve_system_app(app_id) || !is_namespace_app(app_id) {
-        if !is_valve_system_app(app_id) {
+        if is_valve_system_app(app_id) {
+            crate::log_debug(&format!(
+                "[Slot5] Valve system AppID={} ({}) -> passthrough nativo",
+                app_id, method
+            ));
+        } else {
             log_line(&format!(
-                "[Slot5] PASSTHROUGH {} app={} (não é namespace app -> enviado para a Valve)",
-                method, app_id
+                "[Slot5] PASSTHROUGH {} app={}{} (não é namespace app -> enviado para a Valve)",
+                method, app_id, rpc_detail
             ));
         }
         return orig(thisptr, method_name, request_msg, response_msg, flags);
@@ -349,13 +401,17 @@ unsafe extern "C" fn hooked_slot5(
     let account_id = get_account_id();
 
     crate::log_debug(&format!(
-        "[Slot5] RPC interceptada: method={} app={} acct={} req_bytes={}B",
-        method, app_id, account_id, req_bytes.len()
+        "[Slot5] RPC interceptada: method={} app={} acct={}{} req_bytes={}B",
+        method, app_id, account_id, rpc_detail, req_bytes.len()
     ));
 
     let resp_hdr = *((response_msg as usize + 40) as *const *mut std::ffi::c_void);
     let resp_body = *((response_msg as usize + 48) as *const *mut std::ffi::c_void);
     if resp_hdr.is_null() || resp_body.is_null() {
+        crate::log_debug(&format!(
+            "[Slot5] ERRO: resp_hdr ou resp_body nulo para {}",
+            method
+        ));
         return false;
     }
 
@@ -363,13 +419,17 @@ unsafe extern "C" fn hooked_slot5(
         match ipc::forward_rpc(port, &steam_path, method, app_id, account_id, &req_bytes) {
             RpcForwardResult::Handled(er, bytes) => (er, bytes),
             RpcForwardResult::UnhandledPassthrough => {
+                crate::log_debug(&format!(
+                    "[Slot5] Repassando para a Valve por indicacao do daemon: {} app={}",
+                    method, app_id
+                ));
                 return orig(thisptr, method_name, request_msg, response_msg, flags);
             }
             RpcForwardResult::TransportError => {
                 // Isolamento estrito de namespace: nunca vazar AppID gerenciado para a Valve!
                 log_line(&format!(
-                    "[Slot5] ERRO IPC com chrono-daemon em {} app={} -> retornando ERESULT_FAIL local",
-                    method, app_id
+                    "[Slot5] ERRO IPC com chrono-daemon em {} app={}{} -> retornando ERESULT_FAIL local",
+                    method, app_id, rpc_detail
                 ));
                 (ERESULT_FAIL, Vec::new())
             }
@@ -377,10 +437,15 @@ unsafe extern "C" fn hooked_slot5(
 
     if !resp_bytes.is_empty() && !parse_into_body(resp_body, &resp_bytes) {
         log_line(&format!(
-            "[Slot5] ERRO: ParseFromArray falhou em {} app={}",
-            method, app_id
+            "[Slot5] ERRO: ParseFromArray falhou em {} app={}{}",
+            method, app_id, rpc_detail
         ));
         return false;
+    } else if !resp_bytes.is_empty() {
+        crate::log_debug(&format!(
+            "[Slot5] ParseFromArray concluiu com sucesso ({}B)",
+            resp_bytes.len()
+        ));
     }
 
     // Populate CMsgProtoBufHeader eresult (+216) and error_code (+220) + has_bits (+16)
@@ -397,9 +462,10 @@ unsafe extern "C" fn hooked_slot5(
     }
 
     log_line(&format!(
-        "[Slot5] INTERCEPT {} app={} -> eresult={} ({}B)",
+        "[Slot5] INTERCEPT {} app={}{} -> eresult={} ({}B)",
         method,
         app_id,
+        rpc_detail,
         eresult,
         resp_bytes.len()
     ));
@@ -425,12 +491,25 @@ unsafe extern "C" fn hooked_slot7(
     if let Some(bytes) = serialize_body(body_obj) {
         let fields = parse_message(&bytes);
         let app_id = extract_app_id(method, &fields);
+        let rpc_detail = cr_proto::cloud_messages::extract_rpc_summary(method, &bytes);
         if !is_valve_system_app(app_id) && is_namespace_app(app_id) {
-            crate::log_debug(&format!("[Slot7] Cloud RPC bloqueada para a Valve: method={} app={}", method, app_id));
+            crate::log_debug(&format!(
+                "[Slot7] Cloud RPC bloqueada para a Valve: method={} app={}{}",
+                method, app_id, rpc_detail
+            ));
             if method == RPC_EXIT_SYNC {
+                crate::log_debug(&format!(
+                    "[Slot7] SignalAppExitSyncDone permitido para a Valve (app={})",
+                    app_id
+                ));
                 return orig(thisptr, method_name, body_obj, flags);
             }
             return true;
+        } else if crate::is_debug_mode() && !is_valve_system_app(app_id) {
+            crate::log_debug(&format!(
+                "[Slot7] Passthrough para a Valve: method={} app={}{}",
+                method, app_id, rpc_detail
+            ));
         }
     }
     orig(thisptr, method_name, body_obj, flags)
@@ -455,12 +534,25 @@ unsafe extern "C" fn hooked_slot8(
     if let Some(bytes) = serialize_body(body_obj) {
         let fields = parse_message(&bytes);
         let app_id = extract_app_id(method, &fields);
+        let rpc_detail = cr_proto::cloud_messages::extract_rpc_summary(method, &bytes);
         if !is_valve_system_app(app_id) && is_namespace_app(app_id) {
-            crate::log_debug(&format!("[Slot8] Cloud RPC bloqueada para a Valve: method={} app={}", method, app_id));
+            crate::log_debug(&format!(
+                "[Slot8] Cloud RPC bloqueada para a Valve: method={} app={}{}",
+                method, app_id, rpc_detail
+            ));
             if method == RPC_EXIT_SYNC {
+                crate::log_debug(&format!(
+                    "[Slot8] SignalAppExitSyncDone permitido para a Valve (app={})",
+                    app_id
+                ));
                 return orig(thisptr, method_name, request_msg);
             }
             return true;
+        } else if crate::is_debug_mode() && !is_valve_system_app(app_id) {
+            crate::log_debug(&format!(
+                "[Slot8] Passthrough para a Valve: method={} app={}{}",
+                method, app_id, rpc_detail
+            ));
         }
     }
     orig(thisptr, method_name, request_msg)
