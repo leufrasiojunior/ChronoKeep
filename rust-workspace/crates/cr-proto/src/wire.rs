@@ -94,11 +94,15 @@ pub fn parse_message<'a>(buf: &'a [u8]) -> Vec<ProtoField<'a>> {
                     break;
                 };
                 let len = len as usize;
-                if pos + len > buf.len() {
-                    break;
-                }
-                let slice = &buf[pos..pos + len];
-                pos += len;
+                let slice = if pos + len > buf.len() {
+                    let s = &buf[pos..];
+                    pos = buf.len();
+                    s
+                } else {
+                    let s = &buf[pos..pos + len];
+                    pos += len;
+                    s
+                };
                 WireValue::Bytes(slice)
             }
             5 => {
@@ -191,4 +195,30 @@ impl ProtoWriter {
         self.write_bytes(field_number, sub.as_slice())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_truncated_length_delimited_field() {
+        let mut writer = ProtoWriter::new();
+        writer.write_varint(1, 2868840);
+        writer.write_str(2, "profile1/saves/history/1793546464.run");
+        let full = writer.into_bytes();
+
+        // Simulate truncation by taking fewer bytes than the full message
+        let truncated = &full[..full.len() - 5];
+        let fields = parse_message(truncated);
+        let f2 = find_field(&fields, 2);
+        assert!(f2.is_some(), "Field 2 must be preserved despite truncation");
+        let str_val = f2.unwrap().as_str();
+        assert!(str_val.is_some(), "Must parse as valid string prefix");
+        assert!(
+            str_val.unwrap().starts_with("profile1/saves/history/"),
+            "String must preserve prefix"
+        );
+    }
+}
+
 

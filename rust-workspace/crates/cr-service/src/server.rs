@@ -180,11 +180,12 @@ pub fn handle_connection(
         let req_bytes = &body[off + 8..];
 
         if crate::lifecycle::is_debug_mode() {
+            let detail = extract_rpc_log_detail(&rpc_method, req_bytes);
             crate::lifecycle::log_debug(
                 &log_path,
                 &format!(
-                    "RPC Dispatch detail: method={} app={} acct={} req_bytes={}B",
-                    rpc_method, app_id, account_id, req_bytes.len()
+                    "RPC Dispatch detail: method={} app={} acct={}{} req_bytes={}B",
+                    rpc_method, app_id, account_id, detail, req_bytes.len()
                 ),
             );
         }
@@ -323,17 +324,25 @@ pub fn handle_connection(
 
 fn extract_rpc_log_detail(method: &str, req_bytes: &[u8]) -> String {
     use cr_proto::cloud_messages::{
-        RPC_BEGIN_UPLOAD, RPC_COMMIT_UPLOAD, RPC_DELETE_FILE, RPC_FILE_DOWNLOAD,
+        extract_download_filename, RPC_BEGIN_UPLOAD, RPC_COMMIT_UPLOAD, RPC_DELETE_FILE,
+        RPC_FILE_DOWNLOAD,
     };
     use cr_proto::wire::{find_field, parse_message};
 
+    let fields = parse_message(req_bytes);
+    if method == RPC_FILE_DOWNLOAD {
+        let fname = extract_download_filename(&fields, req_bytes);
+        if !fname.is_empty() {
+            return format!(" file='{}'", fname);
+        }
+    }
+
     let field_num = match method {
-        RPC_FILE_DOWNLOAD | RPC_DELETE_FILE => 2,
+        RPC_DELETE_FILE => 2,
         RPC_COMMIT_UPLOAD => 4,
         RPC_BEGIN_UPLOAD => 6,
         _ => return String::new(),
     };
-    let fields = parse_message(req_bytes);
     if let Some(fname) = find_field(&fields, field_num).and_then(|f| f.as_str()) {
         format!(" file='{}'", fname)
     } else {
