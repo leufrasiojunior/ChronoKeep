@@ -1,0 +1,3426 @@
+//! Tauri IPC commands connecting the modern Fluent UI with the ChronoKeep Rust backend.
+
+use crate::installer::{
+    deploy_component, ensure_opensteamtool_cloud_enabled, is_opensteamtool_cloud_disabled,
+};
+use crate::service_mgr::{
+    is_process_running, kill_process_and_wait, start_service_from_gui,
+    stop_service_from_gui,
+};
+use cr_common::config::{
+    check_daemon_health, detect_default_steam_dir, detect_default_vault_dir, is_gdrive_connected,
+    load_all_local_playtime, load_steam_api_key, resolve_service_port, save_steam_api_key,
+    DEFAULT_SERVICE_PORT,
+};
+use cr_common::fs_utils::{collect_files_recursive, format_size};
+use cr_common::manifest::parse_manifest;
+use cr_common::gdrive::{
+    exchange_code_for_tokens, DEFAULT_GDRIVE_CLIENT_ID as GDRIVE_CLIENT_ID,
+    DEFAULT_GDRIVE_SCOPE as GDRIVE_SCOPE,
+};
+use cr_common::http::{extract_json_str, url_decode, url_encode};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub use crate::embedded::{get_embedded_bridge, get_embedded_daemon};
+
+pub fn is_system_app_id(app_id: u32) -> bool {
+    matches!(
+        app_id,
+        7 | 760 | 228980 | 241100 | 241300 | 250820 | 1070560 | 1391110 | 1628350 | 1826330 | 2180100
+            | 1493710 | 1458870 | 1580130 | 1887720 | 2348520 | 2805730 | 3219800
+    )
+}
+
+pub fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) & 0x3F] as char);
+        out.push(TABLE[(triple >> 12) & 0x3F] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(triple >> 6) & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[triple & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+pub fn find_local_appcache_image(steam_path: &Path, app_id: u32, img_name: &str) -> Option<String> {
+    let appcache_dir = steam_path.join("appcache").join("librarycache");
+    let app_dir = appcache_dir.join(app_id.to_string());
+    if app_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&app_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let candidate = p.join(img_name);
+                    if candidate.is_file() {
+                        if let Ok(bytes) = fs::read(&candidate) {
+                            if !bytes.is_empty() {
+                                let mime = if img_name.ends_with(".png") { "image/png" } else { "image/jpeg" };
+                                return Some(format!("data:{};base64,{}", mime, base64_encode(&bytes)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let direct_candidate = appcache_dir.join(format!("{}_{}", app_id, img_name));
+    if direct_candidate.is_file() {
+        if let Ok(bytes) = fs::read(&direct_candidate) {
+            if !bytes.is_empty() {
+                let mime = if img_name.ends_with(".png") { "image/png" } else { "image/jpeg" };
+                return Some(format!("data:{};base64,{}", mime, base64_encode(&bytes)));
+            }
+        }
+    }
+    None
+}
+
+pub fn get_active_steam_account(steam_path: &Path) -> u32 {
+    let loginusers = steam_path.join("config").join("loginusers.vdf");
+    if let Ok(content) = fs::read_to_string(&loginusers) {
+        let mut best_ts = 0u64;
+        let mut best_id64 = 0u64;
+        let mut current_id64 = 0u64;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 16 {
+                let inner = &trimmed[1..trimmed.len() - 1];
+                if let Ok(id64) = inner.parse::<u64>() {
+                    if id64 > 76561197960265728 {
+                        current_id64 = id64;
+                        if best_id64 == 0 {
+                            best_id64 = id64;
+                        }
+                    }
+                }
+            } else if trimmed.contains("\"MostRecent\"") && trimmed.contains("\"1\"") {
+                if current_id64 > 0 {
+                    return (current_id64 - 76561197960265728) as u32;
+                }
+            } else if trimmed.contains("\"timestamp\"") {
+                if let Some((_, val_part)) = trimmed.split_once("\"timestamp\"") {
+                    let ts_str = val_part.trim().trim_matches('"').trim();
+                    if let Ok(ts) = ts_str.parse::<u64>() {
+                        if ts > best_ts && current_id64 > 0 {
+                            best_ts = ts;
+                            best_id64 = current_id64;
+                        }
+                    }
+                }
+            }
+        }
+        if best_id64 > 76561197960265728 {
+            return (best_id64 - 76561197960265728) as u32;
+        }
+    }
+
+    let userdata_dir = steam_path.join("userdata");
+    if userdata_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&userdata_dir) {
+            let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
+            let mut target = 0u32;
+            for entry in entries.flatten() {
+                if let Ok(acct) = entry.file_name().to_string_lossy().parse::<u32>() {
+                    if acct > 0 {
+                        let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        if target == 0 || mtime > best_mtime {
+                            target = acct;
+                            best_mtime = mtime;
+                        }
+                    }
+                }
+            }
+            return target;
+        }
+    }
+    0
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SystemInfoDto {
+    pub steam_dir: String,
+    pub vault_dir: String,
+    pub opensteamtool_active: bool,
+    pub is_installed: bool,
+    pub version: String,
+    #[serde(default)]
+    pub gui_version: String,
+    #[serde(default)]
+    pub dll_version: String,
+    #[serde(default)]
+    pub daemon_version: String,
+    #[serde(default)]
+    pub os_locale: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConfigDto {
+    pub steam_dir: String,
+    pub vault_dir: String,
+    pub port: u16,
+    pub gdrive_connected: bool,
+    pub max_upload_mb: u64,
+    pub theme: String,
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default = "default_backup_provider")]
+    pub backup_provider: String,
+    #[serde(default)]
+    pub debug_mode: bool,
+}
+
+fn default_language() -> String {
+    "system".to_string()
+}
+
+fn default_backup_provider() -> String {
+    "gdrive".to_string()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ServiceStatusDto {
+    pub online: bool,
+    pub port: u16,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GameSaveItemDto {
+    pub account_id: u32,
+    pub app_id: u32,
+    pub name: String,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub total_size_formatted: String,
+    pub source: String,
+    pub in_local: bool,
+    pub in_cloud: bool,
+    pub origin: String,
+    pub origin_label: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GameCatalogItemDto {
+    pub account_id: u32,
+    pub app_id: u32,
+    pub name: String,
+    pub origin: String,
+    pub origin_label: String,
+    pub in_cloud: bool,
+    pub cloud_status: String,
+    pub last_sync_ts: Option<u64>,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub total_size_formatted: String,
+    pub playtime_minutes: u64,
+    pub last_played_ts: u64,
+    pub cover_url: String,
+    pub hero_url: String,
+    pub header_url: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AchievementItemDto {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub icon: String,
+    pub icon_gray: String,
+    pub unlocked: bool,
+    pub unlock_time: Option<u64>,
+    pub hidden: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GameAchievementsResultDto {
+    pub has_api_key: bool,
+    pub achievements: Vec<AchievementItemDto>,
+    pub total: usize,
+    pub unlocked: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OperationResult {
+    pub success: bool,
+    pub message: String,
+}
+
+pub fn get_gui_prefs_path() -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata).join("ChronoKeep").join("gui_prefs.ini");
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            return parent.join("gui_prefs.ini");
+        }
+    }
+    PathBuf::from("gui_prefs.ini")
+}
+
+pub fn load_preferred_steam_dir() -> String {
+    let prefs_file = get_gui_prefs_path();
+    if let Ok(content) = fs::read_to_string(&prefs_file) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("last_steam_dir") {
+                    let path = v.trim();
+                    if !path.is_empty() && Path::new(path).exists() {
+                        return path.to_string();
+                    }
+                }
+            }
+        }
+    }
+    detect_default_steam_dir()
+}
+
+pub fn save_preferred_steam_dir(steam_dir: &str) {
+    let prefs_file = get_gui_prefs_path();
+    if let Some(parent) = prefs_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut lines = Vec::new();
+    let mut updated = false;
+    if let Ok(content) = fs::read_to_string(&prefs_file) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some((k, _)) = trimmed.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("last_steam_dir") {
+                    lines.push(format!("last_steam_dir={}", steam_dir));
+                    updated = true;
+                    continue;
+                }
+            }
+            if !trimmed.is_empty() {
+                lines.push(trimmed.to_string());
+            }
+        }
+    }
+    if !updated {
+        lines.push(format!("last_steam_dir={}", steam_dir));
+    }
+    let content = lines.join("\r\n") + "\r\n";
+    let _ = fs::write(prefs_file, content);
+}
+
+#[tauri::command]
+pub fn get_system_info() -> SystemInfoDto {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = Path::new(&steam_dir);
+    let vault_dir = detect_default_vault_dir(None).to_string_lossy().into_owned();
+    let lang = crate::i18n::current_lang(Some(s_path));
+    let os_locale = crate::i18n::Lang::detect_os_locale().as_code().to_string();
+
+    let ost_disabled = is_opensteamtool_cloud_disabled(s_path);
+    let opensteamtool_active = s_path.join("opensteamtool.toml").exists() && !ost_disabled;
+
+    let is_installed = (s_path.join("chronokeep.dll").exists()
+        || s_path.join("cloud_redirect.dll").exists())
+        && s_path.join("chrono-daemon.exe").exists();
+
+    let gui_ver = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let daemon_path = s_path.join("chrono-daemon.exe");
+    let daemon_version = crate::updater::detect_daemon_version(&daemon_path, "", &gui_ver, lang);
+
+    let bridge_path = if s_path.join("chronokeep.dll").exists() {
+        s_path.join("chronokeep.dll")
+    } else if s_path.join("cloud_redirect.dll").exists() {
+        s_path.join("cloud_redirect.dll")
+    } else {
+        s_path.join("chronokeep.dll")
+    };
+    let dll_version = crate::updater::detect_bridge_version(&bridge_path, "", &gui_ver, lang);
+
+    SystemInfoDto {
+        steam_dir,
+        vault_dir,
+        opensteamtool_active,
+        is_installed,
+        version: gui_ver.clone(),
+        gui_version: gui_ver,
+        dll_version,
+        daemon_version,
+        os_locale,
+    }
+}
+
+#[tauri::command]
+pub fn get_config() -> ConfigDto {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = Path::new(&steam_dir);
+    let mut vault_dir = detect_default_vault_dir(None).to_string_lossy().into_owned();
+    let mut port = DEFAULT_SERVICE_PORT;
+    let mut max_upload_mb = 512;
+    let mut theme = "system".to_string();
+    let mut backup_provider = "gdrive".to_string();
+    let mut debug_mode = false;
+
+    let ini_path = s_path.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
+                continue;
+            }
+            if let Some((k, v)) = t.split_once('=') {
+                let k = k.trim().to_ascii_lowercase();
+                let v = v.trim();
+                match k.as_str() {
+                    "vault_dir" if !v.is_empty() => vault_dir = v.to_string(),
+                    "port" => port = v.parse().unwrap_or(DEFAULT_SERVICE_PORT),
+                    "max_upload_mb" => max_upload_mb = v.parse().unwrap_or(512),
+                    "theme" => theme = v.to_string(),
+                    "backup_provider" if !v.is_empty() => backup_provider = v.to_string(),
+                    "debug" => debug_mode = v.eq_ignore_ascii_case("true") || v == "1",
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let language = crate::i18n::load_saved_language_pref(Some(s_path));
+    let gdrive_connected = is_gdrive_connected(s_path);
+
+    ConfigDto {
+        steam_dir,
+        vault_dir,
+        port,
+        gdrive_connected,
+        max_upload_mb,
+        theme,
+        language,
+        backup_provider,
+        debug_mode,
+    }
+}
+
+#[tauri::command]
+pub fn set_language(language: String, steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let s_opt = if s_path.exists() { Some(s_path) } else { None };
+    crate::i18n::save_language_pref(&language, s_opt);
+    let lang = crate::i18n::Lang::resolve_preference(&language);
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Idioma atualizado com sucesso.".to_string()
+        } else {
+            "Language updated successfully.".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub fn save_config(cfg: ConfigDto) -> OperationResult {
+    let s_path = Path::new(&cfg.steam_dir);
+    let normalized_lang = crate::i18n::Lang::normalize_pref(&cfg.language);
+    let lang = crate::i18n::Lang::resolve_preference(&normalized_lang);
+
+    if !s_path.exists() {
+        crate::i18n::save_language_pref(&normalized_lang, None);
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                format!("A pasta da Steam não existe: {}", cfg.steam_dir)
+            } else {
+                format!("Steam folder does not exist: {}", cfg.steam_dir)
+            },
+        };
+    }
+
+    let _ = fs::create_dir_all(&cfg.vault_dir);
+
+    let ini_path = s_path.join("chronokeep.ini");
+    let mut lines = Vec::new();
+
+    // Preserva tokens existentes se houver
+    let mut refresh_token = String::new();
+    let mut gdrive_folder_id = String::new();
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                let k = k.trim().to_ascii_lowercase();
+                let v = v.trim();
+                if k == "gdrive_refresh_token" {
+                    refresh_token = v.to_string();
+                } else if k == "gdrive_folder_id" {
+                    gdrive_folder_id = v.to_string();
+                }
+            }
+        }
+    }
+
+    lines.push("# ChronoKeep Configuration".to_string());
+    lines.push(format!("port={}", cfg.port));
+    lines.push(format!("vault_dir={}", cfg.vault_dir));
+    lines.push("dll_name=chronokeep.dll".to_string());
+    lines.push(format!("max_upload_mb={}", cfg.max_upload_mb));
+    lines.push(format!("theme={}", cfg.theme));
+    lines.push(format!("language={}", normalized_lang));
+    lines.push(format!("backup_provider={}", cfg.backup_provider));
+    lines.push(format!("debug={}", cfg.debug_mode));
+
+    if !refresh_token.is_empty() {
+        lines.push(format!("gdrive_refresh_token={}", refresh_token));
+    }
+    if !gdrive_folder_id.is_empty() {
+        lines.push(format!("gdrive_folder_id={}", gdrive_folder_id));
+    }
+
+    let current_port = resolve_service_port(&cfg.steam_dir);
+    let content = lines.join("\r\n") + "\r\n";
+    if fs::write(&ini_path, content).is_ok() {
+        save_preferred_steam_dir(&cfg.steam_dir);
+        crate::i18n::save_language_pref(&normalized_lang, Some(s_path));
+        // Se o daemon estiver ativo (na porta anterior ou na nova), reinicia para aplicar as novas configurações
+        let was_running = check_daemon_health(current_port) || (current_port != cfg.port && check_daemon_health(cfg.port));
+        if was_running {
+            stop_service_from_gui(current_port);
+            if current_port != cfg.port {
+                stop_service_from_gui(cfg.port);
+            }
+            start_service_from_gui(s_path, cfg.port);
+        }
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "Configurações salvas e aplicadas com sucesso!".to_string()
+            } else {
+                "Settings saved and applied successfully!".to_string()
+            },
+        }
+    } else {
+        OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "Falha ao gravar arquivo chronokeep.ini".to_string()
+            } else {
+                "Failed to write chronokeep.ini file".to_string()
+            },
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_service_status(steam_dir: Option<String>) -> ServiceStatusDto {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let port = resolve_service_port(&s_dir);
+    let online = check_daemon_health(port);
+    ServiceStatusDto { online, port }
+}
+
+#[tauri::command]
+pub fn start_service(steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    let port = resolve_service_port(&s_dir);
+
+    if check_daemon_health(port) {
+        return OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                format!("O serviço já está ativo na porta {}", port)
+            } else {
+                format!("Service is already active on port {}", port)
+            },
+        };
+    }
+
+    let started = start_service_from_gui(s_path, port);
+    if started {
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                format!("ChronoKeep Daemon iniciado com sucesso na porta {}!", port)
+            } else {
+                format!("ChronoKeep Daemon started successfully on port {}!", port)
+            },
+        }
+    } else {
+        OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "Falha ao iniciar chrono-daemon.exe. Verifique se o executável existe.".to_string()
+            } else {
+                "Failed to start chrono-daemon.exe. Verify that the executable exists.".to_string()
+            },
+        }
+    }
+}
+
+#[tauri::command]
+pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    let port = resolve_service_port(&s_dir);
+    let stopped = stop_service_from_gui(port);
+    if stopped {
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "ChronoKeep Daemon encerrado.".to_string()
+            } else {
+                "ChronoKeep Daemon stopped.".to_string()
+            },
+        }
+    } else {
+        OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "O serviço já estava desligado ou não respondeu ao comando de parada.".to_string()
+            } else {
+                "Service was already offline or did not respond to the stop command.".to_string()
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DependencyItemDto {
+    pub id: String,
+    pub name: String,
+    pub is_required: bool,
+    pub is_installed: bool,
+    pub status_text: String,
+    pub description: String,
+    pub action_type: String,
+    pub action_target: String,
+    pub action_label: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DependencyReportDto {
+    pub can_install: bool,
+    pub all_ok: bool,
+    pub has_missing_required: bool,
+    pub has_missing_third_party: bool,
+    pub items: Vec<DependencyItemDto>,
+}
+
+pub fn is_vc_redist_x64_installed() -> bool {
+    let sys_root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("WINDIR"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let sys_path = Path::new(&sys_root).join("System32");
+    if sys_path.join("vcruntime140.dll").exists() || sys_path.join("msvcp140.dll").exists() {
+        return true;
+    }
+    if Path::new(r"C:\Windows\System32\vcruntime140.dll").exists()
+        || Path::new(r"C:\Windows\System32\msvcp140.dll").exists()
+    {
+        return true;
+    }
+    false
+}
+
+pub fn is_steam_client_installed(steam_dir: &Path) -> bool {
+    steam_dir.join("steam.exe").exists()
+}
+
+pub fn detect_third_party_tool(steam_dir: &Path) -> (bool, String) {
+    if steam_dir.join("opensteamtool.toml").exists() || steam_dir.join("opensteamtool.dll").exists() {
+        return (true, "OpenSteamTool".to_string());
+    }
+    if steam_dir.join("stplug-in").exists() || steam_dir.join("SteamTools.dll").exists() {
+        return (true, "SteamTools".to_string());
+    }
+    if steam_dir.join("GreenLuma_2024_x86.dll").exists()
+        || steam_dir.join("GreenLuma_2024_x64.dll").exists()
+        || steam_dir.join("AppList").exists()
+    {
+        return (true, "GreenLuma".to_string());
+    }
+    (false, String::new())
+}
+
+#[tauri::command]
+pub fn check_system_dependencies(steam_dir: Option<String>) -> DependencyReportDto {
+    let s_dir = steam_dir
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    let vc_ok = is_vc_redist_x64_installed();
+    let steam_ok = is_steam_client_installed(s_path);
+    let (tp_ok, tp_name) = detect_third_party_tool(s_path);
+
+    let mut items = Vec::new();
+
+    // 1. Microsoft Visual C++ 2015-2022 Redistributable (x64)
+    items.push(DependencyItemDto {
+        id: "vc_redist".to_string(),
+        name: "Microsoft Visual C++ 2015-2022 Redistributable (x64)".to_string(),
+        is_required: true,
+        is_installed: vc_ok,
+        status_text: if vc_ok {
+            if lang.is_pt() { "Instalado".to_string() } else { "Installed".to_string() }
+        } else {
+            if lang.is_pt() { "Ausente".to_string() } else { "Missing".to_string() }
+        },
+        description: if lang.is_pt() {
+            "Biblioteca oficial da Microsoft necessária para as DLLs de sistema e serviço daemon.".to_string()
+        } else {
+            "Official Microsoft runtime library required for system libraries and background daemon service.".to_string()
+        },
+        action_type: if vc_ok { "none".to_string() } else { "download".to_string() },
+        action_target: "https://aka.ms/vs/17/release/vc_redist.x64.exe".to_string(),
+        action_label: if lang.is_pt() {
+            "Baixar da Microsoft (vc_redist.x64.exe)".to_string()
+        } else {
+            "Download from Microsoft (vc_redist.x64.exe)".to_string()
+        },
+    });
+
+    // 2. Cliente Steam
+    items.push(DependencyItemDto {
+        id: "steam".to_string(),
+        name: if lang.is_pt() {
+            "Cliente Steam (steam.exe)".to_string()
+        } else {
+            "Steam Client (steam.exe)".to_string()
+        },
+        is_required: true,
+        is_installed: steam_ok,
+        status_text: if steam_ok {
+            if lang.is_pt() { "Detectado".to_string() } else { "Detected".to_string() }
+        } else {
+            if lang.is_pt() { "Não encontrado".to_string() } else { "Not found".to_string() }
+        },
+        description: if lang.is_pt() {
+            format!("Instalação da Steam necessária para a integração das DLLs e saves (pasta: '{}').", s_dir)
+        } else {
+            format!("Steam installation required for DLL hooking and save management (folder: '{}').", s_dir)
+        },
+        action_type: if steam_ok { "none".to_string() } else { "download".to_string() },
+        action_target: "https://store.steampowered.com/about/".to_string(),
+        action_label: if lang.is_pt() {
+            "Baixar Instalador da Steam".to_string()
+        } else {
+            "Download Steam Installer".to_string()
+        },
+    });
+
+    // 3. Ferramenta de Jogos Externos (OpenSteamTool / SteamTools)
+    items.push(DependencyItemDto {
+        id: "opensteamtool".to_string(),
+        name: if lang.is_pt() {
+            "Ferramenta de Jogos Externos (OpenSteamTool / SteamTools)".to_string()
+        } else {
+            "External Games Tool (OpenSteamTool / SteamTools)".to_string()
+        },
+        is_required: false,
+        is_installed: tp_ok,
+        status_text: if tp_ok {
+            if lang.is_pt() {
+                format!("Detectado ({})", tp_name)
+            } else {
+                format!("Detected ({})", tp_name)
+            }
+        } else {
+            if lang.is_pt() {
+                "Não detectado (Dependência de Terceiros)".to_string()
+            } else {
+                "Not detected (Third-Party Dependency)".to_string()
+            }
+        },
+        description: if lang.is_pt() {
+            "O ChronoKeep atua gerenciando a nuvem para jogos externos adicionados por essas ferramentas. Esta é uma dependência de terceiros — pesquise pelo termo na internet para obter e instalar separadamente caso deseje gerenciar jogos externos.".to_string()
+        } else {
+            "ChronoKeep manages cloud sync for external games added through these tools. This is a third-party dependency — search for the term online to obtain and install it separately if you wish to manage external games.".to_string()
+        },
+        action_type: if tp_ok { "none".to_string() } else { "search".to_string() },
+        action_target: "https://www.google.com/search?q=OpenSteamTool".to_string(),
+        action_label: if lang.is_pt() {
+            "Pesquisar 'OpenSteamTool'".to_string()
+        } else {
+            "Search 'OpenSteamTool'".to_string()
+        },
+    });
+
+    let can_install = vc_ok && steam_ok;
+    let all_ok = can_install && tp_ok;
+    let has_missing_required = !can_install;
+    let has_missing_third_party = !tp_ok;
+
+    DependencyReportDto {
+        can_install,
+        all_ok,
+        has_missing_required,
+        has_missing_third_party,
+        items,
+    }
+}
+
+// TODO: Possibilidade de atualizar individualmente o daemon, a dll e o executavel:
+// - Atualizar somente o daemon (chrono-daemon.exe) sem reiniciar o Steam se a DLL nao mudou.
+// - Atualizar somente a DLL (chronokeep.dll / cloud_redirect.dll).
+// - Auto-atualizacao do proprio executavel do painel (ChronoKeep.exe).
+#[tauri::command]
+pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResult {
+    let s_path = Path::new(&steam_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    // Verificação de dependências obrigatórias
+    let report = check_system_dependencies(Some(steam_dir.clone()));
+    if report.has_missing_required {
+        let missing_names: Vec<&str> = report
+            .items
+            .iter()
+            .filter(|it| it.is_required && !it.is_installed)
+            .map(|it| it.name.as_str())
+            .collect();
+        let missing_str = missing_names.join(", ");
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                format!("Instalação bloqueada: Dependências obrigatórias ausentes ({missing_str}). Por favor, instale-as antes de continuar.")
+            } else {
+                format!("Installation blocked: Missing required dependencies ({missing_str}). Please install them before proceeding.")
+            },
+        };
+    }
+    if !s_path.exists() {
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "A pasta da Steam informada não foi encontrada.".to_string()
+            } else {
+                "The specified Steam folder was not found.".to_string()
+            },
+        };
+    }
+
+    let _ = fs::create_dir_all(&vault_dir);
+
+    // Encerra Steam se em execução para evitar bloqueio ao sobrescrever a DLL carregada
+    let steam_was_running = is_process_running("steam.exe");
+    if steam_was_running {
+        kill_process_and_wait("steam.exe", 5000);
+    }
+
+    // Encerra daemon se ativo
+    kill_process_and_wait("chrono-daemon.exe", 2000);
+
+    // Deploy dos binários
+    let dll_ok = deploy_component(
+        &s_path.join("chronokeep.dll"),
+        "chronokeep.dll",
+        get_embedded_bridge(),
+    );
+    let _ = deploy_component(
+        &s_path.join("cloud_redirect.dll"),
+        "cloud_redirect.dll",
+        get_embedded_bridge(),
+    );
+    let daemon_ok = deploy_component(
+        &s_path.join("chrono-daemon.exe"),
+        "chrono-daemon.exe",
+        get_embedded_daemon(),
+    );
+
+    if !dll_ok || !daemon_ok {
+        // TODO: Relaunch steam if it was running before returning error (steam_was_running)
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "Falha ao copiar arquivos para a pasta da Steam. Verifique permissões de gravação.".to_string()
+            } else {
+                "Failed to copy files to the Steam folder. Check write permissions.".to_string()
+            },
+        };
+    }
+
+    // Configuração inicial
+    let port = resolve_service_port(&steam_dir);
+    let saved_lang_pref = crate::i18n::load_saved_language_pref(Some(s_path));
+    let ini_path = s_path.join("chronokeep.ini");
+    if !ini_path.exists() {
+        let ini_content = format!(
+            "# ChronoKeep Setup Configuration\r\n\
+             port={}\r\n\
+             vault_dir={}\r\n\
+             dll_name=chronokeep.dll\r\n\
+             language={}\r\n",
+            port, vault_dir, saved_lang_pref
+        );
+        let _ = fs::write(&ini_path, ini_content);
+    }
+
+    // Ativa [cloud] no opensteamtool.toml se existir
+    ensure_opensteamtool_cloud_enabled(s_path);
+
+    // Salva o diretório da Steam como preferência da GUI
+    save_preferred_steam_dir(&steam_dir);
+
+    // Inicia serviço em segundo plano
+    start_service_from_gui(s_path, port);
+
+    // Relança a Steam se estava aberta antes da instalação
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        crate::service_mgr::launch_steam(s_path);
+    }
+
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "ChronoKeep instalado na Steam com sucesso! O serviço daemon foi iniciado.".to_string()
+        } else {
+            "ChronoKeep installed in Steam successfully! The daemon service has started.".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub fn enable_opensteamtool_cloud(steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    if !s_path.exists() {
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "Diretório da Steam não encontrado.".to_string()
+            } else {
+                "Steam directory not found.".to_string()
+            },
+        };
+    }
+
+    crate::installer::ensure_opensteamtool_cloud_enabled(s_path);
+
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Recurso [cloud] do OpenSteamTool ativado com sucesso em opensteamtool.toml!".to_string()
+        } else {
+            "OpenSteamTool [cloud] feature enabled successfully in opensteamtool.toml!".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub fn get_launch_mode() -> String {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--uninstall") {
+        return "uninstall".to_string();
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(name) = cur.file_name().and_then(|n| n.to_str()) {
+            if name.to_ascii_lowercase().contains("uninstall") {
+                return "uninstall".to_string();
+            }
+        }
+    }
+    "normal".to_string()
+}
+
+#[tauri::command]
+pub fn uninstall_chronokeep(
+    restore_to_steam: bool,
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+    let steam_path = Path::new(&s_dir);
+    let vault_path = Path::new(&v_dir);
+    let lang = crate::i18n::current_lang(Some(steam_path));
+
+    if !steam_path.exists() {
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "A pasta da Steam especificada não foi encontrada.".to_string()
+            } else {
+                "The specified Steam folder was not found.".to_string()
+            },
+        };
+    }
+
+    // 1. Encerra Steam se estiver em execução para descarregar a DLL
+    let steam_was_running = crate::service_mgr::is_process_running("steam.exe");
+    if steam_was_running {
+        crate::service_mgr::kill_process_and_wait("steam.exe", 5000);
+    }
+
+    // 2. Encerra o daemon
+    let port = resolve_service_port(&s_dir);
+    crate::service_mgr::stop_service_from_gui(port);
+    crate::service_mgr::kill_process_and_wait("chrono-daemon.exe", 2000);
+
+    // 3. Se solicitado, restaura os saves mais recentes do Cofre local para a pasta Steam userdata
+    let mut restored_count = 0;
+    if restore_to_steam && vault_path.exists() {
+        if let Ok(entries) = fs::read_dir(vault_path) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if !p.is_dir() { continue; }
+                let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                let Ok(account_id) = acct_str.parse::<u32>() else { continue };
+                if account_id == 0 { continue; }
+
+                if let Ok(apps) = fs::read_dir(&p) {
+                    for app_entry in apps.flatten() {
+                        let app_p = app_entry.path();
+                        if !app_p.is_dir() { continue; }
+                        let Some(app_str) = app_p.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                            continue;
+                        }
+
+                        let files_dir = if app_p.join("files").exists() {
+                            app_p.join("files")
+                        } else {
+                            app_p.clone()
+                        };
+
+                        let steam_remote = steam_path
+                            .join("userdata")
+                            .join(account_id.to_string())
+                            .join(app_id.to_string())
+                            .join("remote");
+
+                        let mut files: Vec<(String, PathBuf)> = Vec::new();
+                        collect_files_recursive(&files_dir, &files_dir, &mut files);
+                        files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                        for (rel_path, src_file) in files {
+                            let dst_file = steam_remote.join(&rel_path);
+                            if let Some(parent) = dst_file.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            if fs::copy(&src_file, &dst_file).is_ok() {
+                                restored_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Deletar os binários do ChronoKeep da pasta da Steam
+    let _ = fs::remove_file(steam_path.join("chronokeep.dll"));
+    let _ = fs::remove_file(steam_path.join("cloud_redirect.dll"));
+    let _ = fs::remove_file(steam_path.join("chrono-daemon.exe"));
+    let _ = fs::remove_file(steam_path.join("chronokeep_bridge.log"));
+    let _ = fs::remove_file(steam_path.join("cloud_redirect.log"));
+    let _ = fs::remove_file(steam_path.join("chrono_daemon.log"));
+
+    // 5. Se a Steam estava rodando, reabre-a
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        crate::service_mgr::launch_steam(steam_path);
+    }
+
+    let mut msg = if lang.is_pt() {
+        "ChronoKeep desinstalado da pasta da Steam com sucesso! Todos os redirecionamentos foram desativados.".to_string()
+    } else {
+        "ChronoKeep uninstalled from the Steam folder successfully! All redirections have been disabled.".to_string()
+    };
+    if restore_to_steam {
+        if lang.is_pt() {
+            msg = format!(
+                "{} Foram copiados {} arquivo(s) de save do Cofre para a pasta local da Steam (userdata).",
+                msg, restored_count
+            );
+        } else {
+            msg = format!(
+                "{} Copied {} save file(s) from the Vault to Steam's local folder (userdata).",
+                msg, restored_count
+            );
+        }
+    } else {
+        if lang.is_pt() {
+            msg = format!(
+                "{} Seus saves locais permanecem preservados no Cofre em: {}.",
+                msg, v_dir
+            );
+        } else {
+            msg = format!(
+                "{} Your local saves remain safely preserved in the Vault at: {}.",
+                msg, v_dir
+            );
+        }
+    }
+
+    OperationResult {
+        success: true,
+        message: msg,
+    }
+}
+
+#[tauri::command]
+pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, String> {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| {
+        if lang.is_pt() {
+            format!("Falha ao abrir porta local: {}", e)
+        } else {
+            format!("Failed to bind local port: {}", e)
+        }
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| {
+            if lang.is_pt() {
+                format!("Falha ao ler porta: {}", e)
+            } else {
+                format!("Failed to read port: {}", e)
+            }
+        })?
+        .port();
+
+    let redirect_uri = format!("http://localhost:{}/callback", port);
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        url_encode(GDRIVE_CLIENT_ID),
+        url_encode(&redirect_uri),
+        url_encode(GDRIVE_SCOPE)
+    );
+
+    // Abre URL no navegador padrão do sistema
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = OsStr::new(&auth_url).encode_wide().chain(std::iter::once(0)).collect();
+        let op: Vec<u16> = OsStr::new("open").encode_wide().chain(std::iter::once(0)).collect();
+        unsafe {
+            crate::win32::ShellExecuteW(0, op.as_ptr(), wide.as_ptr(), std::ptr::null(), std::ptr::null(), 1);
+        }
+    }
+
+    // Escuta callback e valida resultado antes de responder ao navegador
+    let mut exchange_result = None;
+    for stream in listener.incoming().flatten() {
+        let mut s = stream;
+        let _ = s.set_read_timeout(Some(Duration::from_secs(45)));
+        let mut buf = [0u8; 4096];
+        let Ok(n) = s.read(&mut buf) else { break };
+        let req_str = String::from_utf8_lossy(&buf[..n]);
+        let first_line = req_str.lines().next().unwrap_or("");
+        if !first_line.contains("/callback") {
+            let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+            continue;
+        }
+
+        let mut auth_code = None;
+        if let Some(q_idx) = first_line.find('?') {
+            let query_part = first_line[q_idx + 1..].split_whitespace().next().unwrap_or("");
+            for pair in query_part.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    if k == "code" {
+                        auth_code = Some(url_decode(v));
+                    }
+                }
+            }
+        }
+
+        if let Some(code) = auth_code {
+            if let Some(json_resp) = exchange_code_for_tokens(&code, &redirect_uri) {
+                let html = if lang.is_pt() {
+                    "<html><head><meta charset='utf-8'><title>ChronoKeep</title></head>\
+                    <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                    <h1 style='color:#60CDFF;'>ChronoKeep Conectado!</h1>\
+                    <p>Sua conta do Google Drive foi vinculada com sucesso. Você já pode fechar esta aba e voltar ao aplicativo.</p>\
+                    </body></html>"
+                } else {
+                    "<html><head><meta charset='utf-8'><title>ChronoKeep</title></head>\
+                    <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                    <h1 style='color:#60CDFF;'>ChronoKeep Connected!</h1>\
+                    <p>Your Google Drive account has been linked successfully. You may now close this tab and return to the application.</p>\
+                    </body></html>"
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                );
+                let _ = s.write_all(resp.as_bytes());
+                let _ = s.flush();
+                exchange_result = Some(Ok(json_resp));
+                break;
+            } else {
+                let html = if lang.is_pt() {
+                    "<html><head><meta charset='utf-8'><title>ChronoKeep - Erro</title></head>\
+                    <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                    <h1 style='color:#F87171;'>Falha na Vinculação</h1>\
+                    <p>Não foi possível trocar o código de autorização pelos tokens de acesso do Google. Você já pode fechar esta aba e tentar novamente no aplicativo.</p>\
+                    </body></html>"
+                } else {
+                    "<html><head><meta charset='utf-8'><title>ChronoKeep - Error</title></head>\
+                    <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                    <h1 style='color:#F87171;'>Linking Failed</h1>\
+                    <p>Could not exchange the authorization code for Google access tokens. You may close this tab and try again in the application.</p>\
+                    </body></html>"
+                };
+                let resp = format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                );
+                let _ = s.write_all(resp.as_bytes());
+                let _ = s.flush();
+                exchange_result = Some(Err(if lang.is_pt() {
+                    "Falha ao trocar código de autorização por tokens no Google.".to_string()
+                } else {
+                    "Failed to exchange authorization code for Google tokens.".to_string()
+                }));
+                break;
+            }
+        } else {
+            let html = if lang.is_pt() {
+                "<html><head><meta charset='utf-8'><title>ChronoKeep - Cancelado</title></head>\
+                <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                <h1 style='color:#F87171;'>Autorização Cancelada ou Negada</h1>\
+                <p>Nenhum código de autorização foi fornecido pelo Google. Você já pode fechar esta aba e tentar novamente no aplicativo.</p>\
+                </body></html>"
+            } else {
+                "<html><head><meta charset='utf-8'><title>ChronoKeep - Cancelled</title></head>\
+                <body style='background:#18181B;color:#F4F4F5;font-family:Segoe UI,sans-serif;text-align:center;padding-top:80px;'>\
+                <h1 style='color:#F87171;'>Authorization Cancelled or Denied</h1>\
+                <p>No authorization code was provided by Google. You may close this tab and try again in the application.</p>\
+                </body></html>"
+            };
+            let resp = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                html.len(),
+                html
+            );
+            let _ = s.write_all(resp.as_bytes());
+            let _ = s.flush();
+            exchange_result = Some(Err(if lang.is_pt() {
+                "Nenhum código de autorização recebido do navegador.".to_string()
+            } else {
+                "No authorization code received from browser.".to_string()
+            }));
+            break;
+        }
+    }
+
+    let json_resp = match exchange_result {
+        Some(Ok(resp)) => resp,
+        Some(Err(err)) => return Err(err),
+        None => {
+            return Err(if lang.is_pt() {
+                "Tempo limite esgotado aguardando autorização no navegador.".to_string()
+            } else {
+                "Timed out waiting for authorization in browser.".to_string()
+            })
+        }
+    };
+
+    // 1. Persistir o token JSON completo onde o daemon e is_gdrive_connected buscam
+    let token_json_path = s_path.join("chronokeep_gdrive.json");
+    fs::write(&token_json_path, &json_resp).map_err(|e| {
+        if lang.is_pt() {
+            format!(
+                "Falha de permissão ao gravar token em '{}': {}. Execute o ChronoKeep como Administrador ou conceda permissão de escrita.",
+                token_json_path.display(),
+                e
+            )
+        } else {
+            format!(
+                "Permission error writing token to '{}': {}. Run ChronoKeep as Administrator or grant write permissions.",
+                token_json_path.display(),
+                e
+            )
+        }
+    })?;
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            if parent != s_path && parent.join("chrono-daemon.exe").exists() {
+                let _ = fs::write(parent.join("chronokeep_gdrive.json"), &json_resp);
+            }
+        }
+    }
+
+    // 2. Extrair e manter refresh_token em chronokeep.ini para retrocompatibilidade
+    let refresh_token = extract_json_str(&json_resp, "refresh_token");
+    let ini_path = s_path.join("chronokeep.ini");
+    let mut lines = Vec::new();
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        for l in content.lines() {
+            let t = l.trim();
+            if !t.to_ascii_lowercase().starts_with("gdrive_refresh_token") {
+                lines.push(t.to_string());
+            }
+        }
+    }
+    if let Some(rt) = refresh_token {
+        lines.push(format!("gdrive_refresh_token={}", rt));
+    }
+    let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
+
+    // 3. Reiniciar daemon se ativo para reconhecer o novo token imediatamente
+    let port = resolve_service_port(&s_dir);
+    if check_daemon_health(port) {
+        stop_service_from_gui(port);
+        start_service_from_gui(s_path, port);
+    }
+
+    Ok(OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Google Drive vinculado com sucesso!".to_string()
+        } else {
+            "Google Drive linked successfully!".to_string()
+        },
+    })
+}
+
+#[tauri::command]
+pub fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    // 1. Remover entradas do chronokeep.ini
+    let ini_path = s_path.join("chronokeep.ini");
+    if let Ok(content) = fs::read_to_string(&ini_path) {
+        let lines: Vec<String> = content
+            .lines()
+            .filter(|l| {
+                let t = l.trim().to_ascii_lowercase();
+                !t.starts_with("gdrive_refresh_token") && !t.starts_with("gdrive_folder_id")
+            })
+            .map(|s| s.to_string())
+            .collect();
+        let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
+    }
+
+    // 2. Apagar chronokeep_gdrive.json na pasta da Steam
+    let token_json_path = s_path.join("chronokeep_gdrive.json");
+    if token_json_path.exists() {
+        let _ = fs::remove_file(&token_json_path);
+    }
+
+    // 3. Apagar chronokeep_gdrive.json na pasta do executável atual, se existir
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            let p_token = parent.join("chronokeep_gdrive.json");
+            if p_token.exists() {
+                let _ = fs::remove_file(&p_token);
+            }
+        }
+    }
+
+    // 4. Limpar cache em memória de pastas e token do Google Drive
+    cr_common::gdrive::clear_folder_cache();
+    cr_common::gdrive::clear_token_cache();
+
+    // 5. Reiniciar o daemon se ativo para invalidar qualquer TOKEN_CACHE de processo em memória
+    let port = resolve_service_port(&s_dir);
+    if check_daemon_health(port) {
+        stop_service_from_gui(port);
+        start_service_from_gui(s_path, port);
+    }
+
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Conta do Google Drive desconectada com sucesso.".to_string()
+        } else {
+            "Google Drive account disconnected successfully.".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn upload_game_save(
+    app_id: u32,
+    account_id: u32,
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+    sync_stats: Option<bool>,
+) -> OperationResult {
+    let fallback_lang = crate::i18n::current_lang(None);
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
+        let lang = crate::i18n::current_lang(Some(steam_path));
+
+        let effective_acct = if account_id != 0 {
+            account_id
+        } else {
+            get_active_steam_account(steam_path)
+        };
+
+        if effective_acct == 0 {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Nenhuma conta Steam ativa encontrada.".to_string()
+                } else {
+                    "No active Steam account found.".to_string()
+                },
+            };
+        }
+
+        let do_sync_stats = sync_stats.unwrap_or(true);
+        match crate::orphans::upload_single_game_save(steam_path, vault_path, app_id, effective_acct, lang, do_sync_stats) {
+            Ok(count) => OperationResult {
+                success: true,
+                message: if lang.is_pt() {
+                    if do_sync_stats {
+                        if count > 0 {
+                            format!("Sucesso! {} arquivo(s), saves e conquistas do AppID {} sincronizados com o Google Drive.", count, app_id)
+                        } else {
+                            format!("Sucesso! Saves e conquistas do AppID {} sincronizados com o Google Drive.", app_id)
+                        }
+                    } else if count > 0 {
+                        format!("Sucesso! {} arquivo(s) de save do AppID {} sincronizados com o Google Drive.", count, app_id)
+                    } else {
+                        format!("Sucesso! Saves do AppID {} sincronizados com o Google Drive.", app_id)
+                    }
+                } else if do_sync_stats {
+                    if count > 0 {
+                        format!("Success! {} file(s), saves and achievements for AppID {} synced to Google Drive.", count, app_id)
+                    } else {
+                        format!("Success! Saves and achievements for AppID {} synced to Google Drive.", app_id)
+                    }
+                } else if count > 0 {
+                    format!("Success! {} save file(s) for AppID {} synced to Google Drive.", count, app_id)
+                } else {
+                    format!("Success! Saves for AppID {} synced to Google Drive.", app_id)
+                },
+            },
+            Err(err) => OperationResult {
+                success: false,
+                message: err,
+            },
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: if fallback_lang.is_pt() {
+            format!("Erro interno na execução do upload: {}", e)
+        } else {
+            format!("Internal error running upload task: {}", e)
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn sync_game_stats(
+    app_id: u32,
+    account_id: Option<u32>,
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+) -> OperationResult {
+    let fallback_lang = crate::i18n::current_lang(None);
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
+        let lang = crate::i18n::current_lang(Some(steam_path));
+
+        let acct_id = match account_id {
+            Some(a) if a != 0 => a,
+            _ => get_active_steam_account(steam_path),
+        };
+
+        if acct_id == 0 {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Nenhuma conta Steam ativa encontrada.".to_string()
+                } else {
+                    "No active Steam account found.".to_string()
+                },
+            };
+        }
+
+        let token_path = crate::orphans::find_or_create_gdrive_token_file(steam_path);
+        let token = token_path.as_deref().and_then(cr_common::gdrive::refresh_access_token);
+
+        let ok = crate::orphans::sync_game_stats_single(
+            steam_path,
+            vault_path,
+            app_id,
+            acct_id,
+            token.as_deref(),
+        );
+
+        if ok {
+            OperationResult {
+                success: true,
+                message: if lang.is_pt() {
+                    format!("Conquistas e tempo de jogo do AppID {} sincronizados com sucesso!", app_id)
+                } else {
+                    format!("Achievements and playtime for AppID {} synchronized successfully!", app_id)
+                },
+            }
+        } else {
+            OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    format!("Nenhum dado de conquistas ou tempo de jogo encontrado para o AppID {}.", app_id)
+                } else {
+                    format!("No achievements or playtime data found for AppID {}.", app_id)
+                },
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: if fallback_lang.is_pt() {
+            format!("Erro interno na execução da sincronização: {}", e)
+        } else {
+            format!("Internal error running sync task: {}", e)
+        },
+    })
+}
+
+fn get_app_names_cache_path() -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let p = PathBuf::from(appdata).join("ChronoKeep");
+        let _ = fs::create_dir_all(&p);
+        return p.join("app_names_cache.json");
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            return parent.join("app_names_cache.json");
+        }
+    }
+    PathBuf::from("app_names_cache.json")
+}
+
+fn load_app_names_cache() -> HashMap<u32, String> {
+    let p = get_app_names_cache_path();
+    if let Ok(content) = fs::read_to_string(&p) {
+        if let Ok(map) = serde_json::from_str::<HashMap<u32, String>>(&content) {
+            return map;
+        }
+    }
+    HashMap::new()
+}
+
+// TODO: Filtrar placeholders temporarios ("AppID <id>") antes de persistir o cache em disco,
+// permitindo tentar buscar novamente o nome real na Steam Store em varreduras futuras.
+fn save_app_names_cache(cache: &HashMap<u32, String>) {
+    let p = get_app_names_cache_path();
+    if let Ok(content) = serde_json::to_string_pretty(cache) {
+        let _ = fs::write(p, content);
+    }
+}
+
+fn read_game_name_from_manifest(acf_path: &Path) -> Option<String> {
+    if let Ok(content) = fs::read_to_string(acf_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.to_ascii_lowercase().starts_with("\"name\"") {
+                let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
+                if parts.len() >= 2 {
+                    let name = parts[1].trim();
+                    if !name.is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_steam_library_folders(steam_path: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![steam_path.to_path_buf()];
+    let vdf = steam_path.join("steamapps").join("libraryfolders.vdf");
+    if let Ok(content) = fs::read_to_string(&vdf) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.to_ascii_lowercase().starts_with("\"path\"") {
+                let parts: Vec<&str> = line.split('"').filter(|s| !s.trim().is_empty()).collect();
+                if parts.len() >= 2 {
+                    let p = PathBuf::from(parts[1].trim());
+                    if p.exists() && !folders.contains(&p) {
+                        folders.push(p);
+                    }
+                }
+            }
+        }
+    }
+    folders
+}
+
+fn resolve_game_names_batch(
+    app_ids: &[u32],
+    libraries: &[PathBuf],
+    cache: &mut HashMap<u32, String>,
+) {
+    let mut missing = Vec::new();
+
+    // 1. Verificar cache e arquivos .acf locais das bibliotecas Steam (0ms offline)
+    for &app_id in app_ids {
+        if let Some(cached) = cache.get(&app_id) {
+            if !cached.trim().is_empty() {
+                continue;
+            }
+        }
+
+        let mut found_local = None;
+        for lib in libraries {
+            let acf = lib.join("steamapps").join(format!("appmanifest_{}.acf", app_id));
+            if let Some(name) = read_game_name_from_manifest(&acf) {
+                found_local = Some(name);
+                break;
+            }
+        }
+
+        if let Some(name) = found_local {
+            cache.insert(app_id, name);
+        } else {
+            missing.push(app_id);
+        }
+    }
+
+    if missing.is_empty() {
+        return;
+    }
+
+    // 2. Para jogos sem manifesto local e ainda não no cache:
+    // Consulta a Steam Store API com verificação de conectividade. Se a API estiver fora do ar
+    // ou a primeira chamada der timeout/erro, interrompe imediatamente novas requisições nesta sessão
+    // e registra o fallback "AppID <id>" em cache (miss caching), impedindo travamentos seriais.
+    #[cfg(target_os = "windows")]
+    {
+        let mut network_available = true;
+        for app_id in missing {
+            if !network_available {
+                cache.insert(app_id, format!("AppID {}", app_id));
+                continue;
+            }
+            let path = format!("/api/appdetails?appids={}&filters=basic", app_id);
+            if let Some((200, resp)) = cr_common::http::https_request("GET", "store.steampowered.com", &path, &[], &[]) {
+                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&resp) {
+                    if let Some(name) = val.get(&app_id.to_string())
+                        .and_then(|app| app.get("data"))
+                        .and_then(|data| data.get("name"))
+                        .and_then(|n| n.as_str())
+                    {
+                        cache.insert(app_id, name.to_string());
+                        continue;
+                    }
+                }
+                cache.insert(app_id, format!("AppID {}", app_id));
+            } else {
+                network_available = false;
+                cache.insert(app_id, format!("AppID {}", app_id));
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        for app_id in missing {
+            cache.insert(app_id, format!("AppID {}", app_id));
+        }
+    }
+}
+
+fn scan_local_tool_apps(steam_path: &Path) -> HashMap<u32, &'static str> {
+    let mut tool_apps = HashMap::new();
+
+    // 1. Scan config/stplug-in
+    let st_dir = steam_path.join("config").join("stplug-in");
+    if let Ok(entries) = fs::read_dir(st_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "SteamTools");
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Scan config/lua
+    let lua_dir = steam_path.join("config").join("lua");
+    if let Ok(entries) = fs::read_dir(lua_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "SteamTools");
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Scan AppList (GreenLuma)
+    let applist_dir = steam_path.join("AppList");
+    if let Ok(entries) = fs::read_dir(applist_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(app_id) = stem.parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "GreenLuma");
+                    }
+                }
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(app_id) = content.trim().parse::<u32>() {
+                    if app_id > 0 {
+                        tool_apps.insert(app_id, "GreenLuma");
+                    }
+                }
+            }
+        }
+    }
+
+    tool_apps
+}
+
+#[tauri::command]
+pub async fn scan_saves(steam_dir: Option<String>, vault_dir: Option<String>) -> Vec<GameSaveItemDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
+
+        // Map: (account_id, app_id) -> (file_count, total_bytes, source, in_cloud)
+        let mut map: BTreeMap<(u32, u32), (usize, u64, String, bool)> = BTreeMap::new();
+
+        // 1. Escanear Steam userdata
+        let userdata_dir = steam_path.join("userdata");
+        if userdata_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&userdata_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(account_id) = acct_str.parse::<u32>() else { continue };
+                    if account_id == 0 { continue; }
+
+                    if let Ok(apps) = fs::read_dir(&p) {
+                        for app_entry in apps.flatten() {
+                            let app_path = app_entry.path();
+                            if !app_path.is_dir() { continue; }
+                            let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                            let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                            if is_system_app_id(app_id) {
+                                continue;
+                            }
+
+                            let remote_dir = app_path.join("remote");
+                            let mut files: Vec<(String, PathBuf)> = Vec::new();
+                            if remote_dir.exists() {
+                                collect_files_recursive(&remote_dir, &remote_dir, &mut files);
+                            }
+                            if !files.is_empty() {
+                                let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                                map.insert((account_id, app_id), (files.len(), total_bytes, "steam_userdata".to_string(), false));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Escanear Cofre (Vault)
+        if vault_path.exists() {
+            if let Ok(entries) = fs::read_dir(vault_path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(account_id) = acct_str.parse::<u32>() else { continue };
+
+                    if let Ok(apps) = fs::read_dir(&p) {
+                        for app_entry in apps.flatten() {
+                            let app_path = app_entry.path();
+                            if !app_path.is_dir() { continue; }
+                            let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                            let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                            if is_system_app_id(app_id) {
+                                continue;
+                            }
+
+                            let manifest_p = app_path.join("manifest.tsv");
+                            let in_cloud = if manifest_p.exists() {
+                                fs::read_to_string(&manifest_p)
+                                    .map(|c| {
+                                        let m = parse_manifest(&c);
+                                        m.change_number > 0 && !m.files.is_empty()
+                                    })
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            };
+
+                            let files_dir = app_path.join("files");
+                            let scan_target = if files_dir.exists() { &files_dir } else { &app_path };
+                            let mut files: Vec<(String, PathBuf)> = Vec::new();
+                            collect_files_recursive(scan_target, scan_target, &mut files);
+                            files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                            if !files.is_empty() {
+                                let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                                map.entry((account_id, app_id))
+                                    .and_modify(|e| {
+                                        e.0 = e.0.max(files.len());
+                                        e.1 = e.1.max(total_bytes);
+                                        e.2 = "steam_vault".to_string();
+                                        e.3 = e.3 || in_cloud;
+                                    })
+                                    .or_insert((files.len(), total_bytes, "vault_local".to_string(), in_cloud));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let lang = crate::i18n::current_lang(Some(steam_path));
+        let libraries = get_steam_library_folders(steam_path);
+        let tool_apps = scan_local_tool_apps(steam_path);
+        let mut cache = load_app_names_cache();
+
+        let all_app_ids: Vec<u32> = map.keys().map(|(_, app_id)| *app_id).collect();
+        resolve_game_names_batch(&all_app_ids, &libraries, &mut cache);
+
+        let items: Vec<GameSaveItemDto> = map.into_iter()
+            .map(|((account_id, app_id), (file_count, total_bytes, source, in_cloud))| {
+                let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
+                let is_in_steam = source == "steam_userdata" || source == "steam_vault";
+                let (origin, origin_label) = if let Some(&tool_name) = tool_apps.get(&app_id) {
+                    ("tools".to_string(), tool_name.to_string())
+                } else if is_in_steam {
+                    (
+                        "official".to_string(),
+                        if lang.is_pt() {
+                            "Steam Oficial".to_string()
+                        } else {
+                            "Official Steam".to_string()
+                        },
+                    )
+                } else {
+                    (
+                        "vault_only".to_string(),
+                        if lang.is_pt() {
+                            "Arquivado".to_string()
+                        } else {
+                            "Archived".to_string()
+                        },
+                    )
+                };
+
+                GameSaveItemDto {
+                    account_id,
+                    app_id,
+                    name,
+                    file_count,
+                    total_bytes,
+                    total_size_formatted: format_size(total_bytes),
+                    source,
+                    in_local: true,
+                    in_cloud,
+                    origin,
+                    origin_label,
+                }
+            })
+            .collect();
+
+        save_app_names_cache(&cache);
+        items
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn get_logs(log_name: String, max_lines: Option<usize>, steam_dir: Option<String>) -> String {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    let log_file = match log_name.as_str() {
+        "bridge" => s_path.join("chronokeep_bridge.log"),
+        _ => s_path.join("chrono_daemon.log"),
+    };
+
+    if !log_file.exists() {
+        return if lang.is_pt() {
+            format!("[Log '{}' vazio ou ainda não criado em {}]", log_name, log_file.display())
+        } else {
+            format!("[Log '{}' is empty or not created yet at {}]", log_name, log_file.display())
+        };
+    }
+
+    let limit = max_lines.unwrap_or(300);
+    let content = if let Ok(meta) = fs::metadata(&log_file) {
+        if meta.len() > 1024 * 1024 {
+            if let Ok(mut f) = fs::File::open(&log_file) {
+                use std::io::{Read, Seek, SeekFrom};
+                let offset = meta.len().saturating_sub(512 * 1024);
+                let _ = f.seek(SeekFrom::Start(offset));
+                let mut buf = Vec::new();
+                let _ = f.read_to_end(&mut buf);
+                String::from_utf8_lossy(&buf).to_string()
+            } else {
+                fs::read_to_string(&log_file).unwrap_or_default()
+            }
+        } else {
+            fs::read_to_string(&log_file).unwrap_or_default()
+        }
+    } else {
+        fs::read_to_string(&log_file).unwrap_or_default()
+    };
+
+    if content.is_empty() {
+        return if lang.is_pt() {
+            "[Arquivo de log vazio]".to_string()
+        } else {
+            "[Empty log file]".to_string()
+        };
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() <= limit {
+        lines.join("\n")
+    } else {
+        lines[lines.len() - limit..].join("\n")
+    }
+}
+
+#[tauri::command]
+pub fn clear_log(log_name: String, steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    let log_file = match log_name.as_str() {
+        "bridge" => s_path.join("chronokeep_bridge.log"),
+        _ => s_path.join("chrono_daemon.log"),
+    };
+
+    if fs::write(&log_file, "").is_ok() {
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "Arquivo de log limpo com sucesso.".to_string()
+            } else {
+                "Log file cleared successfully.".to_string()
+            },
+        }
+    } else {
+        OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "Falha ao limpar arquivo de log.".to_string()
+            } else {
+                "Failed to clear log file.".to_string()
+            },
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_debug_mode(enabled: bool, steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    let _ = cr_common::config::save_debug_mode(s_path, enabled);
+
+    // Notifica daemon em execução via HTTP
+    let port = resolve_service_port(&s_dir);
+    if check_daemon_health(port) {
+        use std::io::Write;
+        use std::net::{SocketAddr, TcpStream};
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400)) {
+            let body = if enabled { "true" } else { "false" };
+            let req = format!(
+                "POST /v1/config/debug HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                port, body.len(), body
+            );
+            let _ = stream.write_all(req.as_bytes());
+        }
+    }
+
+    OperationResult {
+        success: true,
+        message: if enabled {
+            if lang.is_pt() {
+                "Modo Debug ativado! Logs detalhados em tempo real.".to_string()
+            } else {
+                "Debug Mode enabled! Verbose logs active in real time.".to_string()
+            }
+        } else {
+            if lang.is_pt() {
+                "Modo Debug desativado.".to_string()
+            } else {
+                "Debug Mode disabled.".to_string()
+            }
+        },
+    }
+}
+
+#[tauri::command]
+pub fn open_directory(path: String) -> OperationResult {
+    let lang = crate::i18n::current_lang(None);
+    let p = Path::new(&path);
+    if !p.exists() {
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                format!("Caminho não encontrado: {}", path)
+            } else {
+                format!("Path not found: {}", path)
+            },
+        };
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = OsStr::new(&path).encode_wide().chain(std::iter::once(0)).collect();
+        let op: Vec<u16> = OsStr::new("explore").encode_wide().chain(std::iter::once(0)).collect();
+        unsafe {
+            crate::win32::ShellExecuteW(0, op.as_ptr(), wide.as_ptr(), std::ptr::null(), std::ptr::null(), 1);
+        }
+    }
+
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Pasta aberta no Explorer.".to_string()
+        } else {
+            "Folder opened in Explorer.".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> OperationResult {
+    let lang = crate::i18n::current_lang(None);
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = OsStr::new(&url).encode_wide().chain(std::iter::once(0)).collect();
+        let op: Vec<u16> = OsStr::new("open").encode_wide().chain(std::iter::once(0)).collect();
+        unsafe {
+            crate::win32::ShellExecuteW(0, op.as_ptr(), wide.as_ptr(), std::ptr::null(), std::ptr::null(), 1);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
+
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Link aberto no navegador.".to_string()
+        } else {
+            "Link opened in browser.".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub fn is_steam_running() -> bool {
+    crate::service_mgr::is_process_running("steam.exe")
+}
+
+#[tauri::command]
+pub fn launch_steam() -> OperationResult {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = Path::new(&steam_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    crate::service_mgr::launch_steam(s_path);
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            "Steam iniciada com sucesso.".to_string()
+        } else {
+            "Steam launched successfully.".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn check_for_updates() -> crate::updater::UpdateCheckResult {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = PathBuf::from(&steam_dir);
+    let lang = crate::i18n::current_lang(Some(&s_path));
+    tauri::async_runtime::spawn_blocking(move || crate::updater::check_updates(&s_path, lang))
+        .await
+        .unwrap_or_else(|e| crate::updater::UpdateCheckResult {
+            success: false,
+            message: if lang.is_pt() {
+                format!("Erro ao checar atualizações: {}", e)
+            } else {
+                format!("Error checking for updates: {}", e)
+            },
+            release_tag: String::new(),
+            has_updates: false,
+            components: Vec::new(),
+        })
+}
+
+#[tauri::command]
+pub async fn update_component(
+    component: String,
+    reopen_steam: Option<bool>,
+    steam_was_running: Option<bool>,
+) -> Result<crate::updater::UpdateApplyResult, String> {
+    let steam_dir = load_preferred_steam_dir();
+    let s_path = PathBuf::from(&steam_dir);
+    let lang = crate::i18n::current_lang(Some(&s_path));
+    let should_reopen = reopen_steam.unwrap_or(true);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::updater::apply_update(&component, &s_path, steam_was_running, should_reopen, lang)
+    })
+    .await
+    .map_err(|e| {
+        if lang.is_pt() {
+            format!("Erro na tarefa de atualização: {}", e)
+        } else {
+            format!("Error in update task: {}", e)
+        }
+    })?
+}
+
+pub fn load_api_key_from_gui_prefs() -> Option<String> {
+    let prefs_file = get_gui_prefs_path();
+    if let Ok(content) = fs::read_to_string(&prefs_file) {
+        for line in content.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                if k.trim().eq_ignore_ascii_case("steam_api_key") || k.trim().eq_ignore_ascii_case("api_key") {
+                    let val = v.trim().trim_matches('"').trim_matches('\'').trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn save_api_key_to_gui_prefs(key: &str) {
+    let prefs_file = get_gui_prefs_path();
+    if let Some(parent) = prefs_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut lines = Vec::new();
+    let mut updated = false;
+    let clean_key = key.trim().trim_matches('"').trim_matches('\'').trim();
+    if let Ok(content) = fs::read_to_string(&prefs_file) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some((k, _)) = trimmed.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("steam_api_key") || k.trim().eq_ignore_ascii_case("api_key") {
+                    if !clean_key.is_empty() {
+                        lines.push(format!("steam_api_key={}", clean_key));
+                    }
+                    updated = true;
+                    continue;
+                }
+            }
+            if !trimmed.is_empty() {
+                lines.push(trimmed.to_string());
+            }
+        }
+    }
+    if !updated && !clean_key.is_empty() {
+        lines.push(format!("steam_api_key={}", clean_key));
+    }
+    let content = lines.join("\r\n") + "\r\n";
+    let _ = fs::write(prefs_file, content);
+}
+
+pub fn load_effective_steam_api_key(steam_path: &Path) -> Option<String> {
+    load_steam_api_key(steam_path).or_else(load_api_key_from_gui_prefs)
+}
+
+#[tauri::command]
+pub fn get_steam_api_key(steam_dir: Option<String>) -> Option<String> {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    load_effective_steam_api_key(Path::new(&s_dir))
+}
+
+#[tauri::command]
+pub fn set_steam_api_key(steam_dir: Option<String>, key: String) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+    let clean_key = key.trim().trim_matches('"').trim_matches('\'').trim();
+
+    save_api_key_to_gui_prefs(clean_key);
+    let _ = save_steam_api_key(s_path, clean_key);
+
+    OperationResult {
+        success: true,
+        message: if clean_key.is_empty() {
+            if lang.is_pt() {
+                "Chave da Steam Web API removida com sucesso.".to_string()
+            } else {
+                "Steam Web API key removed successfully.".to_string()
+            }
+        } else if lang.is_pt() {
+            "Chave da Steam Web API salva com sucesso!".to_string()
+        } else {
+            "Steam Web API key saved successfully!".to_string()
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn test_steam_api_key(key: String, steam_dir: Option<String>) -> OperationResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let steam_path = Path::new(&s_dir);
+        let lang = crate::i18n::current_lang(Some(steam_path));
+        let is_pt = lang.is_pt();
+
+        let clean_key = key.trim().trim_matches('"').trim_matches('\'').trim();
+        if clean_key.is_empty() {
+            return OperationResult {
+                success: false,
+                message: if is_pt {
+                    "A chave da API não pode estar vazia.".to_string()
+                } else {
+                    "The API key cannot be empty.".to_string()
+                },
+            };
+        }
+
+        let test_url = format!(
+            "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={}&appid=440&l=english",
+            clean_key
+        );
+
+        match cr_common::http::https_download_url(&test_url, 12_000) {
+            Some((200, _)) => OperationResult {
+                success: true,
+                message: if is_pt {
+                    "✓ Conexão bem-sucedida! Chave da Steam Web API válida e ativa.".to_string()
+                } else {
+                    "✓ Connection successful! Steam Web API key is valid and active.".to_string()
+                },
+            },
+            Some((403, _)) => OperationResult {
+                success: false,
+                message: if is_pt {
+                    "✗ Chave recusada pela Valve (HTTP 403 Forbidden). Verifique se a chave em https://steamcommunity.com/dev/apikey foi copiada corretamente sem espaços.".to_string()
+                } else {
+                    "✗ Key rejected by Valve (HTTP 403 Forbidden). Verify your key at https://steamcommunity.com/dev/apikey without extra spaces.".to_string()
+                },
+            },
+            Some((429, _)) => OperationResult {
+                success: false,
+                message: if is_pt {
+                    "✗ Limite de requisições excedido na Steam Web API (HTTP 429). Aguarde alguns segundos.".to_string()
+                } else {
+                    "✗ Rate limit exceeded on Steam Web API (HTTP 429). Please wait a few seconds.".to_string()
+                },
+            },
+            Some((status, _)) => OperationResult {
+                success: false,
+                message: if is_pt {
+                    format!("✗ A Steam retornou status HTTP {status}.")
+                } else {
+                    format!("✗ Steam returned HTTP status {status}.")
+                },
+            },
+            None => OperationResult {
+                success: false,
+                message: if is_pt {
+                    "✗ Falha de conexão ou tempo limite ao conectar com api.steampowered.com. Verifique sua conexão com a internet.".to_string()
+                } else {
+                    "✗ Connection failed or timed out connecting to api.steampowered.com. Check your internet connection.".to_string()
+                },
+            },
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Erro: {}", e),
+    })
+}
+
+#[tauri::command]
+pub fn open_steam_store(app_id: u32) -> OperationResult {
+    let url = format!("steam://store/{}", app_id);
+    open_url(url)
+}
+
+#[tauri::command]
+pub async fn get_games_catalog(
+    steam_dir: Option<String>,
+    vault_dir: Option<String>,
+    account_id: Option<u32>,
+) -> Vec<GameCatalogItemDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
+        let lang = crate::i18n::current_lang(Some(steam_path));
+
+        // 1. Identify primary account
+        let mut target_account = account_id.unwrap_or(0);
+        let userdata_dir = steam_path.join("userdata");
+        if target_account == 0 && userdata_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&userdata_dir) {
+                let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(acct) = acct_str.parse::<u32>() else { continue };
+                    if acct == 0 { continue; }
+                    let cfg = p.join("config").join("localconfig.vdf");
+                    let mtime = fs::metadata(&cfg).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    if target_account == 0 || mtime > best_mtime {
+                        target_account = acct;
+                        best_mtime = mtime;
+                    }
+                }
+            }
+        }
+        if target_account == 0 && vault_path.exists() {
+            if let Ok(entries) = fs::read_dir(vault_path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    if let Ok(acct) = acct_str.parse::<u32>() {
+                        if acct > 0 {
+                            target_account = acct;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Discover tool apps
+        let tool_apps = scan_local_tool_apps(steam_path);
+
+        // 3. Discover official installed apps
+        let libraries = get_steam_library_folders(steam_path);
+        let mut official_installed: HashSet<u32> = HashSet::new();
+        for lib in &libraries {
+            let steamapps = lib.join("steamapps");
+            if let Ok(entries) = fs::read_dir(&steamapps) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("appmanifest_") && name_str.ends_with(".acf") {
+                        if let Some(id_str) = name_str.strip_prefix("appmanifest_").and_then(|s| s.strip_suffix(".acf")) {
+                            if let Ok(app_id) = id_str.parse::<u32>() {
+                                if app_id != 7 && app_id != 760 && app_id != 241100 && app_id != 241300 {
+                                    official_installed.insert(app_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Discover save files from userdata and vault for target_account
+        let mut save_info: HashMap<u32, (usize, u64, bool, Option<u64>)> = HashMap::new();
+
+        if target_account > 0 {
+            let user_acct_dir = userdata_dir.join(target_account.to_string());
+            if user_acct_dir.exists() {
+                if let Ok(apps) = fs::read_dir(&user_acct_dir) {
+                    for app_entry in apps.flatten() {
+                        let app_path = app_entry.path();
+                        if !app_path.is_dir() { continue; }
+                        let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 { continue; }
+
+                        let remote_dir = app_path.join("remote");
+                        let mut files: Vec<(String, PathBuf)> = Vec::new();
+                        if remote_dir.exists() {
+                            collect_files_recursive(&remote_dir, &remote_dir, &mut files);
+                        }
+                        if !files.is_empty() {
+                            let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                            save_info.insert(app_id, (files.len(), total_bytes, false, None));
+                        }
+                    }
+                }
+            }
+
+            let vault_acct_dir = vault_path.join(target_account.to_string());
+            if vault_acct_dir.exists() {
+                if let Ok(apps) = fs::read_dir(&vault_acct_dir) {
+                    for app_entry in apps.flatten() {
+                        let app_path = app_entry.path();
+                        if !app_path.is_dir() { continue; }
+                        let Some(app_str) = app_path.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 { continue; }
+
+                        let manifest_p = app_path.join("manifest.tsv");
+                        let (in_cloud, last_sync_ts) = if manifest_p.exists() {
+                            if let Ok(c) = fs::read_to_string(&manifest_p) {
+                                let m = parse_manifest(&c);
+                                let is_cloud = m.change_number > 0 && !m.files.is_empty();
+                                let max_file_ts = m.files.values().map(|f| f.timestamp).max().unwrap_or(0);
+                                let sync_ts = if max_file_ts > 0 {
+                                    Some(max_file_ts)
+                                } else if is_cloud {
+                                    fs::metadata(&manifest_p).ok().and_then(|meta| meta.modified().ok())
+                                        .and_then(|st| st.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+                                        .map(|d| d.as_secs())
+                                } else {
+                                    None
+                                };
+                                (is_cloud, sync_ts)
+                            } else {
+                                (false, None)
+                            }
+                        } else {
+                            (false, None)
+                        };
+
+                        let files_dir = app_path.join("files");
+                        let scan_target = if files_dir.exists() { &files_dir } else { &app_path };
+                        let mut files: Vec<(String, PathBuf)> = Vec::new();
+                        collect_files_recursive(scan_target, scan_target, &mut files);
+                        files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                        let total_bytes: u64 = files.iter().map(|(_, p)| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).sum();
+                        save_info.entry(app_id)
+                            .and_modify(|e| {
+                                e.0 = e.0.max(files.len());
+                                e.1 = e.1.max(total_bytes);
+                                e.2 = e.2 || in_cloud;
+                                if last_sync_ts.is_some() {
+                                    e.3 = last_sync_ts;
+                                }
+                            })
+                            .or_insert((files.len(), total_bytes, in_cloud, last_sync_ts));
+                    }
+                }
+            }
+        }
+
+        // 5. Combine all known AppIDs
+        let mut all_app_ids: BTreeSet<u32> = BTreeSet::new();
+        for &app_id in tool_apps.keys() {
+            if !is_system_app_id(app_id) {
+                all_app_ids.insert(app_id);
+            }
+        }
+        for &app_id in &official_installed {
+            if !is_system_app_id(app_id) {
+                all_app_ids.insert(app_id);
+            }
+        }
+        for &app_id in save_info.keys() {
+            if !is_system_app_id(app_id) {
+                all_app_ids.insert(app_id);
+            }
+        }
+
+        let playtime_map = load_all_local_playtime(steam_path, if target_account > 0 { Some(target_account) } else { None });
+        for (&app_id, info) in &playtime_map {
+            if !is_system_app_id(app_id) {
+                if info.playtime_minutes > 0 || info.last_played_ts > 0 {
+                    all_app_ids.insert(app_id);
+                }
+            }
+        }
+
+        // 6. Resolve Names
+        let mut cache = load_app_names_cache();
+        let all_ids_vec: Vec<u32> = all_app_ids.iter().copied().collect();
+        resolve_game_names_batch(&all_ids_vec, &libraries, &mut cache);
+        save_app_names_cache(&cache);
+
+        // 7. Assemble GameCatalogItemDto
+        let mut catalog: Vec<GameCatalogItemDto> = Vec::with_capacity(all_app_ids.len());
+        for app_id in all_app_ids {
+            let name = cache.get(&app_id).cloned().unwrap_or_else(|| format!("AppID {}", app_id));
+            let (origin, origin_label) = if let Some(&tool_name) = tool_apps.get(&app_id) {
+                ("tools".to_string(), tool_name.to_string())
+            } else {
+                (
+                    "official".to_string(),
+                    if lang.is_pt() { "Steam Oficial".to_string() } else { "Official Steam".to_string() },
+                )
+            };
+
+            let (file_count, total_bytes, in_cloud, last_sync_ts) = save_info.get(&app_id).cloned().unwrap_or((0, 0, false, None));
+            let cloud_status = if in_cloud {
+                "synced".to_string()
+            } else if file_count > 0 {
+                "local_only".to_string()
+            } else {
+                "none".to_string()
+            };
+
+            let (playtime_minutes, last_played_ts) = if let Some(info) = playtime_map.get(&app_id) {
+                (info.playtime_minutes, info.last_played_ts)
+            } else {
+                (0, 0)
+            };
+
+            let local_cover = find_local_appcache_image(steam_path, app_id, "library_capsule.jpg")
+                .or_else(|| find_local_appcache_image(steam_path, app_id, "library_600x900.jpg"));
+            let local_hero = find_local_appcache_image(steam_path, app_id, "library_hero.jpg");
+            let local_header = find_local_appcache_image(steam_path, app_id, "library_header.jpg")
+                .or_else(|| find_local_appcache_image(steam_path, app_id, "header.jpg"));
+
+            let cover_url = local_cover.unwrap_or_else(|| {
+                format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_600x900.jpg", app_id)
+            });
+            let hero_url = local_hero.unwrap_or_else(|| {
+                format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_hero.jpg", app_id)
+            });
+            let header_url = local_header.unwrap_or_else(|| {
+                format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{}/header.jpg", app_id)
+            });
+
+            catalog.push(GameCatalogItemDto {
+                account_id: target_account,
+                app_id,
+                name,
+                origin,
+                origin_label,
+                in_cloud,
+                cloud_status,
+                last_sync_ts,
+                file_count,
+                total_bytes,
+                total_size_formatted: format_size(total_bytes),
+                playtime_minutes,
+                last_played_ts,
+                cover_url,
+                hero_url,
+                header_url,
+            });
+        }
+
+        // 8. Default sort: Tools first, then official. Within each group: last_played_ts desc, then in_cloud, then name
+        catalog.sort_by(|a, b| {
+            let a_is_tool = a.origin == "tools";
+            let b_is_tool = b.origin == "tools";
+            match (a_is_tool, b_is_tool) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    if a.last_played_ts != b.last_played_ts {
+                        b.last_played_ts.cmp(&a.last_played_ts)
+                    } else if a.in_cloud != b.in_cloud {
+                        b.in_cloud.cmp(&a.in_cloud)
+                    } else {
+                        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                    }
+                }
+            }
+        });
+
+        catalog
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[allow(dead_code, non_snake_case)]
+#[derive(Deserialize, Debug, Clone)]
+struct LocalCacheAchEntry {
+    strID: String,
+    #[serde(default)]
+    strName: Option<String>,
+    #[serde(default)]
+    strDescription: Option<String>,
+    #[serde(default)]
+    bAchieved: Option<bool>,
+    #[serde(default)]
+    rtUnlocked: Option<u64>,
+    #[serde(default)]
+    strImage: Option<String>,
+    #[serde(default)]
+    strImageGray: Option<String>,
+    #[serde(default)]
+    strIcon: Option<String>,
+    #[serde(default)]
+    strIconGray: Option<String>,
+    #[serde(default)]
+    bHidden: Option<bool>,
+}
+
+impl LocalCacheAchEntry {
+    fn get_icon_raw(&self) -> Option<String> {
+        self.strImage
+            .as_ref()
+            .or(self.strIcon.as_ref())
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+    }
+
+    fn get_icon_gray_raw(&self) -> Option<String> {
+        self.strImageGray
+            .as_ref()
+            .or(self.strIconGray.as_ref())
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .or_else(|| self.get_icon_raw())
+    }
+}
+
+#[allow(dead_code, non_snake_case)]
+#[derive(Deserialize, Debug)]
+struct LocalCacheAchData {
+    #[serde(default)]
+    nTotal: Option<u32>,
+    #[serde(default)]
+    nAchieved: Option<u32>,
+    #[serde(default)]
+    vecHighlight: Option<Vec<LocalCacheAchEntry>>,
+    #[serde(default)]
+    vecAchievedHidden: Option<Vec<LocalCacheAchEntry>>,
+    #[serde(default)]
+    vecUnachieved: Option<Vec<LocalCacheAchEntry>>,
+}
+
+#[allow(dead_code, non_snake_case)]
+#[derive(Deserialize, Debug)]
+struct LocalCacheSection {
+    #[serde(default)]
+    data: Option<LocalCacheAchData>,
+}
+
+fn parse_local_librarycache_achievements(json_str: &str) -> (HashMap<String, (bool, Option<u64>, bool)>, Vec<LocalCacheAchEntry>) {
+    let mut player_map = HashMap::new();
+    let mut all_entries = Vec::new();
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        return (player_map, all_entries);
+    };
+
+    let Some(arr) = val.as_array() else {
+        return (player_map, all_entries);
+    };
+
+    let mut seen = HashSet::new();
+    for item in arr {
+        if let Some(section_arr) = item.as_array() {
+            if section_arr.len() >= 2 && section_arr[0].as_str() == Some("achievements") {
+                if let Ok(section) = serde_json::from_value::<LocalCacheSection>(section_arr[1].clone()) {
+                    if let Some(data) = section.data {
+                        // 1. Unlocked items from vecHighlight and vecAchievedHidden
+                        let mut unlocked_entries = Vec::new();
+                        if let Some(h) = data.vecHighlight {
+                            unlocked_entries.extend(h);
+                        }
+                        if let Some(h) = data.vecAchievedHidden {
+                            unlocked_entries.extend(h);
+                        }
+                        for entry in unlocked_entries {
+                            let achieved = entry.bAchieved.unwrap_or(true);
+                            let unlock_ts = entry.rtUnlocked.filter(|&t| t > 0);
+                            let is_hidden = entry.bHidden.unwrap_or(false);
+                            player_map.insert(entry.strID.clone(), (achieved, unlock_ts, is_hidden));
+                            if seen.insert(entry.strID.clone()) {
+                                all_entries.push(entry);
+                            }
+                        }
+
+                        // 2. Unachieved items from vecUnachieved
+                        if let Some(unach) = data.vecUnachieved {
+                            for entry in unach {
+                                let is_hidden = entry.bHidden.unwrap_or(false);
+                                player_map.insert(entry.strID.clone(), (false, None, is_hidden));
+                                if seen.insert(entry.strID.clone()) {
+                                    all_entries.push(entry);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (player_map, all_entries)
+}
+
+#[derive(Default, Debug, Clone)]
+struct Kv1Node {
+    name: String,
+    str_val: Option<String>,
+    children: Vec<Kv1Node>,
+}
+
+fn read_null_term_str(bytes: &[u8], pos: &mut usize) -> Option<String> {
+    let start = *pos;
+    while *pos < bytes.len() && bytes[*pos] != 0 {
+        *pos += 1;
+    }
+    if *pos >= bytes.len() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&bytes[start..*pos]).to_string();
+    *pos += 1; // skip null byte
+    Some(s)
+}
+
+fn read_kv1_node(bytes: &[u8], pos: &mut usize) -> Option<Kv1Node> {
+    if *pos >= bytes.len() {
+        return None;
+    }
+    let type_byte = bytes[*pos];
+    *pos += 1;
+    if type_byte == 0x08 { // End of table
+        return None;
+    }
+    let name = read_null_term_str(bytes, pos)?;
+    let mut node = Kv1Node {
+        name,
+        str_val: None,
+        children: Vec::new(),
+    };
+    match type_byte {
+        0x00 => { // Subobject / Table
+            while *pos < bytes.len() {
+                if bytes[*pos] == 0x08 {
+                    *pos += 1;
+                    break;
+                }
+                if let Some(child) = read_kv1_node(bytes, pos) {
+                    node.children.push(child);
+                } else {
+                    break;
+                }
+            }
+        }
+        0x01 => { // String
+            let val = read_null_term_str(bytes, pos)?;
+            node.str_val = Some(val);
+        }
+        0x02 | 0x03 | 0x04 | 0x06 => {
+            if *pos + 4 <= bytes.len() {
+                *pos += 4;
+            } else {
+                return None;
+            }
+        }
+        0x05 => { // WString
+            while *pos + 1 < bytes.len() {
+                if bytes[*pos] == 0 && bytes[*pos + 1] == 0 {
+                    *pos += 2;
+                    break;
+                }
+                *pos += 2;
+            }
+        }
+        0x07 => { // UInt64
+            if *pos + 8 <= bytes.len() {
+                *pos += 8;
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    Some(node)
+}
+
+fn get_node_str_localized(node: &Kv1Node, lang: &str) -> Option<String> {
+    if let Some(ref s) = node.str_val {
+        if !s.trim().is_empty() {
+            return Some(s.clone());
+        }
+    }
+    for child in &node.children {
+        if child.name.eq_ignore_ascii_case(lang) {
+            if let Some(ref s) = child.str_val {
+                if !s.trim().is_empty() {
+                    return Some(s.clone());
+                }
+            }
+        }
+    }
+    for child in &node.children {
+        if child.name.eq_ignore_ascii_case("english") {
+            if let Some(ref s) = child.str_val {
+                if !s.trim().is_empty() {
+                    return Some(s.clone());
+                }
+            }
+        }
+    }
+    node.children.iter().find_map(|c| c.str_val.as_ref().filter(|s| !s.trim().is_empty()).cloned())
+}
+
+fn canonicalize_steam_icon_url(app_id: u32, raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    // Upgrade http to https
+    if s.starts_with("http://") {
+        return format!("https://{}", &s[7..]);
+    }
+    if s.starts_with("https://") {
+        return s.to_string();
+    }
+    if s.starts_with("//") {
+        return format!("https:{}", s);
+    }
+    if s.starts_with("/steamcommunity/") {
+        return format!("https://cdn.steamstatic.com{}", s);
+    }
+    if s.starts_with("community_assets/") {
+        return format!("https://shared.akamai.steamstatic.com/{}", s);
+    }
+    if let Some(idx) = s.find("images/apps/") {
+        return format!("https://cdn.steamstatic.com/steamcommunity/public/{}", &s[idx..]);
+    }
+    let filename = if s.contains('.') {
+        s.to_string()
+    } else {
+        format!("{}.jpg", s)
+    };
+    format!("https://cdn.steamstatic.com/steamcommunity/public/images/apps/{}/{}", app_id, filename)
+}
+
+fn extract_kv1_achievement(
+    ach: &Kv1Node,
+    lang: &str,
+    map: &mut HashMap<String, (String, String, Option<String>, Option<String>)>,
+) {
+    let mut id = None;
+    let mut display_name = None;
+    let mut desc = None;
+    let mut icon = None;
+    let mut icon_gray = None;
+
+    for c in &ach.children {
+        if c.name.eq_ignore_ascii_case("name") {
+            id = c.str_val.clone();
+        } else if c.name.eq_ignore_ascii_case("icon") {
+            icon = c.str_val.clone();
+        } else if c.name.eq_ignore_ascii_case("icon_gray") || c.name.eq_ignore_ascii_case("icongray") {
+            icon_gray = c.str_val.clone();
+        } else if c.name.eq_ignore_ascii_case("display") {
+            for dc in &c.children {
+                if dc.name.eq_ignore_ascii_case("name") {
+                    display_name = get_node_str_localized(dc, lang);
+                } else if dc.name.eq_ignore_ascii_case("desc") {
+                    desc = get_node_str_localized(dc, lang);
+                } else if dc.name.eq_ignore_ascii_case("icon") {
+                    icon = dc.str_val.clone().or_else(|| get_node_str_localized(dc, lang));
+                } else if dc.name.eq_ignore_ascii_case("icon_gray") || dc.name.eq_ignore_ascii_case("icongray") {
+                    icon_gray = dc.str_val.clone().or_else(|| get_node_str_localized(dc, lang));
+                }
+            }
+        }
+    }
+
+    if let Some(ach_id) = id {
+        if display_name.is_some() || desc.is_some() || icon.is_some() || icon_gray.is_some() {
+            map.insert(
+                ach_id,
+                (
+                    display_name.unwrap_or_default(),
+                    desc.unwrap_or_default(),
+                    icon,
+                    icon_gray,
+                ),
+            );
+        }
+    }
+}
+
+fn parse_kv1_achievements_schema(
+    bytes: &[u8],
+    lang: &str,
+) -> HashMap<String, (String, String, Option<String>, Option<String>)> {
+    let mut map = HashMap::new();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if let Some(root) = read_kv1_node(bytes, &mut pos) {
+            let mut stats_node = None;
+            if root.name.eq_ignore_ascii_case("stats") {
+                stats_node = Some(&root);
+            } else {
+                for c in &root.children {
+                    if c.name.eq_ignore_ascii_case("stats") {
+                        stats_node = Some(c);
+                        break;
+                    }
+                }
+            }
+            if let Some(stats) = stats_node {
+                for stat in &stats.children {
+                    let mut bits_candidates = Vec::new();
+                    for c in &stat.children {
+                        if c.name.eq_ignore_ascii_case("bits") {
+                            bits_candidates.push(c);
+                        }
+                    }
+                    if !bits_candidates.is_empty() {
+                        for bits in bits_candidates {
+                            for ach in &bits.children {
+                                extract_kv1_achievement(ach, lang, &mut map);
+                            }
+                        }
+                    } else {
+                        extract_kv1_achievement(stat, lang, &mut map);
+                    }
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    map
+}
+
+#[tauri::command]
+pub async fn resolve_game_cover_url(app_id: u32, steam_dir: Option<String>) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let steam_path = Path::new(&s_dir);
+        if let Some(img) = find_local_appcache_image(steam_path, app_id, "library_capsule.jpg")
+            .or_else(|| find_local_appcache_image(steam_path, app_id, "library_600x900.jpg"))
+            .or_else(|| find_local_appcache_image(steam_path, app_id, "library_header.jpg"))
+            .or_else(|| find_local_appcache_image(steam_path, app_id, "header.jpg")) {
+            return Some(img);
+        }
+
+        let url = format!("https://store.steampowered.com/api/appdetails?appids={}", app_id);
+        if let Some((200, bytes)) = cr_common::http::https_download_url(&url, 5_000) {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Some(app_obj) = val.get(&app_id.to_string()) {
+                    if let Some(data) = app_obj.get("data") {
+                        if let Some(hdr) = data.get("header_image").and_then(|v| v.as_str()) {
+                            return Some(hdr.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None)
+}
+
+#[tauri::command]
+pub async fn get_game_achievements(
+    app_id: u32,
+    steam_dir: Option<String>,
+    lang: Option<String>,
+) -> GameAchievementsResultDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let steam_path = Path::new(&s_dir);
+
+        let lang_str = lang.as_deref().unwrap_or("").to_lowercase();
+        let is_pt = if !lang_str.is_empty() {
+            lang_str.starts_with("pt")
+        } else {
+            crate::i18n::current_lang(Some(steam_path)).is_pt()
+        };
+        let lang_param = if is_pt { "brazilian" } else { "english" };
+
+        let target_account = get_active_steam_account(steam_path);
+
+        // 1. Check local librarycache JSON for user's actual achievements & unlock times
+        let mut player_map: HashMap<String, (bool, Option<u64>, bool)> = HashMap::new();
+        let mut local_achievements: Vec<LocalCacheAchEntry> = Vec::new();
+        if target_account > 0 {
+            let cache_file = steam_path
+                .join("userdata")
+                .join(target_account.to_string())
+                .join("config")
+                .join("librarycache")
+                .join(format!("{}.json", app_id));
+            if cache_file.is_file() {
+                if let Ok(c) = fs::read_to_string(&cache_file) {
+                    let (pm, entries) = parse_local_librarycache_achievements(&c);
+                    player_map = pm;
+                    local_achievements = entries;
+                }
+            }
+        }
+
+        // If not found in target_account, check all user accounts in userdata/
+        if local_achievements.is_empty() {
+            let u_dir = steam_path.join("userdata");
+            if let Ok(entries) = fs::read_dir(&u_dir) {
+                for entry in entries.flatten() {
+                    let cache_file = entry.path().join("config").join("librarycache").join(format!("{}.json", app_id));
+                    if cache_file.is_file() {
+                        if let Ok(c) = fs::read_to_string(&cache_file) {
+                            let (pm, entries) = parse_local_librarycache_achievements(&c);
+                            if !entries.is_empty() {
+                                player_map = pm;
+                                local_achievements = entries;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let api_key = match load_effective_steam_api_key(steam_path) {
+            Some(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
+            _ => None,
+        };
+
+        let mut web_api_error: Option<String> = None;
+
+        // 2. If API Key is present, query Web API schema
+        if let Some(ref key) = api_key {
+            let clean_key = key.trim().trim_matches('"').trim_matches('\'').trim();
+            let schema_url = format!(
+                "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={}&appid={}&l={}",
+                clean_key, app_id, lang_param
+            );
+
+            match cr_common::http::https_download_url(&schema_url, 15_000) {
+                Some((200, schema_bytes)) => {
+                    #[allow(dead_code, non_snake_case)]
+                    #[derive(Deserialize)]
+                    struct SchemaAchievement {
+                        name: String,
+                        #[serde(default)]
+                        displayName: Option<String>,
+                        #[serde(default)]
+                        description: Option<String>,
+                        #[serde(default)]
+                        icon: Option<String>,
+                        #[serde(default)]
+                        icongray: Option<String>,
+                        #[serde(default)]
+                        hidden: Option<u32>,
+                    }
+                    #[allow(dead_code, non_snake_case)]
+                    #[derive(Deserialize)]
+                    struct SchemaStats {
+                        #[serde(default)]
+                        achievements: Option<Vec<SchemaAchievement>>,
+                    }
+                    #[allow(dead_code, non_snake_case)]
+                    #[derive(Deserialize)]
+                    struct SchemaGame {
+                        #[serde(default)]
+                        availableGameStats: Option<SchemaStats>,
+                    }
+                    #[allow(dead_code)]
+                    #[derive(Deserialize)]
+                    struct SchemaRoot {
+                        #[serde(default)]
+                        game: Option<SchemaGame>,
+                    }
+
+                    if let Ok(schema) = serde_json::from_slice::<SchemaRoot>(&schema_bytes) {
+                        let has_game_obj = schema.game.is_some();
+                        if let Some(schema_achievements) = schema.game.and_then(|g| g.availableGameStats).and_then(|s| s.achievements) {
+                            if !schema_achievements.is_empty() {
+                                // Also try GetPlayerAchievements if public
+                                if target_account > 0 {
+                                    let steamid64 = 76561197960265728u64 + (target_account as u64);
+                                    let player_url = format!(
+                                        "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/?appid={}&key={}&steamid={}&l={}",
+                                        app_id, clean_key, steamid64, lang_param
+                                    );
+                                    if let Some((200, pbytes)) = cr_common::http::https_download_url(&player_url, 10_000) {
+                                        #[allow(dead_code)]
+                                        #[derive(Deserialize)]
+                                        struct PlayerAchEntry {
+                                            apiname: String,
+                                            #[serde(default)]
+                                            achieved: u32,
+                                            #[serde(default)]
+                                            unlocktime: u64,
+                                        }
+                                        #[allow(dead_code)]
+                                        #[derive(Deserialize)]
+                                        struct PlayerStats {
+                                            #[serde(default)]
+                                            achievements: Option<Vec<PlayerAchEntry>>,
+                                        }
+                                        #[allow(dead_code)]
+                                        #[derive(Deserialize)]
+                                        struct PlayerRoot {
+                                            #[serde(default)]
+                                            playerstats: Option<PlayerStats>,
+                                        }
+                                        if let Ok(proot) = serde_json::from_slice::<PlayerRoot>(&pbytes) {
+                                            if let Some(list) = proot.playerstats.and_then(|ps| ps.achievements) {
+                                                for item in list {
+                                                    let unlocked = item.achieved == 1;
+                                                    let ts = if unlocked && item.unlocktime > 0 { Some(item.unlocktime) } else { None };
+                                                    player_map.entry(item.apiname)
+                                                        .and_modify(|e| {
+                                                            e.0 = e.0 || unlocked;
+                                                            if ts.is_some() { e.1 = ts; }
+                                                        })
+                                                        .or_insert((unlocked, ts, false));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                let mut local_meta_map: HashMap<String, (Option<String>, Option<String>, Option<String>, Option<String>)> = HashMap::new();
+                                for entry in &local_achievements {
+                                    let n = entry.strName.as_ref().filter(|s| !s.trim().is_empty()).cloned();
+                                    let d = entry.strDescription.as_ref().filter(|s| !s.trim().is_empty()).cloned();
+                                    let icon = entry.get_icon_raw();
+                                    let icon_gray = entry.get_icon_gray_raw();
+                                    if n.is_some() || d.is_some() || icon.is_some() || icon_gray.is_some() {
+                                        local_meta_map.insert(entry.strID.clone(), (n, d, icon, icon_gray));
+                                    }
+                                }
+
+                                // Also check UserGameStatsSchema_<app_id>.bin in steam_path/appcache/stats/
+                                let schema_bin_candidates = [
+                                    steam_path.join("appcache").join("stats").join(format!("UserGameStatsSchema_{}.bin", app_id)),
+                                    steam_path.join("appcache").join(format!("UserGameStatsSchema_{}.bin", app_id)),
+                                ];
+                                for bin_p in schema_bin_candidates {
+                                    if bin_p.is_file() {
+                                        if let Ok(bytes) = fs::read(&bin_p) {
+                                            let bin_meta = parse_kv1_achievements_schema(&bytes, lang_param);
+                                            for (id, (n, d, icon, icon_gray)) in bin_meta {
+                                                let entry = local_meta_map.entry(id).or_insert((None, None, None, None));
+                                                if entry.0.is_none() && !n.is_empty() {
+                                                    entry.0 = Some(n);
+                                                }
+                                                if entry.1.is_none() && !d.is_empty() {
+                                                    entry.1 = Some(d);
+                                                }
+                                                if entry.2.is_none() && icon.is_some() {
+                                                    entry.2 = icon;
+                                                }
+                                                if entry.3.is_none() && icon_gray.is_some() {
+                                                    entry.3 = icon_gray;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                let mut result_items: Vec<AchievementItemDto> = Vec::new();
+                                let mut unlocked_count = 0;
+
+                                for s in schema_achievements {
+                                    let (is_unlocked, unlock_ts, local_hidden) = player_map
+                                        .get(&s.name)
+                                        .cloned()
+                                        .unwrap_or((false, None, false));
+                                    if is_unlocked {
+                                        unlocked_count += 1;
+                                    }
+                                    let is_hidden = s.hidden.unwrap_or(0) == 1 || local_hidden;
+
+                                    let (local_name, local_desc, local_icon, local_icon_gray) = local_meta_map
+                                        .get(&s.name)
+                                        .cloned()
+                                        .unwrap_or((None, None, None, None));
+
+                                    let display_name = s.displayName
+                                        .filter(|n| !n.trim().is_empty())
+                                        .or(local_name)
+                                        .unwrap_or_else(|| s.name.clone());
+
+                                    let description = s.description
+                                        .filter(|d| !d.trim().is_empty())
+                                        .or(local_desc)
+                                        .unwrap_or_default();
+
+                                    let raw_icon = s.icon
+                                        .filter(|i| !i.trim().is_empty())
+                                        .or(local_icon)
+                                        .unwrap_or_default();
+
+                                    let raw_icon_gray = s.icongray
+                                        .filter(|i| !i.trim().is_empty())
+                                        .or(local_icon_gray)
+                                        .unwrap_or_else(|| raw_icon.clone());
+
+                                    let final_icon = canonicalize_steam_icon_url(app_id, &raw_icon);
+                                    let final_icon_gray = canonicalize_steam_icon_url(app_id, &raw_icon_gray);
+
+                                    result_items.push(AchievementItemDto {
+                                        name: s.name,
+                                        display_name,
+                                        description,
+                                        icon: final_icon,
+                                        icon_gray: final_icon_gray,
+                                        unlocked: is_unlocked,
+                                        unlock_time: unlock_ts,
+                                        hidden: is_hidden,
+                                    });
+                                }
+
+                                result_items.sort_by(|a, b| {
+                                    match (a.unlocked, b.unlocked) {
+                                        (true, false) => std::cmp::Ordering::Less,
+                                        (false, true) => std::cmp::Ordering::Greater,
+                                        (true, true) => b.unlock_time.unwrap_or(0).cmp(&a.unlock_time.unwrap_or(0)),
+                                        (false, false) => a.display_name.cmp(&b.display_name),
+                                    }
+                                });
+
+                                let total = result_items.len();
+                                return GameAchievementsResultDto {
+                                    has_api_key: true,
+                                    achievements: result_items,
+                                    total,
+                                    unlocked: unlocked_count,
+                                    error: None,
+                                };
+                            }
+                        }
+
+                        // If response was 200 OK and schema exists but achievements list is empty,
+                        // this means the game has 0 achievements on Steam.
+                        if has_game_obj {
+                            return GameAchievementsResultDto {
+                                has_api_key: true,
+                                achievements: Vec::new(),
+                                total: 0,
+                                unlocked: 0,
+                                error: None,
+                            };
+                        }
+                    }
+                }
+                Some((403, _)) => {
+                    web_api_error = Some(if is_pt {
+                        "A chave da Steam Web API foi recusada (HTTP 403 Forbidden). Verifique se a chave em https://steamcommunity.com/dev/apikey foi copiada corretamente sem espaços.".to_string()
+                    } else {
+                        "Steam Web API key was rejected (HTTP 403 Forbidden). Please verify your key at https://steamcommunity.com/dev/apikey without extra spaces.".to_string()
+                    });
+                }
+                Some((400, _)) => {
+                    web_api_error = Some(if is_pt {
+                        format!("O AppID {} não possui esquema de conquistas registrado na Steam Web API (HTTP 400 Bad Request).", app_id)
+                    } else {
+                        format!("AppID {} does not have an achievements schema on Steam Web API (HTTP 400 Bad Request).", app_id)
+                    });
+                }
+                Some((404, _)) => {
+                    web_api_error = Some(if is_pt {
+                        format!("AppID {} não encontrado na Steam (HTTP 404 Not Found).", app_id)
+                    } else {
+                        format!("AppID {} not found on Steam (HTTP 404 Not Found).", app_id)
+                    });
+                }
+                Some((429, _)) => {
+                    web_api_error = Some(if is_pt {
+                        "Limite de requisições excedido na Steam Web API (HTTP 429 Too Many Requests). Aguarde alguns instantes.".to_string()
+                    } else {
+                        "Steam Web API rate limit exceeded (HTTP 429 Too Many Requests). Please wait a moment.".to_string()
+                    });
+                }
+                Some((status, _)) => {
+                    web_api_error = Some(if is_pt {
+                        format!("A Steam retornou erro HTTP {status} ao consultar as conquistas do jogo {}.", app_id)
+                    } else {
+                        format!("Steam returned HTTP error {status} while querying achievements for AppID {}.", app_id)
+                    });
+                }
+                None => {
+                    web_api_error = Some(if is_pt {
+                        "Tempo limite ou falha de conexão com a Steam Web API (api.steampowered.com). Verifique sua conexão com a internet.".to_string()
+                    } else {
+                        "Connection timeout or network failure reaching Steam Web API (api.steampowered.com). Check your internet connection.".to_string()
+                    });
+                }
+            }
+        }
+
+        // 3. Fallback 1: Local librarycache achievements
+        if !local_achievements.is_empty() {
+            let mut result_items: Vec<AchievementItemDto> = Vec::new();
+            let mut unlocked_count = 0;
+            for entry in local_achievements {
+                let unlocked = entry.bAchieved.unwrap_or(false);
+                let unlock_ts = entry.rtUnlocked.filter(|&t| t > 0);
+                if unlocked {
+                    unlocked_count += 1;
+                }
+                let is_hidden = entry.bHidden.unwrap_or(false);
+                let raw_icon = entry.get_icon_raw().unwrap_or_default();
+                let raw_icon_gray = entry.get_icon_gray_raw().unwrap_or_else(|| raw_icon.clone());
+
+                result_items.push(AchievementItemDto {
+                    name: entry.strID.clone(),
+                    display_name: entry.strName.unwrap_or_else(|| entry.strID),
+                    description: entry.strDescription.unwrap_or_default(),
+                    icon: canonicalize_steam_icon_url(app_id, &raw_icon),
+                    icon_gray: canonicalize_steam_icon_url(app_id, &raw_icon_gray),
+                    unlocked,
+                    unlock_time: unlock_ts,
+                    hidden: is_hidden,
+                });
+            }
+
+            result_items.sort_by(|a, b| {
+                match (a.unlocked, b.unlocked) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    (true, true) => b.unlock_time.unwrap_or(0).cmp(&a.unlock_time.unwrap_or(0)),
+                    (false, false) => a.display_name.cmp(&b.display_name),
+                }
+            });
+
+            let total = result_items.len();
+            return GameAchievementsResultDto {
+                has_api_key: true,
+                achievements: result_items,
+                total,
+                unlocked: unlocked_count,
+                error: None,
+            };
+        }
+
+        // 4. Fallback 2: Steam Store public achievements (requires no API key)
+        let store_url = format!("https://store.steampowered.com/api/appdetails?appids={}&l={}", app_id, lang_param);
+        if let Some((200, store_bytes)) = cr_common::http::https_download_url(&store_url, 8_000) {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&store_bytes) {
+                if let Some(app_obj) = val.get(&app_id.to_string()) {
+                    if let Some(data) = app_obj.get("data") {
+                        if let Some(ach_obj) = data.get("achievements") {
+                            let total = ach_obj.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            if total > 0 {
+                                if let Some(highlighted) = ach_obj.get("highlighted").and_then(|v| v.as_array()) {
+                                    let mut store_items = Vec::new();
+                                    for h in highlighted {
+                                        let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let disp = h.get("localized_name").and_then(|v| v.as_str()).unwrap_or(&name).to_string();
+                                        let path = h.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let raw_icon = h.get("icon").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let candidate = if !path.trim().is_empty() {
+                                            path
+                                        } else {
+                                            raw_icon
+                                        };
+                                        let final_icon = canonicalize_steam_icon_url(app_id, &candidate);
+                                        let hidden = h.get("hidden").and_then(|v| v.as_u64()).unwrap_or(0) == 1;
+                                        let (unlocked, ts, _) = player_map.get(&name).cloned().unwrap_or((false, None, false));
+                                        store_items.push(AchievementItemDto {
+                                            name,
+                                            display_name: disp,
+                                            description: String::new(),
+                                            icon: final_icon.clone(),
+                                            icon_gray: final_icon,
+                                            unlocked,
+                                            unlock_time: ts,
+                                            hidden,
+                                        });
+                                    }
+                                    if !store_items.is_empty() {
+                                        let unlocked_count = store_items.iter().filter(|i| i.unlocked).count();
+                                        return GameAchievementsResultDto {
+                                            has_api_key: true,
+                                            achievements: store_items,
+                                            total,
+                                            unlocked: unlocked_count,
+                                            error: None,
+                                        };
+                                    }
+                                }
+                            } else {
+                                // Store public data explicitly confirms 0 achievements!
+                                return GameAchievementsResultDto {
+                                    has_api_key: true,
+                                    achievements: Vec::new(),
+                                    total: 0,
+                                    unlocked: 0,
+                                    error: None,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Final fallback: If user hasn't configured an API key, show tutorial prompt
+        if api_key.is_none() {
+            GameAchievementsResultDto {
+                has_api_key: false,
+                achievements: Vec::new(),
+                total: 0,
+                unlocked: 0,
+                error: None,
+            }
+        } else {
+            GameAchievementsResultDto {
+                has_api_key: true,
+                achievements: Vec::new(),
+                total: 0,
+                unlocked: 0,
+                error: web_api_error.or_else(|| {
+                    Some(if is_pt {
+                        format!("Não foi possível obter a lista de conquistas do AppID {app_id} na Steam.")
+                    } else {
+                        format!("Unable to retrieve achievements for AppID {app_id} from Steam.")
+                    })
+                }),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| GameAchievementsResultDto {
+        has_api_key: false,
+        achievements: Vec::new(),
+        total: 0,
+        unlocked: 0,
+        error: Some(e.to_string()),
+    })
+}
+

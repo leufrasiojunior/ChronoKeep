@@ -1,0 +1,15 @@
+# Rust build target
+target/
+**/*.rs.bk
+
+# Local distribution outputs
+dist/
+*.exe
+*.dll
+*.pdb
+*.log
+
+# OS & temporary files
+.DS_Store
+Thumbs.db
+*.tmp

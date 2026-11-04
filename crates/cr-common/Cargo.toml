@@ -1,0 +1,9 @@
+[package]
+name = "cr-common"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+cr-proto = { path = "../cr-proto" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

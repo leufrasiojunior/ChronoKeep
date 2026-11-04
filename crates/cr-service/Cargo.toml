@@ -1,0 +1,15 @@
+[package]
+name = "cr-service"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "chrono-daemon"
+path = "src/main.rs"
+
+[dependencies]
+cr-proto = { path = "../cr-proto" }
+cr-common = { path = "../cr-common" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
