@@ -104,7 +104,7 @@ pub fn ensure_parent_watcher(pid: u32, log_path: Arc<PathBuf>) {
             log_msg(
                 &log_path,
                 &format!(
-                    "[Lifecycle] Processo Steam (PID={}) encerrou. Drenando uploads pendentes antes de finalizar chrono-daemon.exe...",
+                    "[INFO] [Lifecycle] Processo Steam (PID={}) encerrou. Drenando uploads pendentes antes de finalizar chrono-daemon.exe...",
                     pid
                 ),
             );
@@ -155,7 +155,7 @@ pub fn log_msg(log_path: &Path, msg: &str) {
         let lower = msg.to_ascii_lowercase();
         if lower.contains("aviso") || lower.contains("warn") {
             ("[WARN]", msg.trim())
-        } else if lower.contains("erro") || lower.contains("falha") || lower.contains("error") {
+        } else if (lower.contains("erro") && !lower.contains("encerr")) || lower.contains("falha") || lower.contains("error") {
             ("[ERROR]", msg.trim())
         } else {
             ("[INFO]", msg.trim())
