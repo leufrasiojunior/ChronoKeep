@@ -758,6 +758,12 @@ async function loadInitialData() {
         updateLogAutoRefreshState();
       }
 
+      // Sync notifications toggle
+      const checkNotif = document.getElementById("check-notifications");
+      if (checkNotif) {
+        checkNotif.checked = appConfig.notifications !== false;
+      }
+
       // Load Steam Web API Key
       try {
         const apiKey = await invokeBackend("get_steam_api_key", { steamDir: appConfig.steam_dir });
@@ -812,6 +818,11 @@ function setupActionHandlers() {
   const runInstallPipeline = () => {
     ensureDisclaimerAccepted(async () => {
       showToast(t("toast.installing_steam"));
+      const tileInstall = document.getElementById("tile-install");
+      if (tileInstall) {
+        tileInstall.style.pointerEvents = "none";
+        tileInstall.style.opacity = "0.65";
+      }
       try {
         const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
         const steamDir = inputSteam || appConfig.steam_dir;
@@ -827,6 +838,11 @@ function setupActionHandlers() {
         }
       } catch (e) {
         showToast(t("toast.install_error", { error: e }));
+      } finally {
+        if (tileInstall) {
+          tileInstall.style.pointerEvents = "auto";
+          tileInstall.style.opacity = "1";
+        }
       }
     });
   };
@@ -852,6 +868,9 @@ function setupActionHandlers() {
 
   // Home Banner: Repair Legacy Bridge Button
   document.getElementById("btn-repair-legacy-bridge")?.addEventListener("click", async () => {
+    const btnRepair = document.getElementById("btn-repair-legacy-bridge");
+    if (btnRepair && btnRepair.disabled) return;
+
     let isSteamOpen = false;
     try {
       isSteamOpen = await invokeBackend("is_steam_running");
@@ -862,6 +881,10 @@ function setupActionHandlers() {
       if (!confirmed) return;
     }
 
+    if (btnRepair) {
+      btnRepair.disabled = true;
+      btnRepair.style.opacity = "0.65";
+    }
     showToast(t("toast.repairing_bridge"));
     try {
       const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
@@ -875,6 +898,11 @@ function setupActionHandlers() {
       }
     } catch (e) {
       showToast(t("toast.repair_error", { error: e }));
+    } finally {
+      if (btnRepair) {
+        btnRepair.disabled = false;
+        btnRepair.style.opacity = "1";
+      }
     }
   });
 
@@ -903,38 +931,58 @@ function setupActionHandlers() {
 
   // Toggle Daemon
   document.getElementById("toggle-daemon")?.addEventListener("change", async (e) => {
-    if (e.target.checked) {
-      showToast(t("toast.starting_daemon"));
-      const res = await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
-      showToast(res ? res.message : t("common.command_sent"));
-    } else {
-      showToast(t("toast.stopping_daemon"));
-      const res = await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
-      showToast(res ? res.message : t("common.command_sent"));
+    const toggle = e.target;
+    toggle.disabled = true;
+    try {
+      if (toggle.checked) {
+        showToast(t("toast.starting_daemon"));
+        const res = await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
+        showToast(res ? res.message : t("common.command_sent"));
+      } else {
+        showToast(t("toast.stopping_daemon"));
+        const res = await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
+        showToast(res ? res.message : t("common.command_sent"));
+      }
+    } finally {
+      await checkDaemon();
+      toggle.disabled = false;
     }
-    await checkDaemon();
   });
 
   // Tile Daemon Button
   document.getElementById("tile-daemon")?.addEventListener("click", async () => {
-    if (daemonOnline) {
-      showToast(t("toast.stopping_daemon"));
-      await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
-    } else {
-      showToast(t("toast.starting_daemon"));
-      await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
+    const tile = document.getElementById("tile-daemon");
+    if (!tile || tile.dataset.busy === "true") return;
+    tile.dataset.busy = "true";
+    tile.style.pointerEvents = "none";
+    try {
+      if (daemonOnline) {
+        showToast(t("toast.stopping_daemon"));
+        await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
+      } else {
+        showToast(t("toast.starting_daemon"));
+        await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
+      }
+    } finally {
+      await checkDaemon();
+      tile.dataset.busy = "false";
+      tile.style.pointerEvents = "auto";
     }
-    await checkDaemon();
   });
 
   // Restart Daemon Button
   document.getElementById("btn-restart-daemon")?.addEventListener("click", async () => {
-    showToast(t("toast.restarting_daemon"));
-    await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
-    setTimeout(async () => {
+    const btn = document.getElementById("btn-restart-daemon");
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    try {
+      showToast(t("toast.restarting_daemon"));
+      await invokeBackend("stop_service", { steamDir: appConfig.steam_dir });
       await invokeBackend("start_service", { steamDir: appConfig.steam_dir });
+    } finally {
       await checkDaemon();
-    }, 1000);
+      btn.disabled = false;
+    }
   });
 
   // Open Vault Explorer
@@ -1024,6 +1072,7 @@ function setupActionHandlers() {
       theme: themeEl ? themeEl.value : appConfig.theme,
       language: langEl ? langEl.value : (appConfig.language || "system"),
       backup_provider: providerEl ? providerEl.value : (appConfig.backup_provider || "gdrive"),
+      notifications: document.getElementById("check-notifications") ? document.getElementById("check-notifications").checked : (appConfig.notifications !== false),
     };
 
     const res = await invokeBackend("save_config", { cfg: newCfg });
@@ -1056,6 +1105,12 @@ function setupActionHandlers() {
 
   document.getElementById("btn-save-config")?.addEventListener("click", () => saveSettings("config-feedback"));
   document.getElementById("btn-save-providers")?.addEventListener("click", () => saveSettings("providers-feedback"));
+
+  // Windows Notifications toggle: immediate persistence
+  document.getElementById("check-notifications")?.addEventListener("change", (e) => {
+    appConfig.notifications = e.target.checked;
+    saveSettings("config-feedback");
+  });
 
   // Language selector: immediate live GUI hot-reload + instant persistence
   document.getElementById("select-language")?.addEventListener("change", async (e) => {

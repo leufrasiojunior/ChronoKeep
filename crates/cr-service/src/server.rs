@@ -10,7 +10,11 @@ use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+
+static LAST_NOTIFIED_STEAM_PID: AtomicU32 = AtomicU32::new(0);
+static SESSION_NOTIFIED_ONCE: AtomicBool = AtomicBool::new(false);
 
 pub fn handle_connection(
     mut stream: TcpStream,
@@ -108,14 +112,55 @@ pub fn handle_connection(
             ),
         );
 
+        let mut legacy_detected = false;
         if let Some(ref sp) = steam_path {
             let s_dir = Path::new(sp);
             let redir = s_dir.join("cloud_redirect.dll");
             if redir.exists() && !cr_common::config::is_chronokeep_bridge(&redir) {
+                legacy_detected = true;
                 log_msg(
                     &log_path,
                     "[ALERTA] cloud_redirect.dll legada detectada na Steam! A sincronizacao pode falhar ou ser desviada por outra ferramenta.",
                 );
+            }
+        }
+
+        // Exibir notificação nativa do Windows na conexão inicial da sessão Steam (1x por PID/sessão)
+        let should_notify = if steam_pid > 0 {
+            LAST_NOTIFIED_STEAM_PID.swap(steam_pid, Ordering::SeqCst) != steam_pid
+        } else {
+            !SESSION_NOTIFIED_ONCE.swap(true, Ordering::SeqCst)
+        };
+
+        if should_notify {
+            let s_path_ref = steam_path.as_deref().map(Path::new);
+            if cr_common::config::load_notifications_enabled(s_path_ref) {
+                let is_pt = cr_common::config::is_portuguese_language(s_path_ref);
+                if legacy_detected {
+                    let title = if is_pt {
+                        "ChronoKeep: Alerta de Integridade"
+                    } else {
+                        "ChronoKeep: Integrity Warning"
+                    };
+                    let msg = if is_pt {
+                        "cloud_redirect.dll legada detectada na Steam! Restaure a DLL oficial pelo painel do ChronoKeep."
+                    } else {
+                        "Legacy cloud_redirect.dll detected in Steam! Repair the official DLL via ChronoKeep panel."
+                    };
+                    cr_common::notify::show_balloon_notification(title, msg, true);
+                } else {
+                    let title = if is_pt {
+                        "ChronoKeep Ativo"
+                    } else {
+                        "ChronoKeep Active"
+                    };
+                    let msg = if is_pt {
+                        "Sincronização Steam Cloud conectada."
+                    } else {
+                        "Steam Cloud synchronization connected."
+                    };
+                    cr_common::notify::show_balloon_notification(title, msg, false);
+                }
             }
         }
 

@@ -186,6 +186,102 @@ pub fn save_steam_api_key(steam_dir: &Path, key: &str) -> Result<(), std::io::Er
     fs::write(&ini_path, updated)
 }
 
+pub fn load_notifications_enabled(steam_dir: Option<&Path>) -> bool {
+    let check_dir = |dir: &Path| -> Option<bool> {
+        let ini_path = dir.join("chronokeep.ini");
+        if let Ok(content) = fs::read_to_string(&ini_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    let k = k.trim().to_ascii_lowercase();
+                    if k == "notifications" || k == "notify" {
+                        let val = v.trim();
+                        return Some(val.eq_ignore_ascii_case("true") || val == "1");
+                    }
+                }
+            }
+        }
+        None
+    };
+
+    if let Some(dir) = steam_dir {
+        if let Some(enabled) = check_dir(dir) {
+            return enabled;
+        }
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            if let Some(enabled) = check_dir(parent) {
+                return enabled;
+            }
+        }
+    }
+    true
+}
+
+pub fn is_portuguese_language(steam_dir: Option<&Path>) -> bool {
+    let check_dir = |dir: &Path| -> Option<bool> {
+        let ini_path = dir.join("chronokeep.ini");
+        if let Ok(content) = fs::read_to_string(&ini_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    if k.trim().eq_ignore_ascii_case("language") {
+                        let val = v.trim().to_ascii_lowercase();
+                        if val.starts_with("pt") {
+                            return Some(true);
+                        } else if !val.is_empty() && val != "system" {
+                            return Some(false);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    };
+
+    if let Some(dir) = steam_dir {
+        if let Some(is_pt) = check_dir(dir) {
+            return is_pt;
+        }
+    }
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            if let Some(is_pt) = check_dir(parent) {
+                return is_pt;
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetUserDefaultUILanguage() -> u16;
+        }
+        let lang_id = GetUserDefaultUILanguage();
+        (lang_id & 0x03ff) == 0x16
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Ok(val) = std::env::var(var) {
+                let clean = val.trim().to_ascii_lowercase();
+                if clean.starts_with("pt") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AppPlaytimeInfo {
     pub playtime_minutes: u64,

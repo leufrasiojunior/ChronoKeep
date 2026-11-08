@@ -5,4 +5,5 @@ pub mod fs_utils;
 pub mod gdrive;
 pub mod http;
 pub mod manifest;
+pub mod notify;
 pub mod stats;

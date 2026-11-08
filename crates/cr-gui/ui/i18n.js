@@ -127,6 +127,8 @@ const CHRONO_LOCALES = {
     "settings.theme_system": "System Default",
     "settings.theme_dark": "Dark Mode",
     "settings.theme_light": "Light Mode",
+    "settings.notifications_title": "Windows Notifications",
+    "settings.notifications_desc": "Display native notification when Steam Cloud synchronization connects",
 
     "settings.updates_group": "Component Updates",
     "settings.updates_status_title": "Component Status",
@@ -562,6 +564,8 @@ const CHRONO_LOCALES = {
     "settings.theme_system": "Seguir Sistema",
     "settings.theme_dark": "Modo Escuro (Dark)",
     "settings.theme_light": "Modo Claro (Light)",
+    "settings.notifications_title": "Notificações do Windows",
+    "settings.notifications_desc": "Exibir notificação nativa ao conectar a sincronização Steam Cloud",
 
     "settings.updates_group": "Atualizações de Componentes",
     "settings.updates_status_title": "Status dos Componentes",
