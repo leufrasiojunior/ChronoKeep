@@ -443,6 +443,8 @@ pub fn https_download_url(url: &str, timeout_ms: u32) -> Option<(u32, Vec<u8>)> 
         let headers = vec![
             "User-Agent: ChronoKeep-Updater/1.0".to_string(),
             "Accept: */*".to_string(),
+            "Cache-Control: no-cache, no-store, must-revalidate".to_string(),
+            "Pragma: no-cache".to_string(),
         ];
         let (status, data) = https_request_with_timeout("GET", &host, &path, &headers, &[], timeout_ms)?;
         if (300..400).contains(&status) {
