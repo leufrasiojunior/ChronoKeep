@@ -402,6 +402,14 @@ const CHRONO_LOCALES = {
     "modal.uninstall_confirm": "Yes, Uninstall ChronoKeep",
     "modal.uninstall_working": "Uninstalling...",
 
+    "modal.gdrive_disconnect_title": "Disconnect Google Drive",
+    "modal.gdrive_disconnect_subtitle": "Cloud synchronization disconnect",
+    "modal.gdrive_disconnect_body_html": "Disconnecting your account will <strong>pause automatic cloud uploads and downloads</strong> with Google Drive on this computer.",
+    "modal.gdrive_disconnect_safe_title": "Your saves remain safe:",
+    "modal.gdrive_disconnect_safe_desc_html": "No files on your computer or local <strong>Vault</strong> will be deleted. Files already stored in your Google Drive will also remain intact.",
+    "modal.gdrive_disconnect_choice": "Are you sure you want to disconnect your Google Drive account?",
+    "modal.gdrive_disconnect_confirm": "Yes, Disconnect",
+
     "modal.upload_limit_title": "Manual Upload Limit per File",
     "modal.upload_limit_subtitle": "How this setting works and what it does",
     "modal.upload_limit_p1_html": "This setting defines the <strong>maximum individual size</strong> accepted for each save file during manual synchronization and orphan save uploads to the cloud (Google Drive).",
@@ -822,6 +830,14 @@ const CHRONO_LOCALES = {
     "modal.uninstall_choice": "Tem certeza de que deseja desinstalar o ChronoKeep da Steam?",
     "modal.uninstall_confirm": "Sim, Desinstalar ChronoKeep",
     "modal.uninstall_working": "Desinstalando...",
+
+    "modal.gdrive_disconnect_title": "Desconectar Google Drive",
+    "modal.gdrive_disconnect_subtitle": "Desconexão da sincronização em nuvem",
+    "modal.gdrive_disconnect_body_html": "Ao desconectar sua conta, a sincronização em nuvem e os backups automáticos com o Google Drive serão <strong>interrompidos temporariamente</strong> neste computador.",
+    "modal.gdrive_disconnect_safe_title": "Seus saves estão seguros:",
+    "modal.gdrive_disconnect_safe_desc_html": "Nenhum arquivo no seu computador ou no <strong>Cofre Local (Vault)</strong> será apagado. Os arquivos já salvos no seu Google Drive também permanecerão intactos.",
+    "modal.gdrive_disconnect_choice": "Deseja realmente desconectar a conta do Google Drive?",
+    "modal.gdrive_disconnect_confirm": "Sim, Desconectar",
 
     "modal.upload_limit_title": "Limite de Upload Manual por Arquivo",
     "modal.upload_limit_subtitle": "Como funciona e para que serve esta configuração",

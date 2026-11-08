@@ -915,6 +915,9 @@ function setupActionHandlers() {
   // Google Drive Action (Connect / Disconnect)
   const gdriveAction = async () => {
     if (appConfig.gdrive_connected) {
+      const confirmed = await confirmGDriveDisconnect();
+      if (!confirmed) return;
+
       const res = await invokeBackend("disconnect_google", { steamDir: appConfig.steam_dir });
       showToast(res ? res.message : t("toast.gdrive_disconnected"));
       updateGDriveStatusUI(false);
@@ -2996,6 +2999,47 @@ function confirmSteamRestart(componentLabel = "") {
 
     if (compName) {
       compName.textContent = componentLabel;
+    }
+
+    modal.style.display = "flex";
+
+    const onKeydown = (e) => {
+      if (e.key === "Escape") {
+        cleanup(false);
+      }
+    };
+
+    const onOverlayClick = (e) => {
+      if (e.target === modal) {
+        cleanup(false);
+      }
+    };
+
+    const cleanup = (result) => {
+      window.removeEventListener("keydown", onKeydown);
+      modal.removeEventListener("click", onOverlayClick);
+      modal.style.display = "none";
+      btnCancel.onclick = null;
+      btnConfirm.onclick = null;
+      resolve(result);
+    };
+
+    btnCancel.onclick = () => cleanup(false);
+    btnConfirm.onclick = () => cleanup(true);
+    modal.addEventListener("click", onOverlayClick);
+    window.addEventListener("keydown", onKeydown);
+  });
+}
+
+function confirmGDriveDisconnect() {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("gdrive-disconnect-modal");
+    const btnCancel = document.getElementById("btn-gdrive-disconnect-cancel");
+    const btnConfirm = document.getElementById("btn-gdrive-disconnect-confirm");
+
+    if (!modal || !btnCancel || !btnConfirm) {
+      resolve(true);
+      return;
     }
 
     modal.style.display = "flex";

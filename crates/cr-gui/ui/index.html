@@ -1178,6 +1178,38 @@
     </div>
   </div>
 
+  <!-- ContentDialog: Confirmação de Desconexão do Google Drive -->
+  <div id="gdrive-disconnect-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="gdrive-disconnect-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="gdrive-disconnect-title" class="dialog-title" data-i18n="modal.gdrive_disconnect_title">Desconectar Google Drive</h2>
+        <p class="dialog-subtitle" data-i18n="modal.gdrive_disconnect_subtitle">Desconexão da sincronização em nuvem</p>
+      </div>
+
+      <div class="dialog-body">
+        <p data-i18n-html="modal.gdrive_disconnect_body_html">Ao desconectar sua conta, a sincronização em nuvem e os backups automáticos com o Google Drive serão <strong>interrompidos temporariamente</strong> neste computador.</p>
+
+        <div class="dialog-callout safe">
+          <div class="callout-icon">🛡️</div>
+          <div class="callout-text">
+            <strong data-i18n="modal.gdrive_disconnect_safe_title">Seus saves estão seguros:</strong>
+            <p data-i18n-html="modal.gdrive_disconnect_safe_desc_html">Nenhum arquivo no seu computador ou no <strong>Cofre Local (Vault)</strong> será apagado. Os arquivos já salvos no seu Google Drive também permanecerão intactos.</p>
+          </div>
+        </div>
+
+        <p class="dialog-highlight-choice" data-i18n="modal.gdrive_disconnect_choice">Deseja realmente desconectar a conta do Google Drive?</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-gdrive-disconnect-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+        <button id="btn-gdrive-disconnect-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;" data-i18n="modal.gdrive_disconnect_confirm">Sim, Desconectar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ContentDialog: Informações do Limite de Upload Manual -->
   <div id="upload-limit-modal" class="fluent-dialog-overlay" style="display: none;">
     <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="upload-limit-title">
