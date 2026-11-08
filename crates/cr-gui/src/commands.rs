@@ -190,6 +190,12 @@ pub struct ConfigDto {
     pub backup_provider: String,
     #[serde(default)]
     pub debug_mode: bool,
+    #[serde(default = "default_true")]
+    pub notifications: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_language() -> String {
@@ -393,6 +399,7 @@ pub fn get_config() -> ConfigDto {
     let mut theme = "system".to_string();
     let mut backup_provider = "gdrive".to_string();
     let mut debug_mode = false;
+    let mut notifications = true;
 
     let ini_path = s_path.join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -411,6 +418,7 @@ pub fn get_config() -> ConfigDto {
                     "theme" => theme = v.to_string(),
                     "backup_provider" if !v.is_empty() => backup_provider = v.to_string(),
                     "debug" => debug_mode = v.eq_ignore_ascii_case("true") || v == "1",
+                    "notifications" | "notify" => notifications = v.eq_ignore_ascii_case("true") || v == "1",
                     _ => {}
                 }
             }
@@ -430,6 +438,7 @@ pub fn get_config() -> ConfigDto {
         language,
         backup_provider,
         debug_mode,
+        notifications,
     }
 }
 
@@ -451,94 +460,102 @@ pub fn set_language(language: String, steam_dir: Option<String>) -> OperationRes
 }
 
 #[tauri::command]
-pub fn save_config(cfg: ConfigDto) -> OperationResult {
-    let s_path = Path::new(&cfg.steam_dir);
-    let normalized_lang = crate::i18n::Lang::normalize_pref(&cfg.language);
-    let lang = crate::i18n::Lang::resolve_preference(&normalized_lang);
+pub async fn save_config(cfg: ConfigDto) -> OperationResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&cfg.steam_dir);
+        let normalized_lang = crate::i18n::Lang::normalize_pref(&cfg.language);
+        let lang = crate::i18n::Lang::resolve_preference(&normalized_lang);
 
-    if !s_path.exists() {
-        crate::i18n::save_language_pref(&normalized_lang, None);
-        return OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                format!("A pasta da Steam não existe: {}", cfg.steam_dir)
-            } else {
-                format!("Steam folder does not exist: {}", cfg.steam_dir)
-            },
-        };
-    }
+        if !s_path.exists() {
+            crate::i18n::save_language_pref(&normalized_lang, None);
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    format!("A pasta da Steam não existe: {}", cfg.steam_dir)
+                } else {
+                    format!("Steam folder does not exist: {}", cfg.steam_dir)
+                },
+            };
+        }
 
-    let _ = fs::create_dir_all(&cfg.vault_dir);
+        let _ = fs::create_dir_all(&cfg.vault_dir);
 
-    let ini_path = s_path.join("chronokeep.ini");
-    let mut lines = Vec::new();
+        let ini_path = s_path.join("chronokeep.ini");
+        let mut lines = Vec::new();
 
-    // Preserva tokens existentes se houver
-    let mut refresh_token = String::new();
-    let mut gdrive_folder_id = String::new();
-    if let Ok(content) = fs::read_to_string(&ini_path) {
-        for line in content.lines() {
-            if let Some((k, v)) = line.trim().split_once('=') {
-                let k = k.trim().to_ascii_lowercase();
-                let v = v.trim();
-                if k == "gdrive_refresh_token" {
-                    refresh_token = v.to_string();
-                } else if k == "gdrive_folder_id" {
-                    gdrive_folder_id = v.to_string();
+        // Preserva tokens existentes se houver
+        let mut refresh_token = String::new();
+        let mut gdrive_folder_id = String::new();
+        if let Ok(content) = fs::read_to_string(&ini_path) {
+            for line in content.lines() {
+                if let Some((k, v)) = line.trim().split_once('=') {
+                    let k = k.trim().to_ascii_lowercase();
+                    let v = v.trim();
+                    if k == "gdrive_refresh_token" {
+                        refresh_token = v.to_string();
+                    } else if k == "gdrive_folder_id" {
+                        gdrive_folder_id = v.to_string();
+                    }
                 }
             }
         }
-    }
 
-    lines.push("# ChronoKeep Configuration".to_string());
-    lines.push(format!("port={}", cfg.port));
-    lines.push(format!("vault_dir={}", cfg.vault_dir));
-    lines.push("dll_name=chronokeep.dll".to_string());
-    lines.push(format!("max_upload_mb={}", cfg.max_upload_mb));
-    lines.push(format!("theme={}", cfg.theme));
-    lines.push(format!("language={}", normalized_lang));
-    lines.push(format!("backup_provider={}", cfg.backup_provider));
-    lines.push(format!("debug={}", cfg.debug_mode));
+        lines.push("# ChronoKeep Configuration".to_string());
+        lines.push(format!("port={}", cfg.port));
+        lines.push(format!("vault_dir={}", cfg.vault_dir));
+        lines.push("dll_name=chronokeep.dll".to_string());
+        lines.push(format!("max_upload_mb={}", cfg.max_upload_mb));
+        lines.push(format!("theme={}", cfg.theme));
+        lines.push(format!("language={}", normalized_lang));
+        lines.push(format!("backup_provider={}", cfg.backup_provider));
+        lines.push(format!("debug={}", cfg.debug_mode));
+        lines.push(format!("notifications={}", cfg.notifications));
 
-    if !refresh_token.is_empty() {
-        lines.push(format!("gdrive_refresh_token={}", refresh_token));
-    }
-    if !gdrive_folder_id.is_empty() {
-        lines.push(format!("gdrive_folder_id={}", gdrive_folder_id));
-    }
+        if !refresh_token.is_empty() {
+            lines.push(format!("gdrive_refresh_token={}", refresh_token));
+        }
+        if !gdrive_folder_id.is_empty() {
+            lines.push(format!("gdrive_folder_id={}", gdrive_folder_id));
+        }
 
-    let current_port = resolve_service_port(&cfg.steam_dir);
-    let content = lines.join("\r\n") + "\r\n";
-    if fs::write(&ini_path, content).is_ok() {
-        save_preferred_steam_dir(&cfg.steam_dir);
-        crate::i18n::save_language_pref(&normalized_lang, Some(s_path));
-        // Se o daemon estiver ativo (na porta anterior ou na nova), reinicia para aplicar as novas configurações
-        let was_running = check_daemon_health(current_port) || (current_port != cfg.port && check_daemon_health(cfg.port));
-        if was_running {
-            stop_service_from_gui(current_port);
-            if current_port != cfg.port {
-                stop_service_from_gui(cfg.port);
+        let current_port = resolve_service_port(&cfg.steam_dir);
+        let content = lines.join("\r\n") + "\r\n";
+        if fs::write(&ini_path, content).is_ok() {
+            save_preferred_steam_dir(&cfg.steam_dir);
+            crate::i18n::save_language_pref(&normalized_lang, Some(s_path));
+            // Se o daemon estiver ativo (na porta anterior ou na nova), reinicia para aplicar as novas configurações
+            let was_running = check_daemon_health(current_port) || (current_port != cfg.port && check_daemon_health(cfg.port));
+            if was_running {
+                stop_service_from_gui(current_port);
+                if current_port != cfg.port {
+                    stop_service_from_gui(cfg.port);
+                }
+                start_service_from_gui(s_path, cfg.port);
             }
-            start_service_from_gui(s_path, cfg.port);
+            OperationResult {
+                success: true,
+                message: if lang.is_pt() {
+                    "Configurações salvas e aplicadas com sucesso!".to_string()
+                } else {
+                    "Settings saved and applied successfully!".to_string()
+                },
+            }
+        } else {
+            OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Falha ao gravar arquivo chronokeep.ini".to_string()
+                } else {
+                    "Failed to write chronokeep.ini file".to_string()
+                },
+            }
         }
-        OperationResult {
-            success: true,
-            message: if lang.is_pt() {
-                "Configurações salvas e aplicadas com sucesso!".to_string()
-            } else {
-                "Settings saved and applied successfully!".to_string()
-            },
-        }
-    } else {
-        OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "Falha ao gravar arquivo chronokeep.ini".to_string()
-            } else {
-                "Failed to write chronokeep.ini file".to_string()
-            },
-        }
-    }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error saving config: {}", e),
+    })
 }
 
 #[tauri::command]
@@ -550,71 +567,85 @@ pub fn get_service_status(steam_dir: Option<String>) -> ServiceStatusDto {
 }
 
 #[tauri::command]
-pub fn start_service(steam_dir: Option<String>) -> OperationResult {
+pub async fn start_service(steam_dir: Option<String>) -> OperationResult {
     let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let s_path = Path::new(&s_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
-    let port = resolve_service_port(&s_dir);
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&s_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
+        let port = resolve_service_port(&s_dir);
 
-    if check_daemon_health(port) {
-        return OperationResult {
-            success: true,
-            message: if lang.is_pt() {
-                format!("O serviço já está ativo na porta {}", port)
-            } else {
-                format!("Service is already active on port {}", port)
-            },
-        };
-    }
+        if check_daemon_health(port) {
+            return OperationResult {
+                success: true,
+                message: if lang.is_pt() {
+                    format!("O serviço já está ativo na porta {}", port)
+                } else {
+                    format!("Service is already active on port {}", port)
+                },
+            };
+        }
 
-    let started = start_service_from_gui(s_path, port);
-    if started {
-        OperationResult {
-            success: true,
-            message: if lang.is_pt() {
-                format!("ChronoKeep Daemon iniciado com sucesso na porta {}!", port)
-            } else {
-                format!("ChronoKeep Daemon started successfully on port {}!", port)
-            },
+        let started = start_service_from_gui(s_path, port);
+        if started {
+            OperationResult {
+                success: true,
+                message: if lang.is_pt() {
+                    format!("ChronoKeep Daemon iniciado com sucesso na porta {}!", port)
+                } else {
+                    format!("ChronoKeep Daemon started successfully on port {}!", port)
+                },
+            }
+        } else {
+            OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Falha ao iniciar chrono-daemon.exe. Verifique se o executável existe.".to_string()
+                } else {
+                    "Failed to start chrono-daemon.exe. Verify that the executable exists.".to_string()
+                },
+            }
         }
-    } else {
-        OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "Falha ao iniciar chrono-daemon.exe. Verifique se o executável existe.".to_string()
-            } else {
-                "Failed to start chrono-daemon.exe. Verify that the executable exists.".to_string()
-            },
-        }
-    }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error running start_service: {}", e),
+    })
 }
 
 #[tauri::command]
-pub fn stop_service(steam_dir: Option<String>) -> OperationResult {
+pub async fn stop_service(steam_dir: Option<String>) -> OperationResult {
     let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let s_path = Path::new(&s_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
-    let port = resolve_service_port(&s_dir);
-    let stopped = stop_service_from_gui(port);
-    if stopped {
-        OperationResult {
-            success: true,
-            message: if lang.is_pt() {
-                "ChronoKeep Daemon encerrado.".to_string()
-            } else {
-                "ChronoKeep Daemon stopped.".to_string()
-            },
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&s_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
+        let port = resolve_service_port(&s_dir);
+        let stopped = stop_service_from_gui(port);
+        if stopped {
+            OperationResult {
+                success: true,
+                message: if lang.is_pt() {
+                    "ChronoKeep Daemon encerrado.".to_string()
+                } else {
+                    "ChronoKeep Daemon stopped.".to_string()
+                },
+            }
+        } else {
+            OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "O serviço já estava desligado ou não respondeu ao comando de parada.".to_string()
+                } else {
+                    "Service was already offline or did not respond to the stop command.".to_string()
+                },
+            }
         }
-    } else {
-        OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "O serviço já estava desligado ou não respondeu ao comando de parada.".to_string()
-            } else {
-                "Service was already offline or did not respond to the stop command.".to_string()
-            },
-        }
-    }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error running stop_service: {}", e),
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -849,151 +880,165 @@ pub fn check_system_dependencies(steam_dir: Option<String>) -> DependencyReportD
 // - Atualizar somente a DLL (chronokeep.dll / cloud_redirect.dll).
 // - Auto-atualizacao do proprio executavel do painel (ChronoKeep.exe).
 #[tauri::command]
-pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResult {
-    let s_path = Path::new(&steam_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
+pub async fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&steam_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
 
-    // Verificação de dependências obrigatórias
-    let report = check_system_dependencies(Some(steam_dir.clone()));
-    if report.has_missing_required {
-        let missing_names: Vec<&str> = report
-            .items
-            .iter()
-            .filter(|it| it.is_required && !it.is_installed)
-            .map(|it| it.name.as_str())
-            .collect();
-        let missing_str = missing_names.join(", ");
-        return OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                format!("Instalação bloqueada: Dependências obrigatórias ausentes ({missing_str}). Por favor, instale-as antes de continuar.")
-            } else {
-                format!("Installation blocked: Missing required dependencies ({missing_str}). Please install them before proceeding.")
-            },
-        };
-    }
-    if !s_path.exists() {
-        return OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "A pasta da Steam informada não foi encontrada.".to_string()
-            } else {
-                "The specified Steam folder was not found.".to_string()
-            },
-        };
-    }
+        // Verificação de dependências obrigatórias
+        let report = check_system_dependencies(Some(steam_dir.clone()));
+        if report.has_missing_required {
+            let missing_names: Vec<&str> = report
+                .items
+                .iter()
+                .filter(|it| it.is_required && !it.is_installed)
+                .map(|it| it.name.as_str())
+                .collect();
+            let missing_str = missing_names.join(", ");
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    format!("Instalação bloqueada: Dependências obrigatórias ausentes ({missing_str}). Por favor, instale-as antes de continuar.")
+                } else {
+                    format!("Installation blocked: Missing required dependencies ({missing_str}). Please install them before proceeding.")
+                },
+            };
+        }
+        if !s_path.exists() {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "A pasta da Steam informada não foi encontrada.".to_string()
+                } else {
+                    "The specified Steam folder was not found.".to_string()
+                },
+            };
+        }
 
-    let _ = fs::create_dir_all(&vault_dir);
+        let _ = fs::create_dir_all(&vault_dir);
 
-    // Encerra Steam se em execução para evitar bloqueio ao sobrescrever a DLL carregada
-    let steam_was_running = is_process_running("steam.exe");
-    if steam_was_running {
-        kill_process_and_wait("steam.exe", 5000);
-    }
+        // Encerra Steam se em execução para evitar bloqueio ao sobrescrever a DLL carregada
+        let steam_was_running = is_process_running("steam.exe");
+        if steam_was_running {
+            kill_process_and_wait("steam.exe", 5000);
+        }
 
-    // Encerra daemon se ativo
-    kill_process_and_wait("chrono-daemon.exe", 2000);
+        // Encerra daemon se ativo
+        kill_process_and_wait("chrono-daemon.exe", 2000);
 
-    // Deploy dos binários
-    let dll_ok = deploy_component(
-        &s_path.join("chronokeep.dll"),
-        "chronokeep.dll",
-        get_embedded_bridge(),
-    );
-    let _ = deploy_component(
-        &s_path.join("cloud_redirect.dll"),
-        "chronokeep.dll",
-        get_embedded_bridge(),
-    );
-    cr_common::config::lock_file_readonly(&s_path.join("cloud_redirect.dll"));
-    let daemon_ok = deploy_component(
-        &s_path.join("chrono-daemon.exe"),
-        "chrono-daemon.exe",
-        get_embedded_daemon(),
-    );
-
-    if !dll_ok || !daemon_ok {
-        // TODO: Relaunch steam if it was running before returning error (steam_was_running)
-        return OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "Falha ao copiar arquivos para a pasta da Steam. Verifique permissões de gravação.".to_string()
-            } else {
-                "Failed to copy files to the Steam folder. Check write permissions.".to_string()
-            },
-        };
-    }
-
-    // Configuração inicial
-    let port = resolve_service_port(&steam_dir);
-    let saved_lang_pref = crate::i18n::load_saved_language_pref(Some(s_path));
-    let ini_path = s_path.join("chronokeep.ini");
-    if !ini_path.exists() {
-        let ini_content = format!(
-            "# ChronoKeep Setup Configuration\r\n\
-             port={}\r\n\
-             vault_dir={}\r\n\
-             dll_name=chronokeep.dll\r\n\
-             language={}\r\n",
-            port, vault_dir, saved_lang_pref
+        // Deploy dos binários
+        let dll_ok = deploy_component(
+            &s_path.join("chronokeep.dll"),
+            "chronokeep.dll",
+            get_embedded_bridge(),
         );
-        let _ = fs::write(&ini_path, ini_content);
-    }
+        let _ = deploy_component(
+            &s_path.join("cloud_redirect.dll"),
+            "chronokeep.dll",
+            get_embedded_bridge(),
+        );
+        cr_common::config::lock_file_readonly(&s_path.join("cloud_redirect.dll"));
+        let daemon_ok = deploy_component(
+            &s_path.join("chrono-daemon.exe"),
+            "chrono-daemon.exe",
+            get_embedded_daemon(),
+        );
 
-    // Ativa [cloud] no opensteamtool.toml se existir
-    ensure_opensteamtool_cloud_enabled(s_path);
+        if !dll_ok || !daemon_ok {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Falha ao copiar arquivos para a pasta da Steam. Verifique permissões de gravação.".to_string()
+                } else {
+                    "Failed to copy files to the Steam folder. Check write permissions.".to_string()
+                },
+            };
+        }
 
-    // Salva o diretório da Steam como preferência da GUI
-    save_preferred_steam_dir(&steam_dir);
+        // Configuração inicial
+        let port = resolve_service_port(&steam_dir);
+        let saved_lang_pref = crate::i18n::load_saved_language_pref(Some(s_path));
+        let ini_path = s_path.join("chronokeep.ini");
+        if !ini_path.exists() {
+            let ini_content = format!(
+                "# ChronoKeep Setup Configuration\r\n\
+                 port={}\r\n\
+                 vault_dir={}\r\n\
+                 dll_name=chronokeep.dll\r\n\
+                 language={}\r\n\
+                 notifications=true\r\n",
+                port, vault_dir, saved_lang_pref
+            );
+            let _ = fs::write(&ini_path, ini_content);
+        }
 
-    // Inicia serviço em segundo plano
-    start_service_from_gui(s_path, port);
+        // Ativa [cloud] no opensteamtool.toml se existir
+        crate::installer::ensure_opensteamtool_cloud_enabled(s_path);
 
-    // Relança a Steam se estava aberta antes da instalação
-    if steam_was_running {
-        std::thread::sleep(Duration::from_millis(600));
-        crate::service_mgr::launch_steam(s_path);
-    }
+        // Salva o diretório da Steam como preferência da GUI
+        save_preferred_steam_dir(&steam_dir);
 
-    OperationResult {
-        success: true,
-        message: if lang.is_pt() {
-            "ChronoKeep instalado na Steam com sucesso! O serviço daemon foi iniciado.".to_string()
-        } else {
-            "ChronoKeep installed in Steam successfully! The daemon service has started.".to_string()
-        },
-    }
+        // Inicia serviço em segundo plano
+        start_service_from_gui(s_path, port);
+
+        // Relança a Steam se estava aberta antes da instalação
+        if steam_was_running {
+            std::thread::sleep(Duration::from_millis(600));
+            crate::service_mgr::launch_steam(s_path);
+        }
+
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "ChronoKeep instalado na Steam com sucesso! O serviço daemon foi iniciado.".to_string()
+            } else {
+                "ChronoKeep installed in Steam successfully! The daemon service has started.".to_string()
+            },
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error installing ChronoKeep: {}", e),
+    })
 }
 
 #[tauri::command]
-pub fn enable_opensteamtool_cloud(steam_dir: Option<String>) -> OperationResult {
+pub async fn enable_opensteamtool_cloud(steam_dir: Option<String>) -> OperationResult {
     let s_dir = steam_dir
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(load_preferred_steam_dir);
-    let s_path = Path::new(&s_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&s_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
 
-    if !s_path.exists() {
-        return OperationResult {
-            success: false,
+        if !s_path.exists() {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Diretório da Steam não encontrado.".to_string()
+                } else {
+                    "Steam directory not found.".to_string()
+                },
+            };
+        }
+
+        crate::installer::ensure_opensteamtool_cloud_enabled(s_path);
+
+        OperationResult {
+            success: true,
             message: if lang.is_pt() {
-                "Diretório da Steam não encontrado.".to_string()
+                "Recurso [cloud] do OpenSteamTool ativado com sucesso em opensteamtool.toml!".to_string()
             } else {
-                "Steam directory not found.".to_string()
+                "OpenSteamTool [cloud] feature enabled successfully in opensteamtool.toml!".to_string()
             },
-        };
-    }
-
-    crate::installer::ensure_opensteamtool_cloud_enabled(s_path);
-
-    OperationResult {
-        success: true,
-        message: if lang.is_pt() {
-            "Recurso [cloud] do OpenSteamTool ativado com sucesso em opensteamtool.toml!".to_string()
-        } else {
-            "OpenSteamTool [cloud] feature enabled successfully in opensteamtool.toml!".to_string()
-        },
-    }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error enabling opensteamtool cloud: {}", e),
+    })
 }
 
 #[tauri::command]
@@ -1013,223 +1058,237 @@ pub fn get_launch_mode() -> String {
 }
 
 #[tauri::command]
-pub fn uninstall_chronokeep(
+pub async fn uninstall_chronokeep(
     restore_to_steam: bool,
     steam_dir: Option<String>,
     vault_dir: Option<String>,
 ) -> OperationResult {
-    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
-    let steam_path = Path::new(&s_dir);
-    let vault_path = Path::new(&v_dir);
-    let lang = crate::i18n::current_lang(Some(steam_path));
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+        let v_dir = vault_dir.unwrap_or_else(|| detect_default_vault_dir(None).to_string_lossy().into_owned());
+        let steam_path = Path::new(&s_dir);
+        let vault_path = Path::new(&v_dir);
+        let lang = crate::i18n::current_lang(Some(steam_path));
 
-    if !steam_path.exists() {
-        return OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "A pasta da Steam especificada não foi encontrada.".to_string()
-            } else {
-                "The specified Steam folder was not found.".to_string()
-            },
-        };
-    }
+        if !steam_path.exists() {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "A pasta da Steam especificada não foi encontrada.".to_string()
+                } else {
+                    "The specified Steam folder was not found.".to_string()
+                },
+            };
+        }
 
-    // 1. Encerra Steam se estiver em execução para descarregar a DLL
-    let steam_was_running = crate::service_mgr::is_process_running("steam.exe");
-    if steam_was_running {
-        crate::service_mgr::kill_process_and_wait("steam.exe", 5000);
-    }
+        // 1. Encerra Steam se estiver em execução para descarregar a DLL
+        let steam_was_running = crate::service_mgr::is_process_running("steam.exe");
+        if steam_was_running {
+            crate::service_mgr::kill_process_and_wait("steam.exe", 5000);
+        }
 
-    // 2. Encerra o daemon
-    let port = resolve_service_port(&s_dir);
-    crate::service_mgr::stop_service_from_gui(port);
-    crate::service_mgr::kill_process_and_wait("chrono-daemon.exe", 2000);
+        // 2. Encerra o daemon
+        let port = resolve_service_port(&s_dir);
+        crate::service_mgr::stop_service_from_gui(port);
+        crate::service_mgr::kill_process_and_wait("chrono-daemon.exe", 2000);
 
-    // 3. Se solicitado, restaura os saves mais recentes do Cofre local para a pasta Steam userdata
-    let mut restored_count = 0;
-    if restore_to_steam && vault_path.exists() {
-        if let Ok(entries) = fs::read_dir(vault_path) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if !p.is_dir() { continue; }
-                let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
-                let Ok(account_id) = acct_str.parse::<u32>() else { continue };
-                if account_id == 0 { continue; }
+        // 3. Se solicitado, restaura os saves mais recentes do Cofre local para a pasta Steam userdata
+        let mut restored_count = 0;
+        if restore_to_steam && vault_path.exists() {
+            if let Ok(entries) = fs::read_dir(vault_path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() { continue; }
+                    let Some(acct_str) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let Ok(account_id) = acct_str.parse::<u32>() else { continue };
+                    if account_id == 0 { continue; }
 
-                if let Ok(apps) = fs::read_dir(&p) {
-                    for app_entry in apps.flatten() {
-                        let app_p = app_entry.path();
-                        if !app_p.is_dir() { continue; }
-                        let Some(app_str) = app_p.file_name().and_then(|n| n.to_str()) else { continue };
-                        let Ok(app_id) = app_str.parse::<u32>() else { continue };
-                        if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
-                            continue;
-                        }
-
-                        let files_dir = if app_p.join("files").exists() {
-                            app_p.join("files")
-                        } else {
-                            app_p.clone()
-                        };
-
-                        let steam_remote = steam_path
-                            .join("userdata")
-                            .join(account_id.to_string())
-                            .join(app_id.to_string())
-                            .join("remote");
-
-                        let mut files: Vec<(String, PathBuf)> = Vec::new();
-                        collect_files_recursive(&files_dir, &files_dir, &mut files);
-                        files.retain(|(rel, _)| rel != "manifest.tsv");
-
-                        for (rel_path, src_file) in files {
-                            let dst_file = steam_remote.join(&rel_path);
-                            if let Some(parent) = dst_file.parent() {
-                                let _ = fs::create_dir_all(parent);
+                    if let Ok(apps) = fs::read_dir(&p) {
+                        for app_entry in apps.flatten() {
+                            let app_p = app_entry.path();
+                            if !app_p.is_dir() { continue; }
+                            let Some(app_str) = app_p.file_name().and_then(|n| n.to_str()) else { continue };
+                            let Ok(app_id) = app_str.parse::<u32>() else { continue };
+                            if app_id == 7 || app_id == 760 || app_id == 241100 || app_id == 241300 {
+                                continue;
                             }
-                            if fs::copy(&src_file, &dst_file).is_ok() {
-                                restored_count += 1;
+
+                            let files_dir = if app_p.join("files").exists() {
+                                app_p.join("files")
+                            } else {
+                                app_p.clone()
+                            };
+
+                            let steam_remote = steam_path
+                                .join("userdata")
+                                .join(account_id.to_string())
+                                .join(app_id.to_string())
+                                .join("remote");
+
+                            let mut files: Vec<(String, PathBuf)> = Vec::new();
+                            collect_files_recursive(&files_dir, &files_dir, &mut files);
+                            files.retain(|(rel, _)| rel != "manifest.tsv");
+
+                            for (rel_path, src_file) in files {
+                                let dst_file = steam_remote.join(&rel_path);
+                                if let Some(parent) = dst_file.parent() {
+                                    let _ = fs::create_dir_all(parent);
+                                }
+                                if fs::copy(&src_file, &dst_file).is_ok() {
+                                    restored_count += 1;
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    // 4. Deletar os binários do ChronoKeep da pasta da Steam
-    let _ = fs::remove_file(steam_path.join("chronokeep.dll"));
-    cr_common::config::unlock_file_readonly(&steam_path.join("cloud_redirect.dll"));
-    let _ = fs::remove_file(steam_path.join("cloud_redirect.dll"));
-    let _ = fs::remove_file(steam_path.join("chrono-daemon.exe"));
-    let _ = fs::remove_file(steam_path.join("chronokeep_bridge.log"));
-    let _ = fs::remove_file(steam_path.join("cloud_redirect.log"));
-    let _ = fs::remove_file(steam_path.join("chrono_daemon.log"));
+        // 4. Deletar os binários do ChronoKeep da pasta da Steam
+        let _ = fs::remove_file(steam_path.join("chronokeep.dll"));
+        cr_common::config::unlock_file_readonly(&steam_path.join("cloud_redirect.dll"));
+        let _ = fs::remove_file(steam_path.join("cloud_redirect.dll"));
+        let _ = fs::remove_file(steam_path.join("chrono-daemon.exe"));
+        let _ = fs::remove_file(steam_path.join("chronokeep_bridge.log"));
+        let _ = fs::remove_file(steam_path.join("cloud_redirect.log"));
+        let _ = fs::remove_file(steam_path.join("chrono_daemon.log"));
 
-    // 5. Se a Steam estava rodando, reabre-a
-    if steam_was_running {
-        std::thread::sleep(Duration::from_millis(600));
-        crate::service_mgr::launch_steam(steam_path);
-    }
-
-    let mut msg = if lang.is_pt() {
-        "ChronoKeep desinstalado da pasta da Steam com sucesso! Todos os redirecionamentos foram desativados.".to_string()
-    } else {
-        "ChronoKeep uninstalled from the Steam folder successfully! All redirections have been disabled.".to_string()
-    };
-    if restore_to_steam {
-        if lang.is_pt() {
-            msg = format!(
-                "{} Foram copiados {} arquivo(s) de save do Cofre para a pasta local da Steam (userdata).",
-                msg, restored_count
-            );
-        } else {
-            msg = format!(
-                "{} Copied {} save file(s) from the Vault to Steam's local folder (userdata).",
-                msg, restored_count
-            );
+        // 5. Se a Steam estava rodando, reabre-a
+        if steam_was_running {
+            std::thread::sleep(Duration::from_millis(600));
+            crate::service_mgr::launch_steam(steam_path);
         }
-    } else {
-        if lang.is_pt() {
-            msg = format!(
-                "{} Seus saves locais permanecem preservados no Cofre em: {}.",
-                msg, v_dir
-            );
-        } else {
-            msg = format!(
-                "{} Your local saves remain safely preserved in the Vault at: {}.",
-                msg, v_dir
-            );
-        }
-    }
 
-    OperationResult {
-        success: true,
-        message: msg,
-    }
+        let mut msg = if lang.is_pt() {
+            "ChronoKeep desinstalado da pasta da Steam com sucesso! Todos os redirecionamentos foram desativados.".to_string()
+        } else {
+            "ChronoKeep uninstalled from the Steam folder successfully! All redirections have been disabled.".to_string()
+        };
+        if restore_to_steam {
+            if lang.is_pt() {
+                msg = format!(
+                    "{} Foram copiados {} arquivo(s) de save do Cofre para a pasta local da Steam (userdata).",
+                    msg, restored_count
+                );
+            } else {
+                msg = format!(
+                    "{} Copied {} save file(s) from the Vault to Steam's local folder (userdata).",
+                    msg, restored_count
+                );
+            }
+        } else {
+            if lang.is_pt() {
+                msg = format!(
+                    "{} Seus saves locais permanecem preservados no Cofre em: {}.",
+                    msg, v_dir
+                );
+            } else {
+                msg = format!(
+                    "{} Your local saves remain safely preserved in the Vault at: {}.",
+                    msg, v_dir
+                );
+            }
+        }
+
+        OperationResult {
+            success: true,
+            message: msg,
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error uninstalling ChronoKeep: {}", e),
+    })
 }
 
 #[tauri::command]
-pub fn repair_bridge(steam_dir: Option<String>) -> OperationResult {
+pub async fn repair_bridge(steam_dir: Option<String>) -> OperationResult {
     let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let s_path = Path::new(&s_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&s_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
 
-    if !s_path.exists() {
-        return OperationResult {
-            success: false,
-            message: if lang.is_pt() {
-                "A pasta da Steam informada não foi encontrada.".to_string()
-            } else {
-                "The specified Steam folder was not found.".to_string()
-            },
-        };
-    }
-
-    // 1. Fechar a Steam se em execução para descarregar DLLs da memória
-    let steam_was_running = is_process_running("steam.exe");
-    if steam_was_running {
-        kill_process_and_wait("steam.exe", 5000);
-    }
-
-    let target_chronokeep = s_path.join("chronokeep.dll");
-    let target_redirect = s_path.join("cloud_redirect.dll");
-
-    // 2. Destravar permissões somente leitura caso já estivessem ativas
-    for p in [&target_chronokeep, &target_redirect] {
-        if p.exists() {
-            cr_common::config::unlock_file_readonly(p);
+        if !s_path.exists() {
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "A pasta da Steam informada não foi encontrada.".to_string()
+                } else {
+                    "The specified Steam folder was not found.".to_string()
+                },
+            };
         }
-    }
 
-    // 3. Implantar bridge oficial em ambos os destinos
-    let bridge_bytes = get_embedded_bridge();
-    let ok1 = deploy_component(&target_chronokeep, "chronokeep.dll", bridge_bytes);
-    let ok2 = deploy_component(&target_redirect, "chronokeep.dll", bridge_bytes);
-
-    if !ok1 || !ok2 {
+        // 1. Fechar a Steam se em execução para descarregar DLLs da memória
+        let steam_was_running = is_process_running("steam.exe");
         if steam_was_running {
+            kill_process_and_wait("steam.exe", 5000);
+        }
+
+        let target_chronokeep = s_path.join("chronokeep.dll");
+        let target_redirect = s_path.join("cloud_redirect.dll");
+
+        // 2. Destravar permissões somente leitura caso já estivessem ativas
+        for p in [&target_chronokeep, &target_redirect] {
+            if p.exists() {
+                cr_common::config::unlock_file_readonly(p);
+            }
+        }
+
+        // 3. Implantar bridge oficial em ambos os destinos
+        let bridge_bytes = get_embedded_bridge();
+        let ok1 = deploy_component(&target_chronokeep, "chronokeep.dll", bridge_bytes);
+        let ok2 = deploy_component(&target_redirect, "chronokeep.dll", bridge_bytes);
+
+        if !ok1 || !ok2 {
+            if steam_was_running {
+                crate::service_mgr::launch_steam(s_path);
+            }
+            return OperationResult {
+                success: false,
+                message: if lang.is_pt() {
+                    "Falha ao restaurar arquivos de bridge na pasta da Steam. Verifique permissões de gravação.".to_string()
+                } else {
+                    "Failed to restore bridge files to the Steam folder. Check write permissions.".to_string()
+                },
+            };
+        }
+
+        // 4. Bloquear cloud_redirect.dll como Somente Leitura para proteção contra ferramentas terceiras
+        cr_common::config::lock_file_readonly(&target_redirect);
+
+        // 5. Garantir que opensteamtool.toml está com [cloud] enabled = true
+        crate::installer::ensure_opensteamtool_cloud_enabled(s_path);
+
+        // 6. Se a Steam estava rodando, relança
+        if steam_was_running {
+            std::thread::sleep(Duration::from_millis(600));
             crate::service_mgr::launch_steam(s_path);
         }
-        return OperationResult {
-            success: false,
+
+        OperationResult {
+            success: true,
             message: if lang.is_pt() {
-                "Falha ao restaurar arquivos de bridge na pasta da Steam. Verifique permissões de gravação.".to_string()
+                if steam_was_running {
+                    "ChronoKeep Bridge restaurado com sucesso e protegido contra alterações! A Steam foi reiniciada.".to_string()
+                } else {
+                    "ChronoKeep Bridge restaurado e protegido contra alterações com sucesso!".to_string()
+                }
             } else {
-                "Failed to restore bridge files to the Steam folder. Check write permissions.".to_string()
+                if steam_was_running {
+                    "ChronoKeep Bridge restored and write-protected successfully! Steam has been restarted.".to_string()
+                } else {
+                    "ChronoKeep Bridge restored and write-protected successfully!".to_string()
+                }
             },
-        };
-    }
-
-    // 4. Bloquear cloud_redirect.dll como Somente Leitura para proteção contra ferramentas terceiras
-    cr_common::config::lock_file_readonly(&target_redirect);
-
-    // 5. Garantir que opensteamtool.toml está com [cloud] enabled = true
-    ensure_opensteamtool_cloud_enabled(s_path);
-
-    // 6. Se a Steam estava rodando, relança
-    if steam_was_running {
-        std::thread::sleep(Duration::from_millis(600));
-        crate::service_mgr::launch_steam(s_path);
-    }
-
-    OperationResult {
-        success: true,
-        message: if lang.is_pt() {
-            if steam_was_running {
-                "ChronoKeep Bridge restaurado com sucesso e protegido contra alterações! A Steam foi reiniciada.".to_string()
-            } else {
-                "ChronoKeep Bridge restaurado e protegido contra alterações com sucesso!".to_string()
-            }
-        } else {
-            if steam_was_running {
-                "ChronoKeep Bridge restored and write-protected successfully! Steam has been restarted.".to_string()
-            } else {
-                "ChronoKeep Bridge restored and write-protected successfully!".to_string()
-            }
-        },
-    }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error repairing bridge: {}", e),
+    })
 }
 
 #[tauri::command]
@@ -1456,60 +1515,67 @@ pub fn start_google_login(steam_dir: Option<String>) -> Result<OperationResult, 
 }
 
 #[tauri::command]
-pub fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
+pub async fn disconnect_google(steam_dir: Option<String>) -> OperationResult {
     let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
-    let s_path = Path::new(&s_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&s_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
 
-    // 1. Remover entradas do chronokeep.ini
-    let ini_path = s_path.join("chronokeep.ini");
-    if let Ok(content) = fs::read_to_string(&ini_path) {
-        let lines: Vec<String> = content
-            .lines()
-            .filter(|l| {
-                let t = l.trim().to_ascii_lowercase();
-                !t.starts_with("gdrive_refresh_token") && !t.starts_with("gdrive_folder_id")
-            })
-            .map(|s| s.to_string())
-            .collect();
-        let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
-    }
+        // 1. Remover entradas do chronokeep.ini
+        let ini_path = s_path.join("chronokeep.ini");
+        if let Ok(content) = fs::read_to_string(&ini_path) {
+            let lines: Vec<String> = content
+                .lines()
+                .filter(|l| {
+                    let t = l.trim().to_ascii_lowercase();
+                    !t.starts_with("gdrive_refresh_token") && !t.starts_with("gdrive_folder_id")
+                })
+                .map(|s| s.to_string())
+                .collect();
+            let _ = fs::write(&ini_path, lines.join("\r\n") + "\r\n");
+        }
 
-    // 2. Apagar chronokeep_gdrive.json na pasta da Steam
-    let token_json_path = s_path.join("chronokeep_gdrive.json");
-    if token_json_path.exists() {
-        let _ = fs::remove_file(&token_json_path);
-    }
+        // 2. Apagar chronokeep_gdrive.json na pasta da Steam
+        let token_json_path = s_path.join("chronokeep_gdrive.json");
+        if token_json_path.exists() {
+            let _ = fs::remove_file(&token_json_path);
+        }
 
-    // 3. Apagar chronokeep_gdrive.json na pasta do executável atual, se existir
-    if let Ok(cur) = std::env::current_exe() {
-        if let Some(parent) = cur.parent() {
-            let p_token = parent.join("chronokeep_gdrive.json");
-            if p_token.exists() {
-                let _ = fs::remove_file(&p_token);
+        // 3. Apagar chronokeep_gdrive.json na pasta do executável atual, se existir
+        if let Ok(cur) = std::env::current_exe() {
+            if let Some(parent) = cur.parent() {
+                let p_token = parent.join("chronokeep_gdrive.json");
+                if p_token.exists() {
+                    let _ = fs::remove_file(&p_token);
+                }
             }
         }
-    }
 
-    // 4. Limpar cache em memória de pastas e token do Google Drive
-    cr_common::gdrive::clear_folder_cache();
-    cr_common::gdrive::clear_token_cache();
+        // 4. Limpar cache em memória de pastas e token do Google Drive
+        cr_common::gdrive::clear_folder_cache();
+        cr_common::gdrive::clear_token_cache();
 
-    // 5. Reiniciar o daemon se ativo para invalidar qualquer TOKEN_CACHE de processo em memória
-    let port = resolve_service_port(&s_dir);
-    if check_daemon_health(port) {
-        stop_service_from_gui(port);
-        start_service_from_gui(s_path, port);
-    }
+        // 5. Reiniciar o daemon se ativo para invalidar qualquer TOKEN_CACHE de processo em memória
+        let port = resolve_service_port(&s_dir);
+        if check_daemon_health(port) {
+            stop_service_from_gui(port);
+            start_service_from_gui(s_path, port);
+        }
 
-    OperationResult {
-        success: true,
-        message: if lang.is_pt() {
-            "Conta do Google Drive desconectada com sucesso.".to_string()
-        } else {
-            "Google Drive account disconnected successfully.".to_string()
-        },
-    }
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "Conta do Google Drive desconectada com sucesso.".to_string()
+            } else {
+                "Google Drive account disconnected successfully.".to_string()
+            },
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error disconnecting Google: {}", e),
+    })
 }
 
 #[tauri::command]
@@ -2221,19 +2287,26 @@ pub fn is_steam_running() -> bool {
 }
 
 #[tauri::command]
-pub fn launch_steam() -> OperationResult {
+pub async fn launch_steam() -> OperationResult {
     let steam_dir = load_preferred_steam_dir();
-    let s_path = Path::new(&steam_dir);
-    let lang = crate::i18n::current_lang(Some(s_path));
-    crate::service_mgr::launch_steam(s_path);
-    OperationResult {
-        success: true,
-        message: if lang.is_pt() {
-            "Steam iniciada com sucesso.".to_string()
-        } else {
-            "Steam launched successfully.".to_string()
-        },
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let s_path = Path::new(&steam_dir);
+        let lang = crate::i18n::current_lang(Some(s_path));
+        crate::service_mgr::launch_steam(s_path);
+        OperationResult {
+            success: true,
+            message: if lang.is_pt() {
+                "Steam iniciada com sucesso.".to_string()
+            } else {
+                "Steam launched successfully.".to_string()
+            },
+        }
+    })
+    .await
+    .unwrap_or_else(|e| OperationResult {
+        success: false,
+        message: format!("Error launching steam: {}", e),
+    })
 }
 
 #[tauri::command]

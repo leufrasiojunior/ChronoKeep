@@ -344,12 +344,8 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
                 "up_to_date".to_string()
             } else if is_remote_newer(&ver, &daemon_latest_ver) {
                 "update_available".to_string()
-            } else if ver == daemon_latest_ver {
-                "up_to_date".to_string()
-            } else if !is_remote_newer(&ver, &daemon_latest_ver) && ver.starts_with('v') {
-                "up_to_date".to_string()
             } else {
-                "update_available".to_string()
+                "up_to_date".to_string()
             };
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
@@ -391,30 +387,12 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
             let current_hash = sha256_file(active_bridge).unwrap_or_default().to_lowercase();
             let ver = detect_bridge_version(active_bridge, &remote_hash, &bridge_latest_ver, lang);
 
-            // OpenSteamTool utiliza cloud_redirect.dll, enquanto o ChronoKeep utiliza chronokeep.dll.
-            // Ambos devem existir e bater com o hash remoto para o bridge ser considerado atualizado.
-            let redirect_hash = if redirect_path.exists() {
-                sha256_file(&redirect_path).unwrap_or_default().to_lowercase()
-            } else {
-                String::new()
-            };
-            let redirect_is_chronokeep = cr_common::config::is_chronokeep_bridge(&redirect_path);
-            let redirect_ok = redirect_path.exists()
-                && redirect_is_chronokeep
-                && (remote_hash.is_empty() || redirect_hash == remote_hash);
-
-            let status = if !remote_hash.is_empty() && current_hash == remote_hash && redirect_ok {
+            let status = if !remote_hash.is_empty() && current_hash == remote_hash {
                 "up_to_date".to_string()
-            } else if !redirect_ok {
-                "update_available".to_string()
             } else if is_remote_newer(&ver, &bridge_latest_ver) {
                 "update_available".to_string()
-            } else if ver == bridge_latest_ver {
-                "up_to_date".to_string()
-            } else if !is_remote_newer(&ver, &bridge_latest_ver) && ver.starts_with('v') {
-                "up_to_date".to_string()
             } else {
-                "update_available".to_string()
+                "up_to_date".to_string()
             };
             (current_hash, status, ver, m.download_url.clone(), m.filename.clone())
         } else {
