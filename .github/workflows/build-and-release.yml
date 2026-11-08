@@ -168,13 +168,14 @@ jobs:
             }
           }
 
-          # Atualiza GUI se for solicitado explicitamente, se comp='all' ou se a versao no Cargo.toml mudou
-          $updateGui = ($comp -eq "gui") -or ($null -eq $manifestObj.components.gui) -or ($manifestObj.components.gui.version -ne $pkgVerGui)
-          if ($updateGui -and (Test-Path "release-artifacts/ChronoKeep.exe")) {
+          # Atualiza GUI se o artefato foi gerado nesta execucao (preserva outros componentes intactos)
+          if (Test-Path "release-artifacts/ChronoKeep.exe") {
+            $guiHash = $hashes["gui"]
+            if ([string]::IsNullOrWhiteSpace($guiHash)) { throw "SHA-256 para ChronoKeep.exe esta vazio!" }
             $guiObj = [PSCustomObject]@{
               version = $pkgVerGui
               filename = "ChronoKeep.exe"
-              sha256 = $hashes["gui"]
+              sha256 = $guiHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
             }
             if ($null -ne $manifestObj.components.gui) {
@@ -184,13 +185,14 @@ jobs:
             }
           }
 
-          # Atualiza DAEMON apenas se for solicitado explicitamente OU se a sua versao no Cargo.toml mudou
-          $updateDaemon = ($comp -eq "daemon") -or ($null -eq $manifestObj.components.daemon) -or ($manifestObj.components.daemon.version -ne $pkgVerDaemon)
-          if ($updateDaemon -and (Test-Path "release-artifacts/chrono-daemon.exe")) {
+          # Atualiza DAEMON se o artefato foi gerado nesta execucao (preserva outros componentes intactos)
+          if (Test-Path "release-artifacts/chrono-daemon.exe") {
+            $daemonHash = $hashes["daemon"]
+            if ([string]::IsNullOrWhiteSpace($daemonHash)) { throw "SHA-256 para chrono-daemon.exe esta vazio!" }
             $daemonObj = [PSCustomObject]@{
               version = $pkgVerDaemon
               filename = "chrono-daemon.exe"
-              sha256 = $hashes["daemon"]
+              sha256 = $daemonHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
             }
             if ($null -ne $manifestObj.components.daemon) {
@@ -200,13 +202,14 @@ jobs:
             }
           }
 
-          # Atualiza BRIDGE DLL apenas se for solicitado explicitamente OU se a sua versao no Cargo.toml mudou
-          $updateBridge = ($comp -eq "bridge") -or ($null -eq $manifestObj.components.bridge_dll) -or ($manifestObj.components.bridge_dll.version -ne $pkgVerBridge)
-          if ($updateBridge -and (Test-Path "release-artifacts/chronokeep.dll")) {
+          # Atualiza BRIDGE DLL se o artefato foi gerado nesta execucao (preserva outros componentes intactos)
+          if (Test-Path "release-artifacts/chronokeep.dll") {
+            $bridgeHash = $hashes["bridge"]
+            if ([string]::IsNullOrWhiteSpace($bridgeHash)) { throw "SHA-256 para chronokeep.dll esta vazio!" }
             $bridgeObj = [PSCustomObject]@{
               version = $pkgVerBridge
               filename = "chronokeep.dll"
-              sha256 = $hashes["bridge"]
+              sha256 = $bridgeHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
             }
             if ($null -ne $manifestObj.components.bridge_dll) {

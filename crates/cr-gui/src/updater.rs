@@ -170,6 +170,7 @@ pub fn detect_daemon_version(daemon_path: &Path, remote_hash: &str, target_ver: 
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }
     match cur_hash.as_str() {
+        "b6b87c9791c8ae1f182c0a64a3410d238050699a3d59a51c7b397dbdc2e7d39e" => "v1.0.0".to_string(),
         "466d7d2b51be232ec37d38dbb96f8809925722940d37ae0c85d9e4ef28a01ab3" => "v0.1.8".to_string(),
         "737f94f094f83385d6cc51a6ccfda32432b989eef25d3c57f667facff0993328" => "v0.1.8".to_string(),
         "4952f719b17bb13a90322524a64d400748d999ba34c7abfe9bdfff22ea6e037a" => "v0.1.7".to_string(),
@@ -213,6 +214,7 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
         return format!("v{}", env!("CARGO_PKG_VERSION"));
     }
     match cur_hash.as_str() {
+        "eaa1ac70cc86b220570ccfdd2fd945217760fd37f07f78359bde9f44010b7750" => "v1.0.0".to_string(),
         "12831a16d2196a6d288606a28cdcad763f0add737382e62803bf56d6dbcdd94e" => "v0.1.10".to_string(),
         "57ac95df3db6a2ee315df9e9ceaac756b10664ccce53c29d6c91059d42426c47" => "v0.1.9".to_string(),
         "6f1e2585b9f3d9505879799929208bed3b7d98dabe4b10912354d596964f1f46" => "v0.1.8".to_string(),
@@ -290,7 +292,7 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
         let cur_ver = format!("v{}", env!("CARGO_PKG_VERSION"));
         let status = if current_hash.is_empty() {
             "error".to_string()
-        } else if current_hash == remote_hash {
+        } else if !remote_hash.is_empty() && current_hash == remote_hash {
             "up_to_date".to_string()
         } else if is_remote_newer(&cur_ver, &gui_latest_ver) {
             "update_available".to_string()
@@ -331,7 +333,7 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
         if daemon_path.exists() {
             let current_hash = sha256_file(&daemon_path).unwrap_or_default().to_lowercase();
             let ver = detect_daemon_version(&daemon_path, &remote_hash, &daemon_latest_ver, lang);
-            let status = if current_hash == remote_hash {
+            let status = if !remote_hash.is_empty() && current_hash == remote_hash {
                 "up_to_date".to_string()
             } else if is_remote_newer(&ver, &daemon_latest_ver) {
                 "update_available".to_string()
@@ -385,7 +387,7 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
         if bridge_path.exists() {
             let current_hash = sha256_file(&bridge_path).unwrap_or_default().to_lowercase();
             let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver, lang);
-            let status = if current_hash == remote_hash {
+            let status = if !remote_hash.is_empty() && current_hash == remote_hash {
                 "up_to_date".to_string()
             } else if is_remote_newer(&ver, &bridge_latest_ver) {
                 "update_available".to_string()
@@ -477,11 +479,19 @@ pub fn apply_update(
             }
 
             let hash = sha256_hex(&bytes).to_lowercase();
-            if hash != comp.sha256.to_lowercase() {
+            let expected_hash = comp.sha256.trim().to_lowercase();
+            if expected_hash.is_empty() {
                 return Err(if lang.is_pt() {
-                    format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename)
+                    format!("O manifesto remoto não forneceu o hash de verificação (SHA-256) para {}. Atualização cancelada por segurança.", comp.filename)
                 } else {
-                    format!("SHA-256 integrity check failed for downloaded file: {}", comp.filename)
+                    format!("Remote manifest lacks SHA-256 verification hash for {}. Update aborted for security.", comp.filename)
+                });
+            }
+            if hash != expected_hash {
+                return Err(if lang.is_pt() {
+                    format!("Falha de integridade SHA-256 no arquivo baixado: {} (esperado: {}, obtido: {})", comp.filename, expected_hash, hash)
+                } else {
+                    format!("SHA-256 integrity check failed for downloaded file: {} (expected: {}, got: {})", comp.filename, expected_hash, hash)
                 });
             }
 
@@ -572,11 +582,19 @@ pub fn apply_update(
             }
 
             let hash = sha256_hex(&bytes).to_lowercase();
-            if hash != comp.sha256.to_lowercase() {
+            let expected_hash = comp.sha256.trim().to_lowercase();
+            if expected_hash.is_empty() {
                 return Err(if lang.is_pt() {
-                    format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename)
+                    format!("O manifesto remoto não forneceu o hash de verificação (SHA-256) para {}. Atualização cancelada por segurança.", comp.filename)
                 } else {
-                    format!("SHA-256 integrity check failed for downloaded file: {}", comp.filename)
+                    format!("Remote manifest lacks SHA-256 verification hash for {}. Update aborted for security.", comp.filename)
+                });
+            }
+            if hash != expected_hash {
+                return Err(if lang.is_pt() {
+                    format!("Falha de integridade SHA-256 no arquivo baixado: {} (esperado: {}, obtido: {})", comp.filename, expected_hash, hash)
+                } else {
+                    format!("SHA-256 integrity check failed for downloaded file: {} (expected: {}, got: {})", comp.filename, expected_hash, hash)
                 });
             }
 
@@ -650,11 +668,19 @@ pub fn apply_update(
             }
 
             let hash = sha256_hex(&bytes).to_lowercase();
-            if hash != comp.sha256.to_lowercase() {
+            let expected_hash = comp.sha256.trim().to_lowercase();
+            if expected_hash.is_empty() {
                 return Err(if lang.is_pt() {
-                    format!("Falha de integridade SHA-256 no arquivo baixado: {}", comp.filename)
+                    format!("O manifesto remoto não forneceu o hash de verificação (SHA-256) para {}. Atualização cancelada por segurança.", comp.filename)
                 } else {
-                    format!("SHA-256 integrity check failed for downloaded file: {}", comp.filename)
+                    format!("Remote manifest lacks SHA-256 verification hash for {}. Update aborted for security.", comp.filename)
+                });
+            }
+            if hash != expected_hash {
+                return Err(if lang.is_pt() {
+                    format!("Falha de integridade SHA-256 no arquivo baixado: {} (esperado: {}, obtido: {})", comp.filename, expected_hash, hash)
+                } else {
+                    format!("SHA-256 integrity check failed for downloaded file: {} (expected: {}, got: {})", comp.filename, expected_hash, hash)
                 });
             }
 
