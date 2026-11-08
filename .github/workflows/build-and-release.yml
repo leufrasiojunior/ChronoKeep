@@ -196,15 +196,15 @@ jobs:
             $commitsList = "- Atualizações e melhorias de estabilidade."
           }
 
-          $releaseNotes = @"
-$notesHeader### 📦 $compDesc
-- **Versão:** $verNumber
-- **Tag:** $tagName
-
-#### 📋 Principais alterações:
-$commitsList
-"@
-          $releaseNotes | Set-Content -Path "release_notes.md" -Encoding UTF8
+          $releaseNotesLines = @(
+            "$notesHeader### 📦 $compDesc",
+            "- **Versão:** $verNumber",
+            "- **Tag:** $tagName",
+            "",
+            "#### 📋 Principais alterações:",
+            $commitsList
+          )
+          ($releaseNotesLines -join "`n") | Set-Content -Path "release_notes.md" -Encoding UTF8
 
           Write-Host "========================================="
           Write-Host "Componente Alvo: $comp"
