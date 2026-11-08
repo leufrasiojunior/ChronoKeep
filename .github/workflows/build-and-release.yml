@@ -227,7 +227,7 @@ jobs:
           if ($comp -eq "gui" -or $comp -eq "all") {
             if (Test-Path "crates/cr-gui/Cargo.toml") {
               $guiToml = Get-Content "crates/cr-gui/Cargo.toml" -Raw
-              $guiToml = $guiToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $guiToml = $guiToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
               $guiToml | Set-Content "crates/cr-gui/Cargo.toml" -Encoding UTF8
             }
             if (Test-Path "crates/cr-gui/tauri.conf.json") {
@@ -239,14 +239,14 @@ jobs:
           if ($comp -eq "daemon" -or $comp -eq "all") {
             if (Test-Path "crates/cr-service/Cargo.toml") {
               $daemonToml = Get-Content "crates/cr-service/Cargo.toml" -Raw
-              $daemonToml = $daemonToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $daemonToml = $daemonToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
               $daemonToml | Set-Content "crates/cr-service/Cargo.toml" -Encoding UTF8
             }
           }
           if ($comp -eq "bridge" -or $comp -eq "all") {
             if (Test-Path "crates/cr-bridge-dll/Cargo.toml") {
               $bridgeToml = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
-              $bridgeToml = $bridgeToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $bridgeToml = $bridgeToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
               $bridgeToml | Set-Content "crates/cr-bridge-dll/Cargo.toml" -Encoding UTF8
             }
           }
@@ -498,7 +498,7 @@ jobs:
             if ($comp -eq "gui" -or $comp -eq "all") {
               if (Test-Path "crates/cr-gui/Cargo.toml") {
                 $guiToml = Get-Content "crates/cr-gui/Cargo.toml" -Raw
-                $guiToml = $guiToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $guiToml = $guiToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
                 $guiToml | Set-Content "crates/cr-gui/Cargo.toml" -Encoding UTF8
                 git add crates/cr-gui/Cargo.toml
               }
@@ -512,7 +512,7 @@ jobs:
             if ($comp -eq "daemon" -or $comp -eq "all") {
               if (Test-Path "crates/cr-service/Cargo.toml") {
                 $daemonToml = Get-Content "crates/cr-service/Cargo.toml" -Raw
-                $daemonToml = $daemonToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $daemonToml = $daemonToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
                 $daemonToml | Set-Content "crates/cr-service/Cargo.toml" -Encoding UTF8
                 git add crates/cr-service/Cargo.toml
               }
@@ -520,7 +520,7 @@ jobs:
             if ($comp -eq "bridge" -or $comp -eq "all") {
               if (Test-Path "crates/cr-bridge-dll/Cargo.toml") {
                 $bridgeToml = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
-                $bridgeToml = $bridgeToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $bridgeToml = $bridgeToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
                 $bridgeToml | Set-Content "crates/cr-bridge-dll/Cargo.toml" -Encoding UTF8
                 git add crates/cr-bridge-dll/Cargo.toml
               }
