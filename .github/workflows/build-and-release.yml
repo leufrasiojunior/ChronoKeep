@@ -250,6 +250,18 @@ jobs:
               $bridgeToml | Set-Content "crates/cr-bridge-dll/Cargo.toml" -Encoding UTF8
             }
           }
+          if ($comp -eq "all") {
+            if (Test-Path "crates/cr-common/Cargo.toml") {
+              $commonToml = Get-Content "crates/cr-common/Cargo.toml" -Raw
+              $commonToml = $commonToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $commonToml | Set-Content "crates/cr-common/Cargo.toml" -Encoding UTF8
+            }
+            if (Test-Path "crates/cr-proto/Cargo.toml") {
+              $protoToml = Get-Content "crates/cr-proto/Cargo.toml" -Raw
+              $protoToml = $protoToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $protoToml | Set-Content "crates/cr-proto/Cargo.toml" -Encoding UTF8
+            }
+          }
 
       - name: Build Core Daemon & Bridge DLL
         if: ${{ env.TARGET_COMPONENT == 'all' || env.TARGET_COMPONENT == 'daemon' || env.TARGET_COMPONENT == 'bridge' || env.TARGET_COMPONENT == 'gui' }}
@@ -523,6 +535,20 @@ jobs:
                 $bridgeToml = $bridgeToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
                 $bridgeToml | Set-Content "crates/cr-bridge-dll/Cargo.toml" -Encoding UTF8
                 git add crates/cr-bridge-dll/Cargo.toml
+              }
+            }
+            if ($comp -eq "all") {
+              if (Test-Path "crates/cr-common/Cargo.toml") {
+                $commonToml = Get-Content "crates/cr-common/Cargo.toml" -Raw
+                $commonToml = $commonToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $commonToml | Set-Content "crates/cr-common/Cargo.toml" -Encoding UTF8
+                git add crates/cr-common/Cargo.toml
+              }
+              if (Test-Path "crates/cr-proto/Cargo.toml") {
+                $protoToml = Get-Content "crates/cr-proto/Cargo.toml" -Raw
+                $protoToml = $protoToml -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $protoToml | Set-Content "crates/cr-proto/Cargo.toml" -Encoding UTF8
+                git add crates/cr-proto/Cargo.toml
               }
             }
 
