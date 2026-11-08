@@ -25,21 +25,33 @@
       'hero.check2': 'Proteção Inteligente (Saves novos nunca são perdidos)',
       'hero.check3': '100% Gratuito & Código Aberto (MIT)',
 
-      'mockup.title': 'ChronoKeep — Painel de Controle',
-      'mockup.tab_home': 'Início',
-      'mockup.tab_games': 'Jogos & Saves',
-      'mockup.tab_vault': 'Cofre Local',
-      'mockup.tab_cloud': 'Google Drive',
-      'mockup.status_title': 'Sincronização Ativa & Protegida',
-      'mockup.status_sub': 'Google Drive Conectado • Cofre Local Ativo',
-      'mockup.status_synced': '● Sincronizado',
-      'mockup.stat_games': 'Jogos Salvos',
-      'mockup.stat_snapshots': 'Versões no Cofre',
-      'mockup.stat_cloud': 'Espaço na Nuvem',
-      'mockup.badge_synced': '✓ Nuvem OK',
-      'mockup.time_now': 'Agora mesmo',
-      'mockup.time_min': 'Há 12 min',
-      'mockup.time_yesterday': 'Ontem',
+      // Real Mockup Labels
+      'mockup.app_header': 'Configurações do ChronoKeep',
+      'mockup.search_placeholder': 'Pesquisar por configurações',
+      'mockup.nav_home': 'Início',
+      'mockup.nav_games': 'Jogos',
+      'mockup.nav_providers': 'Provedores de Backup',
+      'mockup.nav_saves': 'Saves Órfãos',
+      'mockup.nav_logs': 'Logs do Sistema',
+      'mockup.nav_about': 'Sobre',
+      'mockup.nav_settings': 'Configurações',
+      'mockup.nav_github': 'Repositório GitHub',
+      'mockup.daemon_active': 'Daemon Ativo',
+      'mockup.page_home': 'Início',
+      'mockup.quick_access': 'Acesso rápido',
+      'mockup.tile_install': 'Instalar na Steam',
+      'mockup.tile_daemon': 'Parar Daemon',
+      'mockup.tile_vault': 'Abrir Cofre',
+      'mockup.tile_steam': 'Pasta Steam',
+      'mockup.tile_drive': 'Drive Conectado',
+      'mockup.tile_logs': 'Ver Logs',
+      'mockup.utilities': 'Utilitários e Serviços',
+      'mockup.daemon_desc': 'Serviço de sincronização ativo em segundo plano',
+      'mockup.ost_desc': 'Habilitação do recurso [cloud] no opensteamtool.toml',
+      'mockup.active': 'Ativo',
+      'mockup.check_deps': 'Verificar Dependências',
+      'mockup.gdrive_desc': 'Conta Google vinculada — Sincronização em nuvem ativa',
+      'mockup.disconnect': 'Desconectar',
 
       'features.pill': 'Funcionalidades Principais',
       'features.title': 'Segurança e Praticidade para Seus Jogos',
@@ -131,21 +143,33 @@
       'hero.check2': 'Smart Save Protection (Newer saves are never lost)',
       'hero.check3': '100% Free & Open Source (MIT)',
 
-      'mockup.title': 'ChronoKeep — Control Center',
-      'mockup.tab_home': 'Home',
-      'mockup.tab_games': 'Games & Saves',
-      'mockup.tab_vault': 'Local Vault',
-      'mockup.tab_cloud': 'Google Drive',
-      'mockup.status_title': 'Active & Protected Cloud Sync',
-      'mockup.status_sub': 'Google Drive: Connected • Local Vault: Active',
-      'mockup.status_synced': '● Synced',
-      'mockup.stat_games': 'Saved Games',
-      'mockup.stat_snapshots': 'Vault Backups',
-      'mockup.stat_cloud': 'Cloud Storage',
-      'mockup.badge_synced': '✓ Cloud OK',
-      'mockup.time_now': 'Just now',
-      'mockup.time_min': '12m ago',
-      'mockup.time_yesterday': 'Yesterday',
+      // Real Mockup Labels (EN)
+      'mockup.app_header': 'ChronoKeep Settings',
+      'mockup.search_placeholder': 'Search settings',
+      'mockup.nav_home': 'Home',
+      'mockup.nav_games': 'Games',
+      'mockup.nav_providers': 'Backup Providers',
+      'mockup.nav_saves': 'Orphan Saves',
+      'mockup.nav_logs': 'System Logs',
+      'mockup.nav_about': 'About',
+      'mockup.nav_settings': 'Settings',
+      'mockup.nav_github': 'GitHub Repository',
+      'mockup.daemon_active': 'Daemon Active',
+      'mockup.page_home': 'Home',
+      'mockup.quick_access': 'Quick Access',
+      'mockup.tile_install': 'Install on Steam',
+      'mockup.tile_daemon': 'Stop Daemon',
+      'mockup.tile_vault': 'Open Vault',
+      'mockup.tile_steam': 'Steam Folder',
+      'mockup.tile_drive': 'Drive Connected',
+      'mockup.tile_logs': 'View Logs',
+      'mockup.utilities': 'Utilities & Services',
+      'mockup.daemon_desc': 'Background sync service currently running',
+      'mockup.ost_desc': 'Enabling [cloud] feature in opensteamtool.toml',
+      'mockup.active': 'Active',
+      'mockup.check_deps': 'Check Dependencies',
+      'mockup.gdrive_desc': 'Google Account linked — Cloud sync active',
+      'mockup.disconnect': 'Disconnect',
 
       'features.pill': 'Core Features',
       'features.title': 'Safety & Simplicity for Your Games',
@@ -241,6 +265,14 @@
         el.innerHTML = i18nData[lang][key];
       }
     });
+
+    const placeholders = document.querySelectorAll('[data-i18n-placeholder]');
+    placeholders.forEach(function (el) {
+      const key = el.getAttribute('data-i18n-placeholder');
+      if (i18nData[lang][key]) {
+        el.setAttribute('placeholder', i18nData[lang][key]);
+      }
+    });
   }
 
   // 3. Theme Management
@@ -277,7 +309,6 @@
         heroVersionText.textContent = `${currentLang === 'pt-BR' ? 'Versão Estável' : 'Stable Version'} ${tagName} • Windows 10/11`;
       }
     } catch (e) {
-      // Graceful fallback to static v1.0.4 on rate limits or offline
       console.warn('Using static release fallback:', e);
     }
   }

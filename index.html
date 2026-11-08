@@ -195,14 +195,14 @@
           </div>
         </div>
 
-        <!-- Windows 11 Fluent App Window Mockup (Spacious Desktop Proportions) -->
+        <!-- Windows 11 Fluent App Window Mockup (100% Fiel à Interface Real do ChronoKeep) -->
         <div class="hero-visual" aria-hidden="true">
           <div class="fluent-window-frame">
             <!-- Win11 Titlebar -->
             <div class="window-titlebar">
               <div class="window-info">
                 <img src="app-logo.png" alt="" class="window-logo">
-                <span class="window-title" data-i18n="mockup.title">ChronoKeep — Painel de Controle</span>
+                <span class="window-title">ChronoKeep</span>
               </div>
               <div class="window-controls">
                 <span class="control-btn minimize">―</span>
@@ -211,113 +211,272 @@
               </div>
             </div>
 
-            <!-- Win11 App Content Inside Mockup -->
+            <!-- Integrated App Subheader with Search -->
+            <div class="mockup-app-subheader">
+              <div class="subheader-brand">
+                <img src="app-logo.png" alt="" class="subheader-logo">
+                <span class="subheader-title" data-i18n="mockup.app_header">Configurações do ChronoKeep</span>
+              </div>
+              <div class="mockup-search-box">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <span class="mockup-search-placeholder" data-i18n="mockup.search_placeholder">Pesquisar por configurações</span>
+              </div>
+            </div>
+
+            <!-- Real App Body Layout -->
             <div class="window-body">
-              <!-- Left Sidebar -->
+              <!-- Left Sidebar Navigation Rail -->
               <aside class="mockup-sidebar">
-                <div class="mockup-nav-item active">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                  </svg>
-                  <span data-i18n="mockup.tab_home">Início</span>
+                <div class="mockup-nav-group top">
+                  <div class="mockup-nav-item active">
+                    <span class="mockup-active-bar"></span>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                      <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                    </svg>
+                    <span data-i18n="mockup.nav_home">Início</span>
+                  </div>
+
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                      <path d="M6 12h4m-2-2v4m7-3a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path>
+                    </svg>
+                    <span data-i18n="mockup.nav_games">Jogos</span>
+                  </div>
+
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                    </svg>
+                    <span data-i18n="mockup.nav_providers">Provedores de Backup</span>
+                  </div>
+
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                    </svg>
+                    <span data-i18n="mockup.nav_saves">Saves Órfãos</span>
+                  </div>
+
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="4 17 10 11 4 5"></polyline>
+                      <line x1="12" y1="19" x2="20" y2="19"></line>
+                    </svg>
+                    <span data-i18n="mockup.nav_logs">Logs do Sistema</span>
+                  </div>
+
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="16" x2="12" y2="12"></line>
+                      <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                    <span data-i18n="mockup.nav_about">Sobre</span>
+                  </div>
                 </div>
-                <div class="mockup-nav-item">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                    <line x1="8" y1="21" x2="16" y2="21"></line>
-                    <line x1="12" y1="17" x2="12" y2="21"></line>
-                  </svg>
-                  <span data-i18n="mockup.tab_games">Jogos & Saves</span>
-                </div>
-                <div class="mockup-nav-item">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                  </svg>
-                  <span data-i18n="mockup.tab_vault">Cofre Local</span>
-                </div>
-                <div class="mockup-nav-item">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
-                  </svg>
-                  <span data-i18n="mockup.tab_cloud">Google Drive</span>
+
+                <div class="mockup-nav-group bottom">
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3"></circle>
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span data-i18n="mockup.nav_settings">Configurações</span>
+                  </div>
+                  <div class="mockup-nav-item">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+                    </svg>
+                    <span data-i18n="mockup.nav_github">Repositório GitHub</span>
+                  </div>
+
+                  <div class="mockup-system-status">
+                    <span class="status-dot-mini"></span>
+                    <span data-i18n="mockup.daemon_active">Daemon Ativo</span>
+                  </div>
+
+                  <div class="mockup-sidebar-versions">
+                    <div><span>GUI:</span> <strong>v1.0.4</strong></div>
+                    <div><span>DLL:</span> <strong>v1.0.4</strong></div>
+                    <div><span>DAEMON:</span> <strong>v1.0.4</strong></div>
+                  </div>
                 </div>
               </aside>
 
-              <!-- Main View -->
+              <!-- Main Viewport: Exact replica of the Home Screen -->
               <div class="mockup-main">
-                <!-- Status Banner -->
-                <div class="mockup-banner">
-                  <div class="banner-status">
-                    <span class="status-indicator-live"></span>
+                <div class="mockup-view-header">
+                  <h2 class="mockup-page-title" data-i18n="mockup.page_home">Início</h2>
+                </div>
+
+                <!-- Hero Status Card -->
+                <div class="mockup-hero-card">
+                  <div class="mockup-hero-left">
+                    <div class="mockup-globe-icon">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+                        <path d="M2 12h20"></path>
+                      </svg>
+                    </div>
                     <div>
-                      <div class="banner-title" data-i18n="mockup.status_title">Sincronização Ativa & Protegida</div>
-                      <div class="banner-sub" data-i18n="mockup.status_sub">Google Drive Conectado • Cofre Local Ativo</div>
+                      <div class="mockup-hero-title">ChronoKeep Cloud Save</div>
+                      <div class="mockup-hero-sub">v1.0.4 — Sincronização Steam Cloud Clean-Room</div>
                     </div>
                   </div>
-                  <span class="badge badge-success" data-i18n="mockup.status_synced">● Sincronizado</span>
-                </div>
-
-                <!-- Stats Cards Row -->
-                <div class="mockup-stats-row">
-                  <div class="stat-card">
-                    <span class="stat-number">48</span>
-                    <span class="stat-label" data-i18n="mockup.stat_games">Jogos Salvos</span>
-                  </div>
-                  <div class="stat-card">
-                    <span class="stat-number">312</span>
-                    <span class="stat-label" data-i18n="mockup.stat_snapshots">Versões no Cofre</span>
-                  </div>
-                  <div class="stat-card">
-                    <span class="stat-number">1.4 GB</span>
-                    <span class="stat-label" data-i18n="mockup.stat_cloud">Espaço na Nuvem</span>
+                  <div class="mockup-hero-badges">
+                    <span class="mockup-badge-pill green">
+                      <span class="badge-dot-green"></span> Daemon Ativo
+                    </span>
+                    <span class="mockup-badge-pill green">
+                      <span class="badge-dot-green"></span> Google Drive Conectado
+                    </span>
                   </div>
                 </div>
 
-                <!-- Game Items List -->
-                <div class="mockup-games-list">
-                  <div class="mockup-game-row">
-                    <div class="game-info">
-                      <div class="game-avatar game-avatar-1">ER</div>
-                      <div>
-                        <div class="game-name">Elden Ring</div>
-                        <div class="game-meta">AppID: 1245620 • CN-42</div>
+                <!-- Two-Column Section: Acesso Rápido & Utilitários -->
+                <div class="mockup-two-col">
+                  <!-- Col 1: Acesso Rápido -->
+                  <div class="mockup-col">
+                    <div class="mockup-section-heading" data-i18n="mockup.quick_access">Acesso rápido</div>
+                    <div class="mockup-quick-grid">
+                      <div class="mockup-tile">
+                        <div class="tile-icon-box blue">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                          </svg>
+                        </div>
+                        <span class="mockup-tile-label" data-i18n="mockup.tile_install">Instalar na Steam</span>
                       </div>
-                    </div>
-                    <div class="game-sync-state">
-                      <span class="badge badge-success" data-i18n="mockup.badge_synced">✓ Nuvem OK</span>
-                      <span class="game-time" data-i18n="mockup.time_now">Agora mesmo</span>
+
+                      <div class="mockup-tile">
+                        <div class="tile-icon-box purple">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                          </svg>
+                        </div>
+                        <span class="mockup-tile-label" data-i18n="mockup.tile_daemon">Parar Daemon</span>
+                      </div>
+
+                      <div class="mockup-tile">
+                        <div class="tile-icon-box cyan">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                          </svg>
+                        </div>
+                        <span class="mockup-tile-label" data-i18n="mockup.tile_vault">Abrir Cofre</span>
+                      </div>
+
+                      <div class="mockup-tile">
+                        <div class="tile-icon-box teal">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polygon points="10 8 16 12 10 16 10 8"></polygon>
+                          </svg>
+                        </div>
+                        <span class="mockup-tile-label" data-i18n="mockup.tile_steam">Pasta Steam</span>
+                      </div>
+
+                      <div class="mockup-tile">
+                        <div class="tile-icon-box orange">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                          </svg>
+                        </div>
+                        <span class="mockup-tile-label" data-i18n="mockup.tile_drive">Drive Conectado</span>
+                      </div>
+
+                      <div class="mockup-tile">
+                        <div class="tile-icon-box green">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="8" y1="6" x2="21" y2="6"></line>
+                            <line x1="8" y1="12" x2="21" y2="12"></line>
+                            <line x1="8" y1="18" x2="21" y2="18"></line>
+                            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                          </svg>
+                        </div>
+                        <span class="mockup-tile-label" data-i18n="mockup.tile_logs">Ver Logs</span>
+                      </div>
                     </div>
                   </div>
 
-                  <div class="mockup-game-row">
-                    <div class="game-info">
-                      <div class="game-avatar game-avatar-2">BG3</div>
-                      <div>
-                        <div class="game-name">Baldur's Gate 3</div>
-                        <div class="game-meta">AppID: 1086940 • CN-18</div>
+                  <!-- Col 2: Utilitários e Serviços -->
+                  <div class="mockup-col">
+                    <div class="mockup-section-heading" data-i18n="mockup.utilities">Utilitários e Serviços</div>
+                    <div class="mockup-services-list">
+                      <!-- Service 1: Daemon -->
+                      <div class="mockup-service-card">
+                        <div class="service-left">
+                          <div class="service-icon-box">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                            </svg>
+                          </div>
+                          <div>
+                            <div class="service-name">ChronoKeep Daemon</div>
+                            <div class="service-desc" data-i18n="mockup.daemon_desc">Serviço de sincronização ativo em segundo plano</div>
+                          </div>
+                        </div>
+                        <div class="service-right">
+                          <span class="mockup-switch active"><span class="switch-knob"></span></span>
+                          <span class="mockup-refresh-btn">↻</span>
+                        </div>
                       </div>
-                    </div>
-                    <div class="game-sync-state">
-                      <span class="badge badge-success" data-i18n="mockup.badge_synced">✓ Nuvem OK</span>
-                      <span class="game-time" data-i18n="mockup.time_min">Há 12 min</span>
-                    </div>
-                  </div>
 
-                  <div class="mockup-game-row">
-                    <div class="game-info">
-                      <div class="game-avatar game-avatar-3">CP</div>
-                      <div>
-                        <div class="game-name">Cyberpunk 2077</div>
-                        <div class="game-meta">AppID: 1091500 • CN-89</div>
+                      <!-- Service 2: OpenSteamTool -->
+                      <div class="mockup-service-card">
+                        <div class="service-left">
+                          <div class="service-icon-box">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                          </div>
+                          <div>
+                            <div class="service-name">Redirecionamento OpenSteamTool</div>
+                            <div class="service-desc" data-i18n="mockup.ost_desc">Habilitação do recurso [cloud] no opensteamtool.toml</div>
+                          </div>
+                        </div>
+                        <div class="service-right">
+                          <span class="mockup-pill-active" data-i18n="mockup.active">Ativo</span>
+                          <span class="mockup-sm-btn" data-i18n="mockup.check_deps">Verificar Dependências</span>
+                        </div>
                       </div>
-                    </div>
-                    <div class="game-sync-state">
-                      <span class="badge badge-success" data-i18n="mockup.badge_synced">✓ Nuvem OK</span>
-                      <span class="game-time" data-i18n="mockup.time_yesterday">Ontem</span>
+
+                      <!-- Service 3: Google Drive -->
+                      <div class="mockup-service-card">
+                        <div class="service-left">
+                          <div class="service-icon-box">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                            </svg>
+                          </div>
+                          <div>
+                            <div class="service-name">Google Drive Sincronização</div>
+                            <div class="service-desc" data-i18n="mockup.gdrive_desc">Conta Google vinculada — Sincronização em nuvem ativa</div>
+                          </div>
+                        </div>
+                        <div class="service-right">
+                          <span class="mockup-sm-btn" data-i18n="mockup.disconnect">Desconectar</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
+
               </div>
             </div>
           </div>

@@ -123,7 +123,7 @@ body {
 /* Container */
 .container {
   width: 100%;
-  max-width: 1280px;
+  max-width: 1300px;
   margin: 0 auto;
   padding: 0 24px;
 }
@@ -149,7 +149,7 @@ body {
   align-items: center;
   justify-content: space-between;
   height: var(--nav-height);
-  max-width: 1280px;
+  max-width: 1300px;
   margin: 0 auto;
   padding: 0 24px;
   gap: 16px;
@@ -197,7 +197,7 @@ body {
   font-weight: 500;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
-  white-space: nowrap; /* Never breaks into 2 lines */
+  white-space: nowrap;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
@@ -365,18 +365,18 @@ body {
 }
 
 /* ==========================================================================
-   Hero Section & Windows 11 Desktop Mockup
+   Hero Section & Layout
    ========================================================================== */
 .hero-section {
-  padding: 50px 0 70px;
+  padding: 48px 0 64px;
   position: relative;
 }
 
 .hero-container {
   display: grid;
-  grid-template-columns: 1fr 1.22fr; /* Give mockup ample room */
+  grid-template-columns: 1fr 1.38fr; /* Wide proportion for the real desktop UI */
   align-items: center;
-  gap: 44px;
+  gap: 36px;
 }
 
 .hero-pill-badge {
@@ -409,11 +409,11 @@ body {
 }
 
 .hero-title {
-  font-size: 3rem;
+  font-size: 2.9rem;
   line-height: 1.15;
   font-weight: 700;
   letter-spacing: -0.025em;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .gradient-text {
@@ -424,10 +424,10 @@ body {
 }
 
 .hero-description {
-  font-size: 1.08rem;
+  font-size: 1.05rem;
   color: var(--text-secondary);
-  margin-bottom: 28px;
-  max-width: 520px;
+  margin-bottom: 26px;
+  max-width: 500px;
   line-height: 1.6;
 }
 
@@ -439,7 +439,7 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 28px;
+  margin-bottom: 26px;
   flex-wrap: wrap;
 }
 
@@ -463,7 +463,7 @@ body {
 }
 
 /* ==========================================================================
-   Spacious, Proportional Windows 11 Fluent App Mockup
+   Real ChronoKeep Window Mockup (100% Faithful Replica)
    ========================================================================== */
 .hero-visual {
   width: 100%;
@@ -471,7 +471,7 @@ body {
 
 .fluent-window-frame {
   width: 100%;
-  background: rgba(30, 30, 30, 0.94);
+  background: rgba(26, 26, 26, 0.94);
   backdrop-filter: blur(40px);
   -webkit-backdrop-filter: blur(40px);
   border: 1px solid var(--card-border-strong);
@@ -482,7 +482,7 @@ body {
 }
 
 [data-theme="light"] .fluent-window-frame {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(248, 248, 248, 0.96);
 }
 
 .fluent-window-frame:hover {
@@ -495,15 +495,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 38px;
-  padding: 0 16px;
-  background: rgba(20, 20, 20, 0.45);
+  height: 34px;
+  padding: 0 14px;
+  background: rgba(18, 18, 18, 0.5);
   border-bottom: 1px solid var(--card-border);
   user-select: none;
 }
 
 [data-theme="light"] .window-titlebar {
-  background: rgba(240, 240, 240, 0.65);
+  background: rgba(240, 240, 240, 0.7);
 }
 
 .window-info {
@@ -513,12 +513,12 @@ body {
 }
 
 .window-logo {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .window-title {
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   color: var(--text-secondary);
   font-weight: 500;
 }
@@ -527,7 +527,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--text-tertiary);
 }
 
@@ -548,190 +548,393 @@ body {
   color: #fff;
 }
 
-/* Mockup Body Layout - Spacious 2-Column Desktop Architecture */
-.window-body {
-  display: grid;
-  grid-template-columns: 135px 1fr;
-  min-height: 330px;
+/* App Subheader with Search */
+.mockup-app-subheader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--card-border);
 }
 
+.subheader-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.subheader-logo {
+  width: 20px;
+  height: 20px;
+}
+
+.subheader-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mockup-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  width: 240px;
+}
+
+[data-theme="light"] .mockup-search-box {
+  background: #FFFFFF;
+}
+
+/* Real App Body */
+.window-body {
+  display: grid;
+  grid-template-columns: 145px 1fr;
+  min-height: 400px;
+}
+
+/* Left Sidebar Rail */
 .mockup-sidebar {
   background: rgba(255, 255, 255, 0.02);
   border-right: 1px solid var(--card-border);
-  padding: 14px 8px;
+  padding: 12px 6px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: space-between;
+}
+
+.mockup-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .mockup-nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border-radius: var(--radius-sm);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   color: var(--text-secondary);
   cursor: pointer;
+  position: relative;
   transition: background var(--transition-fast);
   white-space: nowrap;
 }
 
-.mockup-nav-item.active {
-  background: var(--bg-subtle-active);
-  color: var(--accent-color);
-  font-weight: 600;
-  border-left: 3px solid var(--accent-color);
+.mockup-nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.8;
 }
 
+.mockup-nav-item.active {
+  background: var(--bg-subtle-active);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.mockup-active-bar {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-color);
+}
+
+.mockup-system-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.status-dot-mini {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success-color);
+  box-shadow: 0 0 6px var(--success-color);
+}
+
+.mockup-sidebar-versions {
+  padding: 6px 10px;
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--card-border);
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mockup-sidebar-versions strong {
+  color: var(--text-secondary);
+}
+
+/* Main Real Content View */
 .mockup-main {
-  padding: 16px 20px;
+  padding: 14px 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-/* Banner */
-.mockup-banner {
+.mockup-page-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Hero Status Banner */
+.mockup-hero-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: var(--bg-subtle);
+  background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
   gap: 12px;
 }
 
-.banner-status {
+.mockup-hero-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
-.status-indicator-live {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--success-color);
-  box-shadow: 0 0 8px var(--success-color);
+.mockup-globe-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 120, 212, 0.18);
+  color: var(--accent-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
-.banner-title {
+.mockup-hero-title {
   font-size: 0.82rem;
   font-weight: 600;
-  line-height: 1.25;
-}
-
-.banner-sub {
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-  line-height: 1.2;
-}
-
-/* Stats */
-.mockup-stats-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.stat-card {
-  background: var(--bg-subtle);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-number {
-  font-size: 1.15rem;
-  font-weight: 700;
   color: var(--text-primary);
-  line-height: 1.2;
 }
 
-.stat-label {
+.mockup-hero-sub {
   font-size: 0.68rem;
-  color: var(--text-tertiary);
-  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.mockup-hero-badges {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mockup-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
-/* Games List */
-.mockup-games-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.badge-dot-green {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success-color);
 }
 
-.mockup-game-row {
+/* Two-Column Grid: Acesso Rápido & Utilitários */
+.mockup-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 14px;
+}
+
+.mockup-section-heading {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+/* Quick Access Grid Tiles (3x2) */
+.mockup-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.mockup-tile {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.mockup-tile:hover {
+  background: var(--card-bg-hover);
+  border-color: var(--card-border-strong);
+  transform: translateY(-1px);
+}
+
+.tile-icon-box {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tile-icon-box.blue { background: rgba(0, 120, 212, 0.18); color: #60CDFF; }
+.tile-icon-box.purple { background: rgba(135, 100, 230, 0.18); color: #B388FF; }
+.tile-icon-box.cyan { background: rgba(0, 180, 216, 0.18); color: #48CAE4; }
+.tile-icon-box.teal { background: rgba(16, 185, 129, 0.18); color: #34D399; }
+.tile-icon-box.orange { background: rgba(245, 158, 11, 0.18); color: #FBBF24; }
+.tile-icon-box.green { background: rgba(34, 197, 94, 0.18); color: #4ADE80; }
+
+.mockup-tile-label {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.15;
+}
+
+/* Utilitários e Serviços List */
+.mockup-services-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mockup-service-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-sm);
-  gap: 12px;
-  transition: background var(--transition-fast);
+  gap: 8px;
 }
 
-.mockup-game-row:hover {
-  background: var(--bg-subtle-hover);
-}
-
-.game-info {
+.service-left {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
-.game-avatar {
+.service-icon-box {
   width: 28px;
   height: 28px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--accent-color);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: #fff;
   flex-shrink: 0;
 }
 
-.game-avatar-1 { background: linear-gradient(135deg, #f5af19, #e65c00); }
-.game-avatar-2 { background: linear-gradient(135deg, #8a2387, #e94057); }
-.game-avatar-3 { background: linear-gradient(135deg, #00c6ff, #0072ff); }
-
-.game-name {
-  font-size: 0.82rem;
+.service-name {
+  font-size: 0.72rem;
   font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.service-desc {
+  font-size: 0.62rem;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.game-meta {
-  font-size: 0.68rem;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-}
-
-.game-sync-state {
+.service-right {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.game-time {
-  font-size: 0.65rem;
+/* Controls inside service cards */
+.mockup-switch {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.mockup-switch .switch-knob {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  transform: translateX(14px);
+}
+
+.mockup-refresh-btn {
+  font-size: 0.8rem;
   color: var(--text-tertiary);
-  margin-top: 2px;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.mockup-pill-active {
+  background: rgba(108, 203, 95, 0.18);
+  color: #6CCB5F;
+  border: 1px solid rgba(108, 203, 95, 0.3);
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.mockup-sm-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
+  font-size: 0.62rem;
+  font-weight: 500;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
 
@@ -1207,7 +1410,7 @@ body {
 /* ==========================================================================
    Responsive Breakpoints
    ========================================================================== */
-@media (max-width: 1080px) {
+@media (max-width: 1150px) {
   .hero-container {
     grid-template-columns: 1fr;
     text-align: center;
@@ -1233,7 +1436,7 @@ body {
   }
 
   .fluent-window-frame {
-    max-width: 650px;
+    max-width: 760px;
     margin: 0 auto;
   }
 
@@ -1293,7 +1496,11 @@ body {
   }
 
   .mockup-sidebar {
-    display: none; /* Hide sidebar on small viewports for ultra clean card view */
+    display: none;
+  }
+
+  .mockup-two-col {
+    grid-template-columns: 1fr;
   }
 
   .dl-requirements-grid {
