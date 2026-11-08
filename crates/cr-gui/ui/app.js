@@ -69,7 +69,7 @@ function applyLanguage(pref, refreshDynamic = true) {
     const resolved = window.ChronoI18n.resolveLocale(normalizedPref, osLocale);
     window.ChronoI18n.setLocale(resolved);
     window.ChronoI18n.applyI18nToDOM();
-    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v1.0.1";
+    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v1.0.2";
     const vStr = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
     const heroVerEl = document.getElementById("hero-version");
     if (heroVerEl) heroVerEl.textContent = t("home.hero_version", { version: vStr });
@@ -120,6 +120,15 @@ function refreshSystemInfoUI() {
   const metaBridge = document.getElementById("meta-bridge-cur");
   if (metaDaemon && sysInfoCache.daemon_version) metaDaemon.textContent = formatVersionLabel(sysInfoCache.daemon_version);
   if (metaBridge && sysInfoCache.dll_version) metaBridge.textContent = formatVersionLabel(sysInfoCache.dll_version);
+
+  const legacyBanner = document.getElementById("home-legacy-bridge-banner");
+  if (legacyBanner) {
+    if (sysInfoCache.legacy_bridge_detected) {
+      legacyBanner.style.display = "flex";
+    } else {
+      legacyBanner.style.display = "none";
+    }
+  }
 }
 
 async function reloadSystemState() {
@@ -317,6 +326,11 @@ window.openExternalUrl = (url) => {
   }
 };
 
+window.triggerRepairBridgeFromModal = () => {
+  document.getElementById("btn-dep-cancel")?.click();
+  document.getElementById("btn-repair-legacy-bridge")?.click();
+};
+
 let currentDependenciesReport = null;
 
 async function checkAndShowDependenciesModal(onProceed = null) {
@@ -372,6 +386,12 @@ async function checkAndShowDependenciesModal(onProceed = null) {
         const btnStyle = item.action_type === "download" ? "btn-primary" : "btn-secondary";
         actionBtn = `
           <button type="button" class="btn ${btnStyle} btn-sm" style="margin-top: 8px; font-size: 11.5px; padding: 5px 12px;" onclick="window.openExternalUrl('${item.action_target}')">
+            ${item.action_label}
+          </button>
+        `;
+      } else if (item.action_type === "repair_bridge") {
+        actionBtn = `
+          <button type="button" class="btn btn-primary btn-sm" style="margin-top: 8px; font-size: 11.5px; padding: 5px 12px; background: #D97706; border-color: #F59E0B;" onclick="window.triggerRepairBridgeFromModal()">
             ${item.action_label}
           </button>
         `;
@@ -830,6 +850,34 @@ function setupActionHandlers() {
     }
   });
 
+  // Home Banner: Repair Legacy Bridge Button
+  document.getElementById("btn-repair-legacy-bridge")?.addEventListener("click", async () => {
+    let isSteamOpen = false;
+    try {
+      isSteamOpen = await invokeBackend("is_steam_running");
+    } catch (_) {}
+
+    if (isSteamOpen) {
+      const confirmed = await confirmSteamRestart(t("modal.steam_restart_comp_bridge"));
+      if (!confirmed) return;
+    }
+
+    showToast(t("toast.repairing_bridge"));
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const res = await invokeBackend("repair_bridge", { steamDir });
+      if (res && res.success) {
+        showToast(res.message);
+        await reloadSystemState();
+      } else {
+        showToast(res ? res.message : t("toast.repair_failed"));
+      }
+    } catch (e) {
+      showToast(t("toast.repair_error", { error: e }));
+    }
+  });
+
   // Home Card: Check Dependencies Button
   document.getElementById("btn-home-check-deps")?.addEventListener("click", () => {
     checkAndShowDependenciesModal(runInstallPipeline);
@@ -915,6 +963,9 @@ function setupActionHandlers() {
   // Google Drive Action (Connect / Disconnect)
   const gdriveAction = async () => {
     if (appConfig.gdrive_connected) {
+      const confirmed = await confirmGDriveDisconnect();
+      if (!confirmed) return;
+
       const res = await invokeBackend("disconnect_google", { steamDir: appConfig.steam_dir });
       showToast(res ? res.message : t("toast.gdrive_disconnected"));
       updateGDriveStatusUI(false);
@@ -2996,6 +3047,47 @@ function confirmSteamRestart(componentLabel = "") {
 
     if (compName) {
       compName.textContent = componentLabel;
+    }
+
+    modal.style.display = "flex";
+
+    const onKeydown = (e) => {
+      if (e.key === "Escape") {
+        cleanup(false);
+      }
+    };
+
+    const onOverlayClick = (e) => {
+      if (e.target === modal) {
+        cleanup(false);
+      }
+    };
+
+    const cleanup = (result) => {
+      window.removeEventListener("keydown", onKeydown);
+      modal.removeEventListener("click", onOverlayClick);
+      modal.style.display = "none";
+      btnCancel.onclick = null;
+      btnConfirm.onclick = null;
+      resolve(result);
+    };
+
+    btnCancel.onclick = () => cleanup(false);
+    btnConfirm.onclick = () => cleanup(true);
+    modal.addEventListener("click", onOverlayClick);
+    window.addEventListener("keydown", onKeydown);
+  });
+}
+
+function confirmGDriveDisconnect() {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("gdrive-disconnect-modal");
+    const btnCancel = document.getElementById("btn-gdrive-disconnect-cancel");
+    const btnConfirm = document.getElementById("btn-gdrive-disconnect-confirm");
+
+    if (!modal || !btnCancel || !btnConfirm) {
+      resolve(true);
+      return;
     }
 
     modal.style.display = "flex";
