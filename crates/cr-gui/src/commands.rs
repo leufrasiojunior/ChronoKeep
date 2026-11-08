@@ -170,6 +170,10 @@ pub struct SystemInfoDto {
     pub daemon_version: String,
     #[serde(default)]
     pub os_locale: String,
+    #[serde(default)]
+    pub legacy_bridge_detected: bool,
+    #[serde(default)]
+    pub bridge_status: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -350,6 +354,20 @@ pub fn get_system_info() -> SystemInfoDto {
     };
     let dll_version = crate::updater::detect_bridge_version(&bridge_path, "", &gui_ver, lang);
 
+    // Validação da integridade do hook Steam (cloud_redirect.dll / chronokeep.dll)
+    let redirect_dll = s_path.join("cloud_redirect.dll");
+    let chronokeep_dll = s_path.join("chronokeep.dll");
+    let legacy_bridge_detected = (redirect_dll.exists() && !cr_common::config::is_chronokeep_bridge(&redirect_dll))
+        || (!redirect_dll.exists() && chronokeep_dll.exists() && !cr_common::config::is_chronokeep_bridge(&chronokeep_dll));
+
+    let bridge_status = if legacy_bridge_detected {
+        "legacy_detected".to_string()
+    } else if redirect_dll.exists() || chronokeep_dll.exists() {
+        "valid".to_string()
+    } else {
+        "missing".to_string()
+    };
+
     SystemInfoDto {
         steam_dir,
         vault_dir,
@@ -360,6 +378,8 @@ pub fn get_system_info() -> SystemInfoDto {
         dll_version,
         daemon_version,
         os_locale,
+        legacy_bridge_detected,
+        bridge_status,
     }
 }
 
@@ -760,6 +780,56 @@ pub fn check_system_dependencies(steam_dir: Option<String>) -> DependencyReportD
         },
     });
 
+    // 4. Hook de Nuvem Steam (cloud_redirect.dll / chronokeep.dll)
+    let redirect_path = s_path.join("cloud_redirect.dll");
+    let legacy_detected = redirect_path.exists() && !cr_common::config::is_chronokeep_bridge(&redirect_path);
+    let hook_ok = !legacy_detected;
+    if redirect_path.exists() || legacy_detected {
+        items.push(DependencyItemDto {
+            id: "steam_hook".to_string(),
+            name: if lang.is_pt() {
+                "Integridade do Hook Steam (cloud_redirect.dll)".to_string()
+            } else {
+                "Steam Hook Integrity (cloud_redirect.dll)".to_string()
+            },
+            is_required: false,
+            is_installed: hook_ok,
+            status_text: if legacy_detected {
+                if lang.is_pt() {
+                    "Sobrescrito por ferramenta de terceiros (Legado)".to_string()
+                } else {
+                    "Overwritten by third-party tool (Legacy)".to_string()
+                }
+            } else {
+                if lang.is_pt() {
+                    "ChronoKeep Bridge Válido".to_string()
+                } else {
+                    "Valid ChronoKeep Bridge".to_string()
+                }
+            },
+            description: if legacy_detected {
+                if lang.is_pt() {
+                    "Uma versão antiga de outra ferramenta está na pasta da Steam. O ChronoKeep precisa ser reinstalado por cima para que o envio de saves funcione.".to_string()
+                } else {
+                    "An old version from another tool is in the Steam folder. ChronoKeep needs to be repaired/reinstalled over it for save syncing to work.".to_string()
+                }
+            } else {
+                if lang.is_pt() {
+                    "O hook de redirecionamento está configurado com a versão oficial do ChronoKeep.".to_string()
+                } else {
+                    "The cloud redirect hook is configured with the official ChronoKeep version.".to_string()
+                }
+            },
+            action_type: if legacy_detected { "repair_bridge".to_string() } else { "none".to_string() },
+            action_target: String::new(),
+            action_label: if legacy_detected {
+                if lang.is_pt() { "Reparar e Instalar por Cima".to_string() } else { "Repair and Overwrite".to_string() }
+            } else {
+                String::new()
+            },
+        });
+    }
+
     let can_install = vc_ok && steam_ok;
     let all_ok = can_install && tp_ok;
     let has_missing_required = !can_install;
@@ -832,9 +902,10 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     );
     let _ = deploy_component(
         &s_path.join("cloud_redirect.dll"),
-        "cloud_redirect.dll",
+        "chronokeep.dll",
         get_embedded_bridge(),
     );
+    cr_common::config::lock_file_readonly(&s_path.join("cloud_redirect.dll"));
     let daemon_ok = deploy_component(
         &s_path.join("chrono-daemon.exe"),
         "chrono-daemon.exe",
@@ -1029,6 +1100,7 @@ pub fn uninstall_chronokeep(
 
     // 4. Deletar os binários do ChronoKeep da pasta da Steam
     let _ = fs::remove_file(steam_path.join("chronokeep.dll"));
+    cr_common::config::unlock_file_readonly(&steam_path.join("cloud_redirect.dll"));
     let _ = fs::remove_file(steam_path.join("cloud_redirect.dll"));
     let _ = fs::remove_file(steam_path.join("chrono-daemon.exe"));
     let _ = fs::remove_file(steam_path.join("chronokeep_bridge.log"));
@@ -1075,6 +1147,88 @@ pub fn uninstall_chronokeep(
     OperationResult {
         success: true,
         message: msg,
+    }
+}
+
+#[tauri::command]
+pub fn repair_bridge(steam_dir: Option<String>) -> OperationResult {
+    let s_dir = steam_dir.unwrap_or_else(load_preferred_steam_dir);
+    let s_path = Path::new(&s_dir);
+    let lang = crate::i18n::current_lang(Some(s_path));
+
+    if !s_path.exists() {
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "A pasta da Steam informada não foi encontrada.".to_string()
+            } else {
+                "The specified Steam folder was not found.".to_string()
+            },
+        };
+    }
+
+    // 1. Fechar a Steam se em execução para descarregar DLLs da memória
+    let steam_was_running = is_process_running("steam.exe");
+    if steam_was_running {
+        kill_process_and_wait("steam.exe", 5000);
+    }
+
+    let target_chronokeep = s_path.join("chronokeep.dll");
+    let target_redirect = s_path.join("cloud_redirect.dll");
+
+    // 2. Destravar permissões somente leitura caso já estivessem ativas
+    for p in [&target_chronokeep, &target_redirect] {
+        if p.exists() {
+            cr_common::config::unlock_file_readonly(p);
+        }
+    }
+
+    // 3. Implantar bridge oficial em ambos os destinos
+    let bridge_bytes = get_embedded_bridge();
+    let ok1 = deploy_component(&target_chronokeep, "chronokeep.dll", bridge_bytes);
+    let ok2 = deploy_component(&target_redirect, "chronokeep.dll", bridge_bytes);
+
+    if !ok1 || !ok2 {
+        if steam_was_running {
+            launch_steam(s_path);
+        }
+        return OperationResult {
+            success: false,
+            message: if lang.is_pt() {
+                "Falha ao restaurar arquivos de bridge na pasta da Steam. Verifique permissões de gravação.".to_string()
+            } else {
+                "Failed to restore bridge files to the Steam folder. Check write permissions.".to_string()
+            },
+        };
+    }
+
+    // 4. Bloquear cloud_redirect.dll como Somente Leitura para proteção contra ferramentas terceiras
+    cr_common::config::lock_file_readonly(&target_redirect);
+
+    // 5. Garantir que opensteamtool.toml está com [cloud] enabled = true
+    ensure_opensteamtool_cloud_enabled(s_path);
+
+    // 6. Se a Steam estava rodando, relança
+    if steam_was_running {
+        std::thread::sleep(Duration::from_millis(600));
+        launch_steam(s_path);
+    }
+
+    OperationResult {
+        success: true,
+        message: if lang.is_pt() {
+            if steam_was_running {
+                "ChronoKeep Bridge restaurado com sucesso e protegido contra alterações! A Steam foi reiniciada.".to_string()
+            } else {
+                "ChronoKeep Bridge restaurado e protegido contra alterações com sucesso!".to_string()
+            }
+        } else {
+            if steam_was_running {
+                "ChronoKeep Bridge restored and write-protected successfully! Steam has been restarted.".to_string()
+            } else {
+                "ChronoKeep Bridge restored and write-protected successfully!".to_string()
+            }
+        },
     }
 }
 

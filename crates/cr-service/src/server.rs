@@ -108,6 +108,17 @@ pub fn handle_connection(
             ),
         );
 
+        if let Some(ref sp) = steam_path {
+            let s_dir = Path::new(sp);
+            let redir = s_dir.join("cloud_redirect.dll");
+            if redir.exists() && !cr_common::config::is_chronokeep_bridge(&redir) {
+                log_msg(
+                    &log_path,
+                    "[ALERTA] cloud_redirect.dll legada detectada na Steam! A sincronizacao pode falhar ou ser desviada por outra ferramenta.",
+                );
+            }
+        }
+
         if let Ok(mut guard) = engine.lock() {
             guard.update_session(steam_path.clone(), account_id, apps.clone());
             if let Some(ref sp) = steam_path {

@@ -119,7 +119,7 @@
         <div class="sidebar-versions" id="sidebar-versions">
           <div class="sidebar-version-item">
             <span class="sidebar-ver-key">GUI:</span>
-            <span class="sidebar-ver-val" id="sidebar-ver-gui">v1.0.1</span>
+            <span class="sidebar-ver-val" id="sidebar-ver-gui">v1.0.2</span>
           </div>
           <div class="sidebar-version-item">
             <span class="sidebar-ver-key">DLL:</span>
@@ -153,7 +153,7 @@
             </div>
             <div class="hero-info">
               <h3 class="hero-title" data-i18n="home.hero_title">ChronoKeep Cloud Save</h3>
-              <p class="hero-version" id="hero-version">v1.0.1 — Sincronização Steam Cloud Clean-Room</p>
+              <p class="hero-version" id="hero-version">v1.0.2 — Sincronização Steam Cloud Clean-Room</p>
             </div>
           </div>
 
@@ -167,6 +167,24 @@
               <span class="badge-text" id="hero-gdrive-text" data-i18n="status.gdrive_connected_badge">Google Drive Conectado</span>
             </div>
           </div>
+        </div>
+
+        <!-- Banner de Incompatibilidade / DLL Legada Detectada -->
+        <div class="home-alert-banner warning" id="home-legacy-bridge-banner" style="display: none;">
+          <div class="home-alert-content">
+            <div class="home-alert-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+            </div>
+            <div class="home-alert-texts">
+              <span class="home-alert-title" data-i18n="home.legacy_bridge_banner_title">Incompatibilidade Detectada na Steam</span>
+              <span class="home-alert-desc" data-i18n="home.legacy_bridge_banner_desc">Foi detectada uma versão antiga de outra ferramenta (cloud_redirect.dll legada). Os saves não sincronizarão com a nuvem até que o ChronoKeep seja restaurado por cima.</span>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" id="btn-repair-legacy-bridge" style="background: #D97706; border-color: #F59E0B;" data-i18n="home.legacy_bridge_banner_btn">Reparar e Instalar por Cima</button>
         </div>
 
         <!-- Banner de Atualização Disponível no Início -->
@@ -662,7 +680,7 @@
                   <div class="update-item-title" data-i18n="settings.comp_gui_title">ChronoKeep (Painel Interface)</div>
                   <div class="update-item-meta">
                     <span class="meta-label" data-i18n="settings.meta_installed_ver">Versão instalada:</span>
-                    <span class="meta-val" id="meta-gui-cur">v1.0.1</span>
+                    <span class="meta-val" id="meta-gui-cur">v1.0.2</span>
                     <span class="meta-sep">•</span>
                     <span class="meta-label" data-i18n="settings.meta_latest">Mais recente:</span>
                     <span class="meta-val" id="meta-gui-latest">-</span>
@@ -1024,7 +1042,7 @@
             </div>
             <div>
               <h2 class="about-name">ChronoKeep</h2>
-              <p class="about-desc" id="about-version">v1.0.1</p>
+              <p class="about-desc" id="about-version">v1.0.2</p>
             </div>
           </div>
 
@@ -1174,6 +1192,38 @@
       <div class="dialog-footer">
         <button id="btn-uninstall-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
         <button id="btn-uninstall-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;" data-i18n="modal.uninstall_confirm">Sim, Desinstalar ChronoKeep</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ContentDialog: Confirmação de Desconexão do Google Drive -->
+  <div id="gdrive-disconnect-modal" class="fluent-dialog-overlay" style="display: none;">
+    <div class="fluent-dialog" role="dialog" aria-modal="true" aria-labelledby="gdrive-disconnect-title">
+      <div class="dialog-header">
+        <div class="dialog-logo-center">
+          <img src="app-logo.png" alt="ChronoKeep Logo" class="dialog-logo-img">
+        </div>
+        <h2 id="gdrive-disconnect-title" class="dialog-title" data-i18n="modal.gdrive_disconnect_title">Desconectar Google Drive</h2>
+        <p class="dialog-subtitle" data-i18n="modal.gdrive_disconnect_subtitle">Desconexão da sincronização em nuvem</p>
+      </div>
+
+      <div class="dialog-body">
+        <p data-i18n-html="modal.gdrive_disconnect_body_html">Ao desconectar sua conta, a sincronização em nuvem e os backups automáticos com o Google Drive serão <strong>interrompidos temporariamente</strong> neste computador.</p>
+
+        <div class="dialog-callout safe">
+          <div class="callout-icon">🛡️</div>
+          <div class="callout-text">
+            <strong data-i18n="modal.gdrive_disconnect_safe_title">Seus saves estão seguros:</strong>
+            <p data-i18n-html="modal.gdrive_disconnect_safe_desc_html">Nenhum arquivo no seu computador ou no <strong>Cofre Local (Vault)</strong> será apagado. Os arquivos já salvos no seu Google Drive também permanecerão intactos.</p>
+          </div>
+        </div>
+
+        <p class="dialog-highlight-choice" data-i18n="modal.gdrive_disconnect_choice">Deseja realmente desconectar a conta do Google Drive?</p>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="btn-gdrive-disconnect-cancel" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+        <button id="btn-gdrive-disconnect-confirm" class="btn btn-primary" style="background: #E81123; border-color: #E81123;" data-i18n="modal.gdrive_disconnect_confirm">Sim, Desconectar</button>
       </div>
     </div>
   </div>

@@ -77,6 +77,7 @@ fn main() {
             update_component,
             get_launch_mode,
             uninstall_chronokeep,
+            repair_bridge,
             get_games_catalog,
             get_game_achievements,
             get_steam_api_key,
