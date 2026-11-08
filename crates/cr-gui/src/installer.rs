@@ -216,7 +216,7 @@ pub fn run_silent_install() -> i32 {
     kill_process_and_wait("chrono-daemon.exe", 2500);
 
     deploy_component(&steam_dir.join("chronokeep.dll"), "chronokeep.dll", crate::embedded::get_embedded_bridge());
-    deploy_component(&steam_dir.join("cloud_redirect.dll"), "cloud_redirect.dll", crate::embedded::get_embedded_bridge());
+    deploy_component(&steam_dir.join("cloud_redirect.dll"), "chronokeep.dll", crate::embedded::get_embedded_bridge());
     deploy_component(&steam_dir.join("chrono-daemon.exe"), "chrono-daemon.exe", crate::embedded::get_embedded_daemon());
 
     ensure_opensteamtool_cloud_enabled(steam_dir);
@@ -274,7 +274,7 @@ pub unsafe fn on_install_and_save(hwnd: HWND) {
     }
 
     let target_compat = steam_dir.join("cloud_redirect.dll");
-    if deploy_component(&target_compat, "cloud_redirect.dll", crate::embedded::get_embedded_bridge()) {
+    if deploy_component(&target_compat, "chronokeep.dll", crate::embedded::get_embedded_bridge()) {
         deployed_files.push("cloud_redirect.dll (compatibilidade OpenSteamTool/Hubcap)".to_string());
     }
 

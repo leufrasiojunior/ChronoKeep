@@ -324,11 +324,6 @@ pub fn find_companion_binary(bin_name: &str) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    let default_steam = PathBuf::from(detect_default_steam_dir());
-    let candidate = default_steam.join(bin_name);
-    if candidate.exists() {
-        return Some(candidate);
-    }
     None
 }
 

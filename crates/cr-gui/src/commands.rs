@@ -832,7 +832,7 @@ pub fn install_chronokeep(steam_dir: String, vault_dir: String) -> OperationResu
     );
     let _ = deploy_component(
         &s_path.join("cloud_redirect.dll"),
-        "cloud_redirect.dll",
+        "chronokeep.dll",
         get_embedded_bridge(),
     );
     let daemon_ok = deploy_component(

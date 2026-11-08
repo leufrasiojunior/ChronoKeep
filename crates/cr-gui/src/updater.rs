@@ -371,24 +371,33 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
     // 3. chronokeep.dll (Bridge Steam Cloud)
     let bridge_manifest = manifest.components.get("bridge")
         .or_else(|| manifest.components.get("bridge_dll"));
-    let bridge_path = if steam_dir.join("chronokeep.dll").exists() {
-        steam_dir.join("chronokeep.dll")
-    } else if steam_dir.join("cloud_redirect.dll").exists() {
-        steam_dir.join("cloud_redirect.dll")
-    } else {
-        steam_dir.join("chronokeep.dll")
-    };
+    let bridge_path = steam_dir.join("chronokeep.dll");
+    let redirect_path = steam_dir.join("cloud_redirect.dll");
     let bridge_latest_ver = bridge_manifest
         .and_then(|m| m.version.clone())
         .unwrap_or_else(|| manifest.release_version.clone());
 
     let (bridge_hash, bridge_status, bridge_ver, bridge_dl, bridge_filename) = if let Some(m) = bridge_manifest {
         let remote_hash = m.sha256.to_lowercase();
-        if bridge_path.exists() {
-            let current_hash = sha256_file(&bridge_path).unwrap_or_default().to_lowercase();
-            let ver = detect_bridge_version(&bridge_path, &remote_hash, &bridge_latest_ver, lang);
-            let status = if !remote_hash.is_empty() && current_hash == remote_hash {
+        if bridge_path.exists() || redirect_path.exists() {
+            let active_bridge = if bridge_path.exists() { &bridge_path } else { &redirect_path };
+            let current_hash = sha256_file(active_bridge).unwrap_or_default().to_lowercase();
+            let ver = detect_bridge_version(active_bridge, &remote_hash, &bridge_latest_ver, lang);
+
+            // OpenSteamTool utiliza cloud_redirect.dll, enquanto o ChronoKeep utiliza chronokeep.dll.
+            // Ambos devem existir e bater com o hash remoto para o bridge ser considerado atualizado.
+            let redirect_hash = if redirect_path.exists() {
+                sha256_file(&redirect_path).unwrap_or_default().to_lowercase()
+            } else {
+                String::new()
+            };
+            let redirect_ok = redirect_path.exists()
+                && (remote_hash.is_empty() || redirect_hash == remote_hash);
+
+            let status = if !remote_hash.is_empty() && current_hash == remote_hash && redirect_ok {
                 "up_to_date".to_string()
+            } else if !redirect_ok {
+                "update_available".to_string()
             } else if is_remote_newer(&ver, &bridge_latest_ver) {
                 "update_available".to_string()
             } else if ver == bridge_latest_ver {
