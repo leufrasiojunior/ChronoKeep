@@ -1,6 +1,6 @@
 {
-  "release_version": "v1.0.1",
-  "published_at": "2026-11-08T01:13:34Z",
+  "release_version": "v1.0.2",
+  "published_at": "2026-11-08T01:22:27Z",
   "components": {
     "gui": {
       "version": "v1.0.1",
