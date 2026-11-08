@@ -1,0 +1,308 @@
+name: Build and Release ChronoKeep
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'Componente a compilar e publicar'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'daemon'
+          - 'bridge'
+          - 'gui'
+      tag_name:
+        description: 'Tag de destino no GitHub Release (ex: v0.2.0 ou latest)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-manifest
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows Release Binaries
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Core Daemon & Bridge DLL
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'daemon' || inputs.component == 'bridge' || inputs.component == 'gui' }}
+        shell: pwsh
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: |
+          $comp = "${{ inputs.component }}"
+          if ($comp -eq "daemon") {
+            cargo build --release -p cr-service
+          } elseif ($comp -eq "bridge") {
+            cargo build --release -p cr-bridge-dll
+          } else {
+            cargo build --release -p cr-service -p cr-bridge-dll
+          }
+
+      - name: Update Embedded Binaries for Installer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path crates/cr-gui/embedded
+          $binDir = if (Test-Path "target/release/chrono-daemon.exe") { "target/release" } else { "target/x86_64-pc-windows-msvc/release" }
+          if (Test-Path "$binDir/chrono-daemon.exe") {
+            python scripts/pack_embedded.py "$binDir/chrono-daemon.exe" crates/cr-gui/embedded/chrono-daemon.bin
+          }
+          if (Test-Path "$binDir/chronokeep.dll") {
+            python scripts/pack_embedded.py "$binDir/chronokeep.dll" crates/cr-gui/embedded/chronokeep.bin
+          }
+          if (Test-Path dist/chronokeep.ini) {
+            Copy-Item -Force dist/chronokeep.ini crates/cr-gui/embedded/
+          }
+
+      - name: Build ChronoKeep Desktop App (ChronoKeep.exe)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
+        shell: pwsh
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: |
+          cargo build --release -p cr-gui
+
+      - name: Assemble Release Assets & Generate versions.json
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts
+          
+          function Get-SourceBin($fileName) {
+            if (Test-Path "target/release/$fileName") { return "target/release/$fileName" }
+            if (Test-Path "target/x86_64-pc-windows-msvc/release/$fileName") { return "target/x86_64-pc-windows-msvc/release/$fileName" }
+            return $null
+          }
+          
+          $comp = "${{ inputs.component }}"
+          if ($comp -eq "daemon" -or $comp -eq "all" -or [string]::IsNullOrWhiteSpace($comp)) {
+            $srcDaemon = Get-SourceBin "chrono-daemon.exe"
+            if ($srcDaemon) { Copy-Item -Force $srcDaemon release-artifacts/ }
+          }
+          if ($comp -eq "bridge" -or $comp -eq "all" -or [string]::IsNullOrWhiteSpace($comp)) {
+            $srcBridge = Get-SourceBin "chronokeep.dll"
+            if ($srcBridge) {
+              Copy-Item -Force $srcBridge release-artifacts/
+              Copy-Item -Force $srcBridge release-artifacts/cloud_redirect.dll
+            }
+          }
+          if ($comp -eq "gui" -or $comp -eq "all" -or [string]::IsNullOrWhiteSpace($comp)) {
+            $srcGui = Get-SourceBin "ChronoKeep.exe"
+            if ($srcGui) { Copy-Item -Force $srcGui release-artifacts/ }
+          }
+
+          # Calcula hashes SHA256 para os componentes gerados nesta execucao
+          $hashes = @{}
+          if (Test-Path "release-artifacts/ChronoKeep.exe") {
+            $hashes["gui"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/ChronoKeep.exe").Hash.ToLower()
+          }
+          if (Test-Path "release-artifacts/chrono-daemon.exe") {
+            $hashes["daemon"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/chrono-daemon.exe").Hash.ToLower()
+          }
+          if (Test-Path "release-artifacts/chronokeep.dll") {
+            $hashes["bridge"] = (Get-FileHash -Algorithm SHA256 "release-artifacts/chronokeep.dll").Hash.ToLower()
+          }
+
+          if ($hashes.Count -eq 0) {
+            throw "Nenhum binario foi encontrado em release-artifacts para empacotar ou publicar!"
+          }
+
+          # Obtem versoes semanticas individuais de cada Cargo.toml
+          $cargoTomlGui = Get-Content "crates/cr-gui/Cargo.toml" -Raw
+          $pkgVerGui = if ($cargoTomlGui -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $cargoTomlDaemon = Get-Content "crates/cr-service/Cargo.toml" -Raw
+          $pkgVerDaemon = if ($cargoTomlDaemon -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $cargoTomlBridge = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
+          $pkgVerBridge = if ($cargoTomlBridge -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $verTag = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
+            "${{ inputs.tag_name }}"
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            $env:GITHUB_REF_NAME
+          } else {
+            $pkgVerGui
+          }
+
+          # Carrega versions.json existente se houver para preservar componentes nao alterados
+          $manifestObj = $null
+          if (Test-Path "versions.json") {
+            try {
+              $manifestObj = Get-Content -Raw "versions.json" | ConvertFrom-Json
+            } catch {
+              $manifestObj = $null
+            }
+          }
+
+          if ($null -eq $manifestObj) {
+            $manifestObj = [PSCustomObject]@{
+              release_version = $verTag
+              published_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+              components = [PSCustomObject]@{}
+            }
+          } else {
+            $manifestObj.release_version = $verTag
+            $manifestObj.published_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            if ($null -eq $manifestObj.components) {
+              $manifestObj | Add-Member -NotePropertyName "components" -NotePropertyValue ([PSCustomObject]@{}) -Force
+            }
+          }
+
+          # Atualiza GUI se o artefato foi gerado nesta execucao (preserva outros componentes intactos)
+          if (Test-Path "release-artifacts/ChronoKeep.exe") {
+            $guiHash = $hashes["gui"]
+            if ([string]::IsNullOrWhiteSpace($guiHash)) { throw "SHA-256 para ChronoKeep.exe esta vazio!" }
+            $guiObj = [PSCustomObject]@{
+              version = $pkgVerGui
+              filename = "ChronoKeep.exe"
+              sha256 = $guiHash
+              download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
+            }
+            if ($null -ne $manifestObj.components.gui) {
+              $manifestObj.components.gui = $guiObj
+            } else {
+              $manifestObj.components | Add-Member -NotePropertyName "gui" -NotePropertyValue $guiObj -Force
+            }
+          }
+
+          # Atualiza DAEMON se o artefato foi gerado nesta execucao (preserva outros componentes intactos)
+          if (Test-Path "release-artifacts/chrono-daemon.exe") {
+            $daemonHash = $hashes["daemon"]
+            if ([string]::IsNullOrWhiteSpace($daemonHash)) { throw "SHA-256 para chrono-daemon.exe esta vazio!" }
+            $daemonObj = [PSCustomObject]@{
+              version = $pkgVerDaemon
+              filename = "chrono-daemon.exe"
+              sha256 = $daemonHash
+              download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
+            }
+            if ($null -ne $manifestObj.components.daemon) {
+              $manifestObj.components.daemon = $daemonObj
+            } else {
+              $manifestObj.components | Add-Member -NotePropertyName "daemon" -NotePropertyValue $daemonObj -Force
+            }
+          }
+
+          # Atualiza BRIDGE DLL se o artefato foi gerado nesta execucao (preserva outros componentes intactos)
+          if (Test-Path "release-artifacts/chronokeep.dll") {
+            $bridgeHash = $hashes["bridge"]
+            if ([string]::IsNullOrWhiteSpace($bridgeHash)) { throw "SHA-256 para chronokeep.dll esta vazio!" }
+            $bridgeObj = [PSCustomObject]@{
+              version = $pkgVerBridge
+              filename = "chronokeep.dll"
+              sha256 = $bridgeHash
+              download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
+            }
+            if ($null -ne $manifestObj.components.bridge_dll) {
+              $manifestObj.components.bridge_dll = $bridgeObj
+            } else {
+              $manifestObj.components | Add-Member -NotePropertyName "bridge_dll" -NotePropertyValue $bridgeObj -Force
+            }
+          }
+
+          # Salva versions.json na raiz do repositorio (para servir via raw content)
+          $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -Path "versions.json" -Encoding UTF8
+
+          # Monta pasta temporaria para gerar o pacote ZIP completo
+          New-Item -ItemType Directory -Force -Path temp-zip
+          Copy-Item -Force release-artifacts/* temp-zip/
+          if (Test-Path dist/chronokeep.ini) { Copy-Item -Force dist/chronokeep.ini temp-zip/ }
+          if (Test-Path dist/Reparar_Instalacao_Steam.bat) { Copy-Item -Force dist/Reparar_Instalacao_Steam.bat temp-zip/ }
+          if (Test-Path README.md) { Copy-Item -Force README.md temp-zip/ }
+          if (Test-Path README.pt-BR.md) { Copy-Item -Force README.pt-BR.md temp-zip/ }
+          if (Test-Path GUIA_GOOGLE_CLOUD_OAUTH.md) { Copy-Item -Force GUIA_GOOGLE_CLOUD_OAUTH.md temp-zip/ }
+
+          # Cria o arquivo ZIP completo se todos os binarios estiverem presentes
+          if ((Test-Path "release-artifacts/ChronoKeep.exe") -and (Test-Path "release-artifacts/chrono-daemon.exe") -and (Test-Path "release-artifacts/chronokeep.dll")) {
+            Compress-Archive -Path temp-zip/* -DestinationPath ChronoKeep-Windows-x64.zip -Force
+          }
+          Remove-Item -Recurse -Force temp-zip
+
+          Get-ChildItem -Path release-artifacts
+
+      - name: Upload Build Artifacts to Workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChronoKeep-Windows-x64
+          path: release-artifacts/*
+
+      - name: Create or Update GitHub Release
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $cargoToml = Get-Content "crates/cr-gui/Cargo.toml" -Raw
+          $pkgVer = if ($cargoToml -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
+
+          $tagName = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
+            "${{ inputs.tag_name }}"
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            $env:GITHUB_REF_NAME
+          } else {
+            $pkgVer
+          }
+
+          $relTitle = if ($tagName -like "v*") { "ChronoKeep $tagName" } else { "ChronoKeep Latest Build" }
+
+          $files = @(Get-ChildItem -Path release-artifacts/* | ForEach-Object { $_.FullName })
+          if (Test-Path "ChronoKeep-Windows-x64.zip") {
+            $files += (Get-Item "ChronoKeep-Windows-x64.zip").FullName
+          }
+
+          $null = gh release view $tagName 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tagName --title $relTitle --notes "ChronoKeep Release Assets ($tagName)"
+          }
+
+          foreach ($f in $files) {
+            gh release upload $tagName $f --clobber
+          }
+
+      - name: Commit updated versions.json to repository
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if (Test-Path versions.json) {
+            $manifestContent = Get-Content -Raw versions.json
+            git remote set-url origin "https://x-access-token:$($env:GITHUB_TOKEN)@github.com/$($env:GITHUB_REPOSITORY).git"
+            git reset --hard HEAD
+            git fetch origin main
+            git checkout -f main
+            git reset --hard origin/main
+            Set-Content -Path "versions.json" -Value $manifestContent -Encoding UTF8
+            git add versions.json
+            git diff --quiet --cached
+            if ($LASTEXITCODE -ne 0) {
+              git commit -m "chore(release): update versions.json manifest [skip ci]"
+              git pull --rebase origin main
+              git push origin main
+            }
+          }
+

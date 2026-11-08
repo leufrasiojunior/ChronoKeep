@@ -26,6 +26,10 @@ on:
         description: 'Tag de destino (opcional: deixe em branco para auto-incremento automático)'
         required: false
         default: ''
+      custom_notes:
+        description: 'Notas personalizadas da release (opcional: adicione detalhes ou deixe em branco para changelog automático)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -45,6 +49,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
+          fetch-depth: 0
           persist-credentials: true
 
       - name: Install Rust toolchain
@@ -52,7 +57,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Determine Target Component and Version
+      - name: Determine Target Component, Version and Release Notes
         shell: pwsh
         run: |
           # 1. Carrega versions.json para consultar versoes existentes
@@ -157,6 +162,49 @@ jobs:
           } else {
             $relTitle = "ChronoKeep $verNumber"
           }
+
+          # 6. Gera notas descritivas e changelog detalhado para a Release
+          $customNotesInput = "${{ inputs.custom_notes }}".Trim()
+          $notesHeader = ""
+          if (![string]::IsNullOrWhiteSpace($customNotesInput)) {
+            $notesHeader = "$customNotesInput`n`n"
+          }
+
+          $compDesc = switch ($comp) {
+            "bridge" { "ChronoKeep Bridge DLL (Hook Steam Cloud e Redirecionamento)" }
+            "daemon" { "ChronoKeep Daemon (Serviço de Sincronização Google Drive em segundo plano)" }
+            "gui"    { "ChronoKeep GUI (Painel de Controle Fluent Win11)" }
+            default  { "Pacote Completo ChronoKeep (Painel + Serviço Daemon + Bridge DLL)" }
+          }
+
+          # Busca a tag anterior para listar os commits recentes
+          $prevTag = git describe --tags --abbrev=0 "HEAD^" 2>$null
+          $commitsList = ""
+          if ($prevTag) {
+            $rawCommits = git log "$prevTag..HEAD" --pretty=format:"- %s (%h)" | Where-Object { $_ -notmatch '\[skip ci\]' }
+            if ($rawCommits) {
+              $commitsList = ($rawCommits -join "`n")
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($commitsList)) {
+            $rawCommits = git log -n 5 --pretty=format:"- %s (%h)" | Where-Object { $_ -notmatch '\[skip ci\]' }
+            if ($rawCommits) {
+              $commitsList = ($rawCommits -join "`n")
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($commitsList)) {
+            $commitsList = "- Atualizações e melhorias de estabilidade."
+          }
+
+          $releaseNotes = @"
+$notesHeader### 📦 $compDesc
+- **Versão:** $verNumber
+- **Tag:** $tagName
+
+#### 📋 Principais alterações:
+$commitsList
+"@
+          $releaseNotes | Set-Content -Path "release_notes.md" -Encoding UTF8
 
           Write-Host "========================================="
           Write-Host "Componente Alvo: $comp"
@@ -370,7 +418,19 @@ jobs:
 
           $null = gh release view $tagName 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tagName --title "$relTitle" --notes "ChronoKeep Release Assets ($tagName)"
+            if (Test-Path "release_notes.md") {
+              gh release create $tagName --title "$relTitle" -F release_notes.md --generate-notes
+            } else {
+              gh release create $tagName --title "$relTitle" --generate-notes
+            }
+          } else {
+            if (Test-Path "release_notes.md") {
+              gh release edit $tagName --title "$relTitle" -F release_notes.md
+            }
+          }
+
+          if (Test-Path "release_notes.md") {
+            Remove-Item -Force "release_notes.md"
           }
 
           foreach ($f in $files) {
