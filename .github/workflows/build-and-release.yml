@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+      - "bridge-v*"
+      - "daemon-v*"
+      - "gui-v*"
   workflow_dispatch:
     inputs:
       component:
@@ -17,7 +20,7 @@ on:
           - 'bridge'
           - 'gui'
       tag_name:
-        description: 'Tag de destino no GitHub Release (ex: v0.2.0 ou latest)'
+        description: 'Tag de destino (opcional: deixe em branco para auto-incremento automático)'
         required: false
         default: ''
 
@@ -46,23 +49,140 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Determine Target Component and Version
+        shell: pwsh
+        run: |
+          # 1. Carrega versions.json para consultar versoes existentes
+          $manifestObj = $null
+          if (Test-Path "versions.json") {
+            try { $manifestObj = Get-Content -Raw "versions.json" | ConvertFrom-Json } catch { $manifestObj = $null }
+          }
+
+          # 2. Le versoes de Cargo.toml como fallback
+          $cargoTomlGui = Get-Content "crates/cr-gui/Cargo.toml" -Raw
+          $pkgVerGui = if ($cargoTomlGui -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v1.0.2" }
+
+          $cargoTomlDaemon = Get-Content "crates/cr-service/Cargo.toml" -Raw
+          $pkgVerDaemon = if ($cargoTomlDaemon -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v1.0.2" }
+
+          $cargoTomlBridge = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
+          $pkgVerBridge = if ($cargoTomlBridge -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v1.0.2" }
+
+          # Funcao para auto-incrementar versao SemVer patch
+          function Bump-PatchVersion($v) {
+            $clean = "$v".Trim().TrimStart('v').TrimStart('V')
+            if ($clean -match '^(\d+)\.(\d+)\.(\d+)') {
+              $maj = [int]$matches[1]
+              $min = [int]$matches[2]
+              $pat = [int]$matches[3] + 1
+              return "v$maj.$min.$pat"
+            } elseif ($clean -match '^(\d+)\.(\d+)') {
+              $maj = [int]$matches[1]
+              $min = [int]$matches[2] + 1
+              return "v$maj.$min.0"
+            }
+            return "v1.0.0"
+          }
+
+          # 3. Identifica o componente alvo
+          $inputComp = "${{ inputs.component }}".Trim()
+          $refName = "$env:GITHUB_REF_NAME"
+
+          $comp = "all"
+          if ($refName -like "bridge-v*") {
+            $comp = "bridge"
+          } elseif ($refName -like "daemon-v*") {
+            $comp = "daemon"
+          } elseif ($refName -like "gui-v*") {
+            $comp = "gui"
+          } elseif ($refName -like "v*") {
+            $comp = "all"
+          } elseif (![string]::IsNullOrWhiteSpace($inputComp)) {
+            $comp = $inputComp
+          }
+
+          # 4. Determina a tag e a versao numerica
+          $inputTag = "${{ inputs.tag_name }}".Trim()
+          $tagName = ""
+          $verNumber = ""
+
+          if (![string]::IsNullOrWhiteSpace($inputTag) -and $inputTag -ne "latest") {
+            # Usuario digitou uma tag customizada manualmente (ex: v2.0.0, 2.0, bridge-v2.0, etc.)
+            $tagName = $inputTag
+            if ($tagName -match '(v?\d+(\.\d+)+)') {
+              $verNumber = if ($matches[1].StartsWith('v')) { $matches[1] } else { "v$($matches[1])" }
+            } else {
+              $verNumber = $tagName
+            }
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            # Disparado por push de Git Tag direto no terminal ou no GitHub
+            $tagName = $refName
+            if ($tagName -match '(v?\d+(\.\d+)+)') {
+              $verNumber = if ($matches[1].StartsWith('v')) { $matches[1] } else { "v$($matches[1])" }
+            } else {
+              $verNumber = $tagName
+            }
+          } else {
+            # Auto-incremento automatico! (tag_name deixado em branco)
+            if ($comp -eq "bridge") {
+              $cur = if ($manifestObj -and $manifestObj.components.bridge_dll -and $manifestObj.components.bridge_dll.version) { $manifestObj.components.bridge_dll.version } else { $pkgVerBridge }
+              $verNumber = Bump-PatchVersion $cur
+              $tagName = "bridge-$verNumber"
+            } elseif ($comp -eq "daemon") {
+              $cur = if ($manifestObj -and $manifestObj.components.daemon -and $manifestObj.components.daemon.version) { $manifestObj.components.daemon.version } else { $pkgVerDaemon }
+              $verNumber = Bump-PatchVersion $cur
+              $tagName = "daemon-$verNumber"
+            } elseif ($comp -eq "gui") {
+              $cur = if ($manifestObj -and $manifestObj.components.gui -and $manifestObj.components.gui.version) { $manifestObj.components.gui.version } else { $pkgVerGui }
+              $verNumber = Bump-PatchVersion $cur
+              $tagName = "gui-$verNumber"
+            } else {
+              $cur = if ($manifestObj -and $manifestObj.release_version -and $manifestObj.release_version -like "v*") { $manifestObj.release_version } else { $pkgVerGui }
+              $verNumber = Bump-PatchVersion $cur
+              $tagName = "$verNumber"
+            }
+          }
+
+          # 5. Define titulo amigavel da Release
+          $relTitle = ""
+          if ($comp -eq "bridge") {
+            $relTitle = "ChronoKeep DLL $verNumber"
+          } elseif ($comp -eq "daemon") {
+            $relTitle = "ChronoKeep Daemon $verNumber"
+          } elseif ($comp -eq "gui") {
+            $relTitle = "ChronoKeep GUI $verNumber"
+          } else {
+            $relTitle = "ChronoKeep $verNumber"
+          }
+
+          Write-Host "========================================="
+          Write-Host "Componente Alvo: $comp"
+          Write-Host "Tag de Release : $tagName"
+          Write-Host "Versao SemVer  : $verNumber"
+          Write-Host "Titulo Release : $relTitle"
+          Write-Host "========================================="
+
+          "TARGET_COMPONENT=$comp" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RELEASE_TAG=$tagName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "COMPONENT_VER=$verNumber" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RELEASE_TITLE=$relTitle" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Build Core Daemon & Bridge DLL
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'daemon' || inputs.component == 'bridge' || inputs.component == 'gui' }}
+        if: ${{ env.TARGET_COMPONENT == 'all' || env.TARGET_COMPONENT == 'daemon' || env.TARGET_COMPONENT == 'bridge' || env.TARGET_COMPONENT == 'gui' }}
         shell: pwsh
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
         run: |
-          $comp = "${{ inputs.component }}"
-          if ($comp -eq "daemon") {
+          if ($env:TARGET_COMPONENT -eq "daemon") {
             cargo build --release -p cr-service
-          } elseif ($comp -eq "bridge") {
+          } elseif ($env:TARGET_COMPONENT -eq "bridge") {
             cargo build --release -p cr-bridge-dll
           } else {
             cargo build --release -p cr-service -p cr-bridge-dll
           }
 
       - name: Update Embedded Binaries for Installer
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
+        if: ${{ env.TARGET_COMPONENT == 'all' || env.TARGET_COMPONENT == 'gui' }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path crates/cr-gui/embedded
@@ -78,7 +198,7 @@ jobs:
           }
 
       - name: Build ChronoKeep Desktop App (ChronoKeep.exe)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.component == 'all' || inputs.component == 'gui' }}
+        if: ${{ env.TARGET_COMPONENT == 'all' || env.TARGET_COMPONENT == 'gui' }}
         shell: pwsh
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
@@ -96,19 +216,22 @@ jobs:
             return $null
           }
           
-          $comp = "${{ inputs.component }}"
-          if ($comp -eq "daemon" -or $comp -eq "all" -or [string]::IsNullOrWhiteSpace($comp)) {
+          $comp = $env:TARGET_COMPONENT
+          $verTag = $env:RELEASE_TAG
+          $compVer = $env:COMPONENT_VER
+
+          if ($comp -eq "daemon" -or $comp -eq "all") {
             $srcDaemon = Get-SourceBin "chrono-daemon.exe"
             if ($srcDaemon) { Copy-Item -Force $srcDaemon release-artifacts/ }
           }
-          if ($comp -eq "bridge" -or $comp -eq "all" -or [string]::IsNullOrWhiteSpace($comp)) {
+          if ($comp -eq "bridge" -or $comp -eq "all") {
             $srcBridge = Get-SourceBin "chronokeep.dll"
             if ($srcBridge) {
               Copy-Item -Force $srcBridge release-artifacts/
               Copy-Item -Force $srcBridge release-artifacts/cloud_redirect.dll
             }
           }
-          if ($comp -eq "gui" -or $comp -eq "all" -or [string]::IsNullOrWhiteSpace($comp)) {
+          if ($comp -eq "gui" -or $comp -eq "all") {
             $srcGui = Get-SourceBin "ChronoKeep.exe"
             if ($srcGui) { Copy-Item -Force $srcGui release-artifacts/ }
           }
@@ -127,24 +250,6 @@ jobs:
 
           if ($hashes.Count -eq 0) {
             throw "Nenhum binario foi encontrado em release-artifacts para empacotar ou publicar!"
-          }
-
-          # Obtem versoes semanticas individuais de cada Cargo.toml
-          $cargoTomlGui = Get-Content "crates/cr-gui/Cargo.toml" -Raw
-          $pkgVerGui = if ($cargoTomlGui -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
-
-          $cargoTomlDaemon = Get-Content "crates/cr-service/Cargo.toml" -Raw
-          $pkgVerDaemon = if ($cargoTomlDaemon -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
-
-          $cargoTomlBridge = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
-          $pkgVerBridge = if ($cargoTomlBridge -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
-
-          $verTag = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
-            "${{ inputs.tag_name }}"
-          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
-            $env:GITHUB_REF_NAME
-          } else {
-            $pkgVerGui
           }
 
           # Carrega versions.json existente se houver para preservar componentes nao alterados
@@ -176,7 +281,7 @@ jobs:
             $guiHash = $hashes["gui"]
             if ([string]::IsNullOrWhiteSpace($guiHash)) { throw "SHA-256 para ChronoKeep.exe esta vazio!" }
             $guiObj = [PSCustomObject]@{
-              version = $pkgVerGui
+              version = if ($comp -eq "gui") { $compVer } elseif ($manifestObj.components.gui -and $manifestObj.components.gui.version) { $manifestObj.components.gui.version } else { $compVer }
               filename = "ChronoKeep.exe"
               sha256 = $guiHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
@@ -193,7 +298,7 @@ jobs:
             $daemonHash = $hashes["daemon"]
             if ([string]::IsNullOrWhiteSpace($daemonHash)) { throw "SHA-256 para chrono-daemon.exe esta vazio!" }
             $daemonObj = [PSCustomObject]@{
-              version = $pkgVerDaemon
+              version = if ($comp -eq "daemon") { $compVer } elseif ($manifestObj.components.daemon -and $manifestObj.components.daemon.version) { $manifestObj.components.daemon.version } else { $compVer }
               filename = "chrono-daemon.exe"
               sha256 = $daemonHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
@@ -210,7 +315,7 @@ jobs:
             $bridgeHash = $hashes["bridge"]
             if ([string]::IsNullOrWhiteSpace($bridgeHash)) { throw "SHA-256 para chronokeep.dll esta vazio!" }
             $bridgeObj = [PSCustomObject]@{
-              version = $pkgVerBridge
+              version = if ($comp -eq "bridge") { $compVer } elseif ($manifestObj.components.bridge_dll -and $manifestObj.components.bridge_dll.version) { $manifestObj.components.bridge_dll.version } else { $compVer }
               filename = "chronokeep.dll"
               sha256 = $bridgeHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
@@ -225,20 +330,18 @@ jobs:
           # Salva versions.json na raiz do repositorio (para servir via raw content)
           $manifestObj | ConvertTo-Json -Depth 5 | Set-Content -Path "versions.json" -Encoding UTF8
 
-          # Monta pasta temporaria para gerar o pacote ZIP completo
-          New-Item -ItemType Directory -Force -Path temp-zip
-          Copy-Item -Force release-artifacts/* temp-zip/
-          if (Test-Path dist/chronokeep.ini) { Copy-Item -Force dist/chronokeep.ini temp-zip/ }
-          if (Test-Path dist/Reparar_Instalacao_Steam.bat) { Copy-Item -Force dist/Reparar_Instalacao_Steam.bat temp-zip/ }
-          if (Test-Path README.md) { Copy-Item -Force README.md temp-zip/ }
-          if (Test-Path README.pt-BR.md) { Copy-Item -Force README.pt-BR.md temp-zip/ }
-          if (Test-Path GUIA_GOOGLE_CLOUD_OAUTH.md) { Copy-Item -Force GUIA_GOOGLE_CLOUD_OAUTH.md temp-zip/ }
-
-          # Cria o arquivo ZIP completo se todos os binarios estiverem presentes
+          # Monta pasta temporaria para gerar o pacote ZIP completo (somente se todos os binarios estiverem presentes)
           if ((Test-Path "release-artifacts/ChronoKeep.exe") -and (Test-Path "release-artifacts/chrono-daemon.exe") -and (Test-Path "release-artifacts/chronokeep.dll")) {
+            New-Item -ItemType Directory -Force -Path temp-zip
+            Copy-Item -Force release-artifacts/* temp-zip/
+            if (Test-Path dist/chronokeep.ini) { Copy-Item -Force dist/chronokeep.ini temp-zip/ }
+            if (Test-Path dist/Reparar_Instalacao_Steam.bat) { Copy-Item -Force dist/Reparar_Instalacao_Steam.bat temp-zip/ }
+            if (Test-Path README.md) { Copy-Item -Force README.md temp-zip/ }
+            if (Test-Path README.pt-BR.md) { Copy-Item -Force README.pt-BR.md temp-zip/ }
+            if (Test-Path GUIA_GOOGLE_CLOUD_OAUTH.md) { Copy-Item -Force GUIA_GOOGLE_CLOUD_OAUTH.md temp-zip/ }
             Compress-Archive -Path temp-zip/* -DestinationPath ChronoKeep-Windows-x64.zip -Force
+            Remove-Item -Recurse -Force temp-zip
           }
-          Remove-Item -Recurse -Force temp-zip
 
           Get-ChildItem -Path release-artifacts
 
@@ -254,18 +357,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $cargoToml = Get-Content "crates/cr-gui/Cargo.toml" -Raw
-          $pkgVer = if ($cargoToml -match 'version\s*=\s*"([^"]+)"') { "v$($matches[1])" } else { "v0.1.5" }
-
-          $tagName = if ("${{ inputs.tag_name }}" -ne "" -and "${{ inputs.tag_name }}" -ne "latest") {
-            "${{ inputs.tag_name }}"
-          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
-            $env:GITHUB_REF_NAME
-          } else {
-            $pkgVer
-          }
-
-          $relTitle = if ($tagName -like "v*") { "ChronoKeep $tagName" } else { "ChronoKeep Latest Build" }
+          $tagName = $env:RELEASE_TAG
+          $relTitle = $env:RELEASE_TITLE
 
           $files = @(Get-ChildItem -Path release-artifacts/* | ForEach-Object { $_.FullName })
           if (Test-Path "ChronoKeep-Windows-x64.zip") {
@@ -274,7 +367,7 @@ jobs:
 
           $null = gh release view $tagName 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tagName --title $relTitle --notes "ChronoKeep Release Assets ($tagName)"
+            gh release create $tagName --title "$relTitle" --notes "ChronoKeep Release Assets ($tagName)"
           }
 
           foreach ($f in $files) {
@@ -292,17 +385,23 @@ jobs:
           if (Test-Path versions.json) {
             $manifestContent = Get-Content -Raw versions.json
             git remote set-url origin "https://x-access-token:$($env:GITHUB_TOKEN)@github.com/$($env:GITHUB_REPOSITORY).git"
+            
+            $targetBranch = if ($env:GITHUB_REF -like "refs/heads/*") {
+              $env:GITHUB_REF.Replace("refs/heads/", "")
+            } else {
+              "main"
+            }
+            
             git reset --hard HEAD
-            git fetch origin main
-            git checkout -f main
-            git reset --hard origin/main
+            git fetch origin $targetBranch
+            git checkout -f $targetBranch
+            git reset --hard "origin/$targetBranch"
             Set-Content -Path "versions.json" -Value $manifestContent -Encoding UTF8
             git add versions.json
             git diff --quiet --cached
             if ($LASTEXITCODE -ne 0) {
-              git commit -m "chore(release): update versions.json manifest [skip ci]"
-              git pull --rebase origin main
-              git push origin main
+              git commit -m "chore(release): update versions.json manifest for $env:RELEASE_TAG [skip ci]"
+              git pull --rebase origin $targetBranch
+              git push origin $targetBranch
             }
           }
-
