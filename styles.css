@@ -374,7 +374,7 @@ body {
 
 .hero-container {
   display: grid;
-  grid-template-columns: 1fr 1.38fr; /* Wide proportion for the real desktop UI */
+  grid-template-columns: 1fr 1.45fr; /* Wide proportion for the real desktop UI */
   align-items: center;
   gap: 36px;
 }
@@ -767,10 +767,10 @@ body {
   background: var(--success-color);
 }
 
-/* Two-Column Grid: Acesso Rápido & Utilitários */
+/* Two-Column Grid: Acesso Rápido (Expanded) & Utilitários (Compact) */
 .mockup-two-col {
   display: grid;
-  grid-template-columns: 1fr 1.35fr;
+  grid-template-columns: 1.25fr 1fr;
   gap: 14px;
 }
 
@@ -781,22 +781,24 @@ body {
   margin-bottom: 8px;
 }
 
-/* Quick Access Grid Tiles (3x2) */
+/* Quick Access Grid Tiles (3x2) - Spacious & Proportional */
 .mockup-quick-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 8px;
 }
 
 .mockup-tile {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-sm);
-  padding: 8px 4px;
+  padding: 12px 6px;
+  min-height: 82px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
   text-align: center;
   cursor: pointer;
   transition: all 0.12s ease;
@@ -805,13 +807,14 @@ body {
 .mockup-tile:hover {
   background: var(--card-bg-hover);
   border-color: var(--card-border-strong);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 .tile-icon-box {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -825,13 +828,13 @@ body {
 .tile-icon-box.green { background: rgba(34, 197, 94, 0.18); color: #4ADE80; }
 
 .mockup-tile-label {
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 500;
   color: var(--text-primary);
-  line-height: 1.15;
+  line-height: 1.2;
 }
 
-/* Utilitários e Serviços List */
+/* Utilitários e Serviços List - Compact & Streamlined */
 .mockup-services-list {
   display: flex;
   flex-direction: column;
@@ -842,7 +845,7 @@ body {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -852,13 +855,13 @@ body {
 .service-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
 .service-icon-box {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.04);
   color: var(--accent-color);
@@ -869,14 +872,14 @@ body {
 }
 
 .service-name {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
 }
 
 .service-desc {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -892,8 +895,8 @@ body {
 
 /* Controls inside service cards */
 .mockup-switch {
-  width: 32px;
-  height: 18px;
+  width: 28px;
+  height: 16px;
   border-radius: 999px;
   background: var(--accent-bg);
   display: inline-flex;
@@ -903,27 +906,27 @@ body {
 }
 
 .mockup-switch .switch-knob {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #FFFFFF;
-  transform: translateX(14px);
+  transform: translateX(12px);
 }
 
 .mockup-refresh-btn {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-tertiary);
   cursor: pointer;
-  padding: 2px;
+  padding: 1px;
 }
 
 .mockup-pill-active {
   background: rgba(108, 203, 95, 0.18);
   color: #6CCB5F;
   border: 1px solid rgba(108, 203, 95, 0.3);
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 600;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border-radius: 999px;
 }
 
@@ -931,9 +934,9 @@ body {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--card-border);
   color: var(--text-primary);
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 500;
-  padding: 3px 6px;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
 }
