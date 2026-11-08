@@ -377,7 +377,7 @@ jobs:
             $guiHash = $hashes["gui"]
             if ([string]::IsNullOrWhiteSpace($guiHash)) { throw "SHA-256 para ChronoKeep.exe esta vazio!" }
             $guiObj = [PSCustomObject]@{
-              version = if ($comp -eq "gui") { $compVer } elseif ($manifestObj.components.gui -and $manifestObj.components.gui.version) { $manifestObj.components.gui.version } else { $compVer }
+              version = if ($comp -eq "all" -or $comp -eq "gui") { $compVer } elseif ($manifestObj.components.gui -and $manifestObj.components.gui.version) { $manifestObj.components.gui.version } else { $compVer }
               filename = "ChronoKeep.exe"
               sha256 = $guiHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/ChronoKeep.exe"
@@ -394,7 +394,7 @@ jobs:
             $daemonHash = $hashes["daemon"]
             if ([string]::IsNullOrWhiteSpace($daemonHash)) { throw "SHA-256 para chrono-daemon.exe esta vazio!" }
             $daemonObj = [PSCustomObject]@{
-              version = if ($comp -eq "daemon") { $compVer } elseif ($manifestObj.components.daemon -and $manifestObj.components.daemon.version) { $manifestObj.components.daemon.version } else { $compVer }
+              version = if ($comp -eq "all" -or $comp -eq "daemon") { $compVer } elseif ($manifestObj.components.daemon -and $manifestObj.components.daemon.version) { $manifestObj.components.daemon.version } else { $compVer }
               filename = "chrono-daemon.exe"
               sha256 = $daemonHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chrono-daemon.exe"
@@ -411,7 +411,7 @@ jobs:
             $bridgeHash = $hashes["bridge"]
             if ([string]::IsNullOrWhiteSpace($bridgeHash)) { throw "SHA-256 para chronokeep.dll esta vazio!" }
             $bridgeObj = [PSCustomObject]@{
-              version = if ($comp -eq "bridge") { $compVer } elseif ($manifestObj.components.bridge_dll -and $manifestObj.components.bridge_dll.version) { $manifestObj.components.bridge_dll.version } else { $compVer }
+              version = if ($comp -eq "all" -or $comp -eq "bridge") { $compVer } elseif ($manifestObj.components.bridge_dll -and $manifestObj.components.bridge_dll.version) { $manifestObj.components.bridge_dll.version } else { $compVer }
               filename = "chronokeep.dll"
               sha256 = $bridgeHash
               download_url = "https://github.com/leufrasiojunior/ChronoKeep/releases/download/$verTag/chronokeep.dll"
