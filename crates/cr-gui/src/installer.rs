@@ -3,7 +3,7 @@
 
 use crate::service_mgr::{check_service_online, is_process_running, kill_process_and_wait, launch_steam, start_service_from_gui};
 use crate::win32::*;
-use cr_common::config::{detect_default_steam_dir, detect_default_vault_dir, find_companion_binary, is_gdrive_connected, resolve_service_port, DEFAULT_SERVICE_PORT};
+use cr_common::config::{detect_default_steam_dir, detect_default_vault_dir, find_companion_binary, is_gdrive_connected, lock_file_readonly, unlock_file_readonly, resolve_service_port, DEFAULT_SERVICE_PORT};
 use cr_common::http::to_wide;
 use std::fs;
 use std::path::Path;
@@ -12,6 +12,9 @@ use std::time::Duration;
 pub fn deploy_bytes_safe(data: &[u8], dst: &Path) -> bool {
     if let Some(parent) = dst.parent() {
         let _ = fs::create_dir_all(parent);
+    }
+    if dst.exists() {
+        unlock_file_readonly(dst);
     }
     if fs::write(dst, data).is_ok() {
         return true;
@@ -217,6 +220,7 @@ pub fn run_silent_install() -> i32 {
 
     deploy_component(&steam_dir.join("chronokeep.dll"), "chronokeep.dll", crate::embedded::get_embedded_bridge());
     deploy_component(&steam_dir.join("cloud_redirect.dll"), "chronokeep.dll", crate::embedded::get_embedded_bridge());
+    lock_file_readonly(&steam_dir.join("cloud_redirect.dll"));
     deploy_component(&steam_dir.join("chrono-daemon.exe"), "chrono-daemon.exe", crate::embedded::get_embedded_daemon());
 
     ensure_opensteamtool_cloud_enabled(steam_dir);
@@ -275,6 +279,7 @@ pub unsafe fn on_install_and_save(hwnd: HWND) {
 
     let target_compat = steam_dir.join("cloud_redirect.dll");
     if deploy_component(&target_compat, "chronokeep.dll", crate::embedded::get_embedded_bridge()) {
+        lock_file_readonly(&target_compat);
         deployed_files.push("cloud_redirect.dll (compatibilidade OpenSteamTool/Hubcap)".to_string());
     }
 

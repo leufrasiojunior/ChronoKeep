@@ -120,6 +120,15 @@ function refreshSystemInfoUI() {
   const metaBridge = document.getElementById("meta-bridge-cur");
   if (metaDaemon && sysInfoCache.daemon_version) metaDaemon.textContent = formatVersionLabel(sysInfoCache.daemon_version);
   if (metaBridge && sysInfoCache.dll_version) metaBridge.textContent = formatVersionLabel(sysInfoCache.dll_version);
+
+  const legacyBanner = document.getElementById("home-legacy-bridge-banner");
+  if (legacyBanner) {
+    if (sysInfoCache.legacy_bridge_detected) {
+      legacyBanner.style.display = "flex";
+    } else {
+      legacyBanner.style.display = "none";
+    }
+  }
 }
 
 async function reloadSystemState() {
@@ -317,6 +326,11 @@ window.openExternalUrl = (url) => {
   }
 };
 
+window.triggerRepairBridgeFromModal = () => {
+  document.getElementById("btn-dep-cancel")?.click();
+  document.getElementById("btn-repair-legacy-bridge")?.click();
+};
+
 let currentDependenciesReport = null;
 
 async function checkAndShowDependenciesModal(onProceed = null) {
@@ -372,6 +386,12 @@ async function checkAndShowDependenciesModal(onProceed = null) {
         const btnStyle = item.action_type === "download" ? "btn-primary" : "btn-secondary";
         actionBtn = `
           <button type="button" class="btn ${btnStyle} btn-sm" style="margin-top: 8px; font-size: 11.5px; padding: 5px 12px;" onclick="window.openExternalUrl('${item.action_target}')">
+            ${item.action_label}
+          </button>
+        `;
+      } else if (item.action_type === "repair_bridge") {
+        actionBtn = `
+          <button type="button" class="btn btn-primary btn-sm" style="margin-top: 8px; font-size: 11.5px; padding: 5px 12px; background: #D97706; border-color: #F59E0B;" onclick="window.triggerRepairBridgeFromModal()">
             ${item.action_label}
           </button>
         `;
@@ -827,6 +847,34 @@ function setupActionHandlers() {
       }
     } catch (_) {
       checkAndShowDependenciesModal(runInstallPipeline);
+    }
+  });
+
+  // Home Banner: Repair Legacy Bridge Button
+  document.getElementById("btn-repair-legacy-bridge")?.addEventListener("click", async () => {
+    let isSteamOpen = false;
+    try {
+      isSteamOpen = await invokeBackend("is_steam_running");
+    } catch (_) {}
+
+    if (isSteamOpen) {
+      const confirmed = await confirmSteamRestart(t("modal.steam_restart_comp_bridge"));
+      if (!confirmed) return;
+    }
+
+    showToast(t("toast.repairing_bridge"));
+    try {
+      const inputSteam = document.getElementById("input-steam-dir")?.value?.trim();
+      const steamDir = inputSteam || appConfig.steam_dir;
+      const res = await invokeBackend("repair_bridge", { steamDir });
+      if (res && res.success) {
+        showToast(res.message);
+        await reloadSystemState();
+      } else {
+        showToast(res ? res.message : t("toast.repair_failed"));
+      }
+    } catch (e) {
+      showToast(t("toast.repair_error", { error: e }));
     }
   });
 

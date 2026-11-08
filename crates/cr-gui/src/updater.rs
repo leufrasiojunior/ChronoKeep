@@ -391,7 +391,9 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
             } else {
                 String::new()
             };
+            let redirect_is_chronokeep = cr_common::config::is_chronokeep_bridge(&redirect_path);
             let redirect_ok = redirect_path.exists()
+                && redirect_is_chronokeep
                 && (remote_hash.is_empty() || redirect_hash == remote_hash);
 
             let status = if !remote_hash.is_empty() && current_hash == remote_hash && redirect_ok {
@@ -618,7 +620,10 @@ pub fn apply_update(
             let dst_redirect = steam_dir.join("cloud_redirect.dll");
 
             let ok1 = deploy_bytes_safe(&bytes, &dst_chronokeep);
-            let _ = deploy_bytes_safe(&bytes, &dst_redirect);
+            let ok2 = deploy_bytes_safe(&bytes, &dst_redirect);
+            if ok2 {
+                cr_common::config::lock_file_readonly(&dst_redirect);
+            }
 
             if !ok1 {
                 return Err(if lang.is_pt() {

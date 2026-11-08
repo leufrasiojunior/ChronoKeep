@@ -327,6 +327,40 @@ pub fn find_companion_binary(bin_name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Checks if the given DLL file is an official ChronoKeep bridge DLL by searching
+/// for its primary export signature (`CK_AttachRuntime`).
+/// Returns `false` if the file does not exist, cannot be read, or belongs to a legacy/foreign tool.
+pub fn is_chronokeep_bridge(dll_path: &Path) -> bool {
+    if !dll_path.exists() {
+        return false;
+    }
+    let Ok(bytes) = fs::read(dll_path) else {
+        return false;
+    };
+    bytes.windows(16).any(|w| w == b"CK_AttachRuntime")
+}
+
+/// Sets the read-only attribute on a file (on Windows NTFS) to prevent unprivileged external tools
+/// from silently overwriting critical bridge DLLs.
+pub fn lock_file_readonly(path: &Path) {
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        perms.set_readonly(true);
+        let _ = fs::set_permissions(path, perms);
+    }
+}
+
+/// Clears the read-only attribute on a file so ChronoKeep can safely upgrade or remove it.
+pub fn unlock_file_readonly(path: &Path) {
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(path, perms);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

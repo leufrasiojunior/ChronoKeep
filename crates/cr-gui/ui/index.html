@@ -169,6 +169,24 @@
           </div>
         </div>
 
+        <!-- Banner de Incompatibilidade / DLL Legada Detectada -->
+        <div class="home-alert-banner warning" id="home-legacy-bridge-banner" style="display: none;">
+          <div class="home-alert-content">
+            <div class="home-alert-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+            </div>
+            <div class="home-alert-texts">
+              <span class="home-alert-title" data-i18n="home.legacy_bridge_banner_title">Incompatibilidade Detectada na Steam</span>
+              <span class="home-alert-desc" data-i18n="home.legacy_bridge_banner_desc">Foi detectada uma versão antiga de outra ferramenta (cloud_redirect.dll legada). Os saves não sincronizarão com a nuvem até que o ChronoKeep seja restaurado por cima.</span>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" id="btn-repair-legacy-bridge" style="background: #D97706; border-color: #F59E0B;" data-i18n="home.legacy_bridge_banner_btn">Reparar e Instalar por Cima</button>
+        </div>
+
         <!-- Banner de Atualização Disponível no Início -->
         <div class="home-update-banner" id="home-update-banner" style="display: none;">
           <div class="home-update-content">
