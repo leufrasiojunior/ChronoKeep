@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+      - "*-bridge"
+      - "*-daemon"
+      - "*-gui"
       - "bridge-v*"
       - "daemon-v*"
       - "gui-v*"
@@ -89,11 +92,11 @@ jobs:
           $refName = "$env:GITHUB_REF_NAME"
 
           $comp = "all"
-          if ($refName -like "bridge-v*") {
+          if ($refName -like "*-bridge" -or $refName -like "bridge-*") {
             $comp = "bridge"
-          } elseif ($refName -like "daemon-v*") {
+          } elseif ($refName -like "*-daemon" -or $refName -like "daemon-*") {
             $comp = "daemon"
-          } elseif ($refName -like "gui-v*") {
+          } elseif ($refName -like "*-gui" -or $refName -like "gui-*") {
             $comp = "gui"
           } elseif ($refName -like "v*") {
             $comp = "all"
@@ -107,7 +110,7 @@ jobs:
           $verNumber = ""
 
           if (![string]::IsNullOrWhiteSpace($inputTag) -and $inputTag -ne "latest") {
-            # Usuario digitou uma tag customizada manualmente (ex: v2.0.0, 2.0, bridge-v2.0, etc.)
+            # Usuario digitou uma tag customizada manualmente (ex: v2.0.0-bridge, 2.0, bridge-v2.0, etc.)
             $tagName = $inputTag
             if ($tagName -match '(v?\d+(\.\d+)+)') {
               $verNumber = if ($matches[1].StartsWith('v')) { $matches[1] } else { "v$($matches[1])" }
@@ -127,15 +130,15 @@ jobs:
             if ($comp -eq "bridge") {
               $cur = if ($manifestObj -and $manifestObj.components.bridge_dll -and $manifestObj.components.bridge_dll.version) { $manifestObj.components.bridge_dll.version } else { $pkgVerBridge }
               $verNumber = Bump-PatchVersion $cur
-              $tagName = "bridge-$verNumber"
+              $tagName = "$verNumber-bridge"
             } elseif ($comp -eq "daemon") {
               $cur = if ($manifestObj -and $manifestObj.components.daemon -and $manifestObj.components.daemon.version) { $manifestObj.components.daemon.version } else { $pkgVerDaemon }
               $verNumber = Bump-PatchVersion $cur
-              $tagName = "daemon-$verNumber"
+              $tagName = "$verNumber-daemon"
             } elseif ($comp -eq "gui") {
               $cur = if ($manifestObj -and $manifestObj.components.gui -and $manifestObj.components.gui.version) { $manifestObj.components.gui.version } else { $pkgVerGui }
               $verNumber = Bump-PatchVersion $cur
-              $tagName = "gui-$verNumber"
+              $tagName = "$verNumber-gui"
             } else {
               $cur = if ($manifestObj -and $manifestObj.release_version -and $manifestObj.release_version -like "v*") { $manifestObj.release_version } else { $pkgVerGui }
               $verNumber = Bump-PatchVersion $cur

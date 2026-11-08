@@ -239,7 +239,8 @@ pub fn detect_bridge_version(bridge_path: &Path, remote_hash: &str, target_ver: 
 
 fn parse_version_tuple(v: &str) -> (u32, u32, u32) {
     let clean = v.trim().trim_start_matches('v').trim_start_matches('V');
-    let mut parts = clean.split('.').filter_map(|s| s.parse::<u32>().ok());
+    let base = clean.split('-').next().unwrap_or(clean);
+    let mut parts = base.split('.').filter_map(|s| s.parse::<u32>().ok());
     (
         parts.next().unwrap_or(0),
         parts.next().unwrap_or(0),
