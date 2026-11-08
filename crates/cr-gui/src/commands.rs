@@ -1190,7 +1190,7 @@ pub fn repair_bridge(steam_dir: Option<String>) -> OperationResult {
 
     if !ok1 || !ok2 {
         if steam_was_running {
-            launch_steam(s_path);
+            crate::service_mgr::launch_steam(s_path);
         }
         return OperationResult {
             success: false,
@@ -1211,7 +1211,7 @@ pub fn repair_bridge(steam_dir: Option<String>) -> OperationResult {
     // 6. Se a Steam estava rodando, relança
     if steam_was_running {
         std::thread::sleep(Duration::from_millis(600));
-        launch_steam(s_path);
+        crate::service_mgr::launch_steam(s_path);
     }
 
     OperationResult {
