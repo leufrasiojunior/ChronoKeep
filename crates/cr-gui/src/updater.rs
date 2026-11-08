@@ -282,7 +282,7 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
         .and_then(|m| m.version.clone())
         .unwrap_or_else(|| manifest.release_version.clone());
 
-    let (gui_hash, gui_status, gui_dl, gui_filename) = if let Some(m) = gui_manifest {
+    let (gui_hash, gui_status, gui_cur_ver, gui_dl, gui_filename) = if let Some(m) = gui_manifest {
         let remote_hash = m.sha256.to_lowercase();
         let current_hash = std::env::current_exe()
             .ok()
@@ -290,10 +290,16 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
             .unwrap_or_default()
             .to_lowercase();
 
-        let cur_ver = format!("v{}", env!("CARGO_PKG_VERSION"));
+        let cur_hash_matches = !remote_hash.is_empty() && current_hash == remote_hash;
+        let cur_ver = if cur_hash_matches {
+            gui_latest_ver.clone()
+        } else {
+            format!("v{}", env!("CARGO_PKG_VERSION"))
+        };
+
         let status = if current_hash.is_empty() {
             "error".to_string()
-        } else if !remote_hash.is_empty() && current_hash == remote_hash {
+        } else if cur_hash_matches {
             "up_to_date".to_string()
         } else if is_remote_newer(&cur_ver, &gui_latest_ver) {
             "update_available".to_string()
@@ -301,9 +307,9 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
             "up_to_date".to_string()
         };
 
-        (current_hash, status, m.download_url.clone(), m.filename.clone())
+        (current_hash, status, cur_ver, m.download_url.clone(), m.filename.clone())
     } else {
-        (String::new(), "up_to_date".to_string(), String::new(), "ChronoKeep.exe".to_string())
+        (String::new(), "up_to_date".to_string(), format!("v{}", env!("CARGO_PKG_VERSION")), String::new(), "ChronoKeep.exe".to_string())
     };
 
     components.push(ComponentUpdateInfo {
@@ -313,7 +319,7 @@ pub fn check_updates(steam_dir: &Path, lang: Lang) -> UpdateCheckResult {
         } else {
             "ChronoKeep (GUI Panel)".to_string()
         },
-        current_version: format!("v{}", env!("CARGO_PKG_VERSION")),
+        current_version: gui_cur_ver,
         latest_version: gui_latest_ver,
         current_hash: gui_hash,
         latest_hash: gui_manifest.map(|m| m.sha256.to_lowercase()).unwrap_or_default(),

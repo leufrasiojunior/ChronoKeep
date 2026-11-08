@@ -218,6 +218,39 @@ jobs:
           "COMPONENT_VER=$verNumber" | Out-File -FilePath $env:GITHUB_ENV -Append
           "RELEASE_TITLE=$relTitle" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Synchronize Package Manifest Versions
+        shell: pwsh
+        run: |
+          $ver = "$env:COMPONENT_VER".TrimStart("vV")
+          $comp = "$env:TARGET_COMPONENT"
+
+          if ($comp -eq "gui" -or $comp -eq "all") {
+            if (Test-Path "crates/cr-gui/Cargo.toml") {
+              $guiToml = Get-Content "crates/cr-gui/Cargo.toml" -Raw
+              $guiToml = $guiToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $guiToml | Set-Content "crates/cr-gui/Cargo.toml" -Encoding UTF8
+            }
+            if (Test-Path "crates/cr-gui/tauri.conf.json") {
+              $tauriJson = Get-Content "crates/cr-gui/tauri.conf.json" -Raw
+              $tauriJson = $tauriJson -replace '"version":\s*"[^"]+"', "`"version`": `"$ver`""
+              $tauriJson | Set-Content "crates/cr-gui/tauri.conf.json" -Encoding UTF8
+            }
+          }
+          if ($comp -eq "daemon" -or $comp -eq "all") {
+            if (Test-Path "crates/cr-service/Cargo.toml") {
+              $daemonToml = Get-Content "crates/cr-service/Cargo.toml" -Raw
+              $daemonToml = $daemonToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $daemonToml | Set-Content "crates/cr-service/Cargo.toml" -Encoding UTF8
+            }
+          }
+          if ($comp -eq "bridge" -or $comp -eq "all") {
+            if (Test-Path "crates/cr-bridge-dll/Cargo.toml") {
+              $bridgeToml = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
+              $bridgeToml = $bridgeToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+              $bridgeToml | Set-Content "crates/cr-bridge-dll/Cargo.toml" -Encoding UTF8
+            }
+          }
+
       - name: Build Core Daemon & Bridge DLL
         if: ${{ env.TARGET_COMPONENT == 'all' || env.TARGET_COMPONENT == 'daemon' || env.TARGET_COMPONENT == 'bridge' || env.TARGET_COMPONENT == 'gui' }}
         shell: pwsh
@@ -459,11 +492,45 @@ jobs:
             git fetch origin $targetBranch
             git checkout -f $targetBranch
             git reset --hard "origin/$targetBranch"
+
+            $ver = "$env:COMPONENT_VER".TrimStart("vV")
+            $comp = "$env:TARGET_COMPONENT"
+            if ($comp -eq "gui" -or $comp -eq "all") {
+              if (Test-Path "crates/cr-gui/Cargo.toml") {
+                $guiToml = Get-Content "crates/cr-gui/Cargo.toml" -Raw
+                $guiToml = $guiToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $guiToml | Set-Content "crates/cr-gui/Cargo.toml" -Encoding UTF8
+                git add crates/cr-gui/Cargo.toml
+              }
+              if (Test-Path "crates/cr-gui/tauri.conf.json") {
+                $tauriJson = Get-Content "crates/cr-gui/tauri.conf.json" -Raw
+                $tauriJson = $tauriJson -replace '"version":\s*"[^"]+"', "`"version`": `"$ver`""
+                $tauriJson | Set-Content "crates/cr-gui/tauri.conf.json" -Encoding UTF8
+                git add crates/cr-gui/tauri.conf.json
+              }
+            }
+            if ($comp -eq "daemon" -or $comp -eq "all") {
+              if (Test-Path "crates/cr-service/Cargo.toml") {
+                $daemonToml = Get-Content "crates/cr-service/Cargo.toml" -Raw
+                $daemonToml = $daemonToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $daemonToml | Set-Content "crates/cr-service/Cargo.toml" -Encoding UTF8
+                git add crates/cr-service/Cargo.toml
+              }
+            }
+            if ($comp -eq "bridge" -or $comp -eq "all") {
+              if (Test-Path "crates/cr-bridge-dll/Cargo.toml") {
+                $bridgeToml = Get-Content "crates/cr-bridge-dll/Cargo.toml" -Raw
+                $bridgeToml = $bridgeToml -replace 'version\s*=\s*"[^"]+"', "version = `"$ver`""
+                $bridgeToml | Set-Content "crates/cr-bridge-dll/Cargo.toml" -Encoding UTF8
+                git add crates/cr-bridge-dll/Cargo.toml
+              }
+            }
+
             Set-Content -Path "versions.json" -Value $manifestContent -Encoding UTF8
             git add versions.json
             git diff --quiet --cached
             if ($LASTEXITCODE -ne 0) {
-              git commit -m "chore(release): update versions.json manifest for $env:RELEASE_TAG [skip ci]"
+              git commit -m "chore(release): update versions.json and package manifests for $env:RELEASE_TAG [skip ci]"
               git pull --rebase origin $targetBranch
               git push origin $targetBranch
             }
