@@ -1,26 +1,25 @@
 {
-  "release_version": "v1.0.0",
-  "published_at": "2026-11-08T00:59:58Z",
+  "release_version": "v1.0.1",
+  "published_at": "2026-11-08T01:13:34Z",
   "components": {
     "gui": {
-      "version": "v1.0.0",
+      "version": "v1.0.1",
       "filename": "ChronoKeep.exe",
-      "sha256": "e64cbe38f3bc2ca3e6cbcecae3cbc156ca7e2e4eefb83bef76e7687f66d34799",
-      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v1.0.0/ChronoKeep.exe"
+      "sha256": "5bdc5250b0e1039db362235cad6a3858edbdb9144abb16b024385461e9f25f07",
+      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v1.0.1/ChronoKeep.exe"
     },
     "daemon": {
-      "version": "v1.0.0",
+      "version": "v1.0.1",
       "filename": "chrono-daemon.exe",
-      "sha256": "b6b87c9791c8ae1f182c0a64a3410d238050699a3d59a51c7b397dbdc2e7d39e",
-      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v1.0.0/chrono-daemon.exe"
+      "sha256": "d20cfebc601604fcafab63eb6b46f3894380d65c2eeabd48315e7feb51643360",
+      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v1.0.1/chrono-daemon.exe"
     },
     "bridge_dll": {
-      "version": "v1.0.0",
+      "version": "v1.0.1",
       "filename": "chronokeep.dll",
-      "sha256": "eaa1ac70cc86b220570ccfdd2fd945217760fd37f07f78359bde9f44010b7750",
-      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v1.0.0/chronokeep.dll"
+      "sha256": "148cc81ae88b7774790ed46e58751364e399be16660660809972499c447b47c8",
+      "download_url": "https://github.com/leufrasiojunior/ChronoKeep/releases/download/v1.0.1/chronokeep.dll"
     }
   }
 }
-
 
