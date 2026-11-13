@@ -522,6 +522,15 @@ fn init_internal(normalized_path: &str, source_tag: &str) -> bool {
     ));
     log_line(&format!("Steam Path: {}", normalized_path));
 
+    let (toml_healed, dll_healed) =
+        cr_common::config::auto_heal_steam_dir(Path::new(normalized_path));
+    if toml_healed || dll_healed {
+        log_line(&format!(
+            "[Guardian] Auto-cura aplicada na inicializacao (opensteamtool.toml={}, cloud_redirect.dll={})",
+            toml_healed, dll_healed
+        ));
+    }
+
     auto_seed_local_apps(normalized_path);
 
     let service_ok = ipc::ensure_service_running(normalized_path, port);
