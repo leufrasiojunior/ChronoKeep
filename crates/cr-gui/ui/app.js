@@ -73,7 +73,7 @@ function applyLanguage(pref, refreshDynamic = true) {
     const resolved = window.ChronoI18n.resolveLocale(normalizedPref, osLocale);
     window.ChronoI18n.setLocale(resolved);
     window.ChronoI18n.applyI18nToDOM();
-    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v1.0.4";
+    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v1.0.5";
     const vStr = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
     const heroVerEl = document.getElementById("hero-version");
     if (heroVerEl) heroVerEl.textContent = t("home.hero_version", { version: vStr });
