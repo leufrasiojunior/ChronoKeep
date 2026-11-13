@@ -129,6 +129,10 @@ const CHRONO_LOCALES = {
     "settings.theme_light": "Light Mode",
     "settings.notifications_title": "Windows Notifications",
     "settings.notifications_desc": "Display native notification when Steam Cloud synchronization connects",
+    "settings.guardian_title": "Guardian Mode (Auto-Heal & System Tray)",
+    "settings.guardian_desc": "Minimizes to tray on close and automatically restores the DLL and opensteamtool.toml if external tools (e.g. LuaTools) overwrite them",
+    "settings.autostart_title": "Start with Windows (Minimized)",
+    "settings.autostart_desc": "Starts Guardian silently in the system tray when Windows boots",
 
     "settings.updates_group": "Component Updates",
     "settings.updates_status_title": "Component Status",
@@ -566,6 +570,10 @@ const CHRONO_LOCALES = {
     "settings.theme_light": "Modo Claro (Light)",
     "settings.notifications_title": "Notificações do Windows",
     "settings.notifications_desc": "Exibir notificação nativa ao conectar a sincronização Steam Cloud",
+    "settings.guardian_title": "Modo Guardião (Auto-Cura e Bandeja)",
+    "settings.guardian_desc": "Minimiza para a bandeja ao fechar e restaura automaticamente a DLL e o opensteamtool.toml caso apps externos (ex: LuaTools) os sobrescrevam",
+    "settings.autostart_title": "Iniciar com o Windows (Minimizado)",
+    "settings.autostart_desc": "Inicia o Guardião silenciosamente na bandeja do sistema junto com o Windows",
 
     "settings.updates_group": "Atualizações de Componentes",
     "settings.updates_status_title": "Status dos Componentes",

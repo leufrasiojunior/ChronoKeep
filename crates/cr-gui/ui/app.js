@@ -23,6 +23,10 @@ let appConfig = {
   theme: "dark",
   language: "system",
   backup_provider: "gdrive",
+  debug_mode: false,
+  notifications: true,
+  guardian: true,
+  autostart: false,
 };
 let defaultVaultDir = "";
 let osLocale = "";
@@ -69,7 +73,7 @@ function applyLanguage(pref, refreshDynamic = true) {
     const resolved = window.ChronoI18n.resolveLocale(normalizedPref, osLocale);
     window.ChronoI18n.setLocale(resolved);
     window.ChronoI18n.applyI18nToDOM();
-    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v1.0.4";
+    const rawVer = (sysInfoCache && sysInfoCache.version) ? sysInfoCache.version : "v1.0.5";
     const vStr = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
     const heroVerEl = document.getElementById("hero-version");
     if (heroVerEl) heroVerEl.textContent = t("home.hero_version", { version: vStr });
@@ -758,10 +762,18 @@ async function loadInitialData() {
         updateLogAutoRefreshState();
       }
 
-      // Sync notifications toggle
+      // Sync notifications, guardian, and autostart toggles
       const checkNotif = document.getElementById("check-notifications");
       if (checkNotif) {
         checkNotif.checked = appConfig.notifications !== false;
+      }
+      const checkGuardian = document.getElementById("check-guardian");
+      if (checkGuardian) {
+        checkGuardian.checked = appConfig.guardian !== false;
+      }
+      const checkAutostart = document.getElementById("check-autostart");
+      if (checkAutostart) {
+        checkAutostart.checked = !!appConfig.autostart;
       }
 
       // Load Steam Web API Key
@@ -1072,7 +1084,10 @@ function setupActionHandlers() {
       theme: themeEl ? themeEl.value : appConfig.theme,
       language: langEl ? langEl.value : (appConfig.language || "system"),
       backup_provider: providerEl ? providerEl.value : (appConfig.backup_provider || "gdrive"),
+      debug_mode: !!appConfig.debug_mode,
       notifications: document.getElementById("check-notifications") ? document.getElementById("check-notifications").checked : (appConfig.notifications !== false),
+      guardian: document.getElementById("check-guardian") ? document.getElementById("check-guardian").checked : (appConfig.guardian !== false),
+      autostart: document.getElementById("check-autostart") ? document.getElementById("check-autostart").checked : !!appConfig.autostart,
     };
 
     const res = await invokeBackend("save_config", { cfg: newCfg });
@@ -1106,9 +1121,17 @@ function setupActionHandlers() {
   document.getElementById("btn-save-config")?.addEventListener("click", () => saveSettings("config-feedback"));
   document.getElementById("btn-save-providers")?.addEventListener("click", () => saveSettings("providers-feedback"));
 
-  // Windows Notifications toggle: immediate persistence
+  // Windows Notifications, Guardian & Autostart toggles: immediate persistence
   document.getElementById("check-notifications")?.addEventListener("change", (e) => {
     appConfig.notifications = e.target.checked;
+    saveSettings("config-feedback");
+  });
+  document.getElementById("check-guardian")?.addEventListener("change", (e) => {
+    appConfig.guardian = e.target.checked;
+    saveSettings("config-feedback");
+  });
+  document.getElementById("check-autostart")?.addEventListener("change", (e) => {
+    appConfig.autostart = e.target.checked;
     saveSettings("config-feedback");
   });
 

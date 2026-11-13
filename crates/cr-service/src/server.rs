@@ -73,6 +73,26 @@ pub fn handle_connection(
                 std::time::Duration::from_secs(25),
                 Some(lp.as_ref()),
             );
+            if let Some(exe_dir) = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            {
+                if cr_common::config::load_guardian_enabled(Some(&exe_dir)) {
+                    for _ in 0..6 {
+                        let (th, dh) = cr_common::config::auto_heal_steam_dir(&exe_dir);
+                        if th || dh {
+                            log_msg(
+                                &lp,
+                                &format!(
+                                    "[Guardian] Auto-cura aplicada no shutdown (/v1/shutdown) (opensteamtool.toml={}, cloud_redirect.dll={})",
+                                    th, dh
+                                ),
+                            );
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                }
+            }
             std::thread::sleep(std::time::Duration::from_millis(120));
             std::process::exit(0);
         });
@@ -115,6 +135,18 @@ pub fn handle_connection(
         let mut legacy_detected = false;
         if let Some(ref sp) = steam_path {
             let s_dir = Path::new(sp);
+            if cr_common::config::load_guardian_enabled(Some(s_dir)) {
+                let (th, dh) = cr_common::config::auto_heal_steam_dir(s_dir);
+                if th || dh {
+                    log_msg(
+                        &log_path,
+                        &format!(
+                            "[Guardian] Auto-cura aplicada na sessao Steam (opensteamtool.toml={}, cloud_redirect.dll={})",
+                            th, dh
+                        ),
+                    );
+                }
+            }
             let redir = s_dir.join("cloud_redirect.dll");
             if redir.exists() && !cr_common::config::is_chronokeep_bridge(&redir) {
                 legacy_detected = true;

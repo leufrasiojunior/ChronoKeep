@@ -192,6 +192,10 @@ pub struct ConfigDto {
     pub debug_mode: bool,
     #[serde(default = "default_true")]
     pub notifications: bool,
+    #[serde(default = "default_true")]
+    pub guardian: bool,
+    #[serde(default)]
+    pub autostart: bool,
 }
 
 fn default_true() -> bool {
@@ -332,6 +336,48 @@ pub fn save_preferred_steam_dir(steam_dir: &str) {
     let _ = fs::write(prefs_file, content);
 }
 
+pub fn apply_windows_autostart(enabled: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if enabled {
+            if let Ok(cur_exe) = std::env::current_exe() {
+                let exe_val = format!("\"{}\" --minimized", cur_exe.to_string_lossy());
+                let _ = std::process::Command::new("reg")
+                    .args([
+                        "add",
+                        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                        "/v",
+                        "ChronoKeep",
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        &exe_val,
+                        "/f",
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+        } else {
+            let _ = std::process::Command::new("reg")
+                .args([
+                    "delete",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v",
+                    "ChronoKeep",
+                    "/f",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+    }
+}
+
 #[tauri::command]
 pub fn get_system_info() -> SystemInfoDto {
     let steam_dir = load_preferred_steam_dir();
@@ -339,6 +385,11 @@ pub fn get_system_info() -> SystemInfoDto {
     let vault_dir = detect_default_vault_dir(None).to_string_lossy().into_owned();
     let lang = crate::i18n::current_lang(Some(s_path));
     let os_locale = crate::i18n::Lang::detect_os_locale().as_code().to_string();
+
+    // Auto-heal se o modo Guardião estiver ativo e o ChronoKeep estiver instalado na Steam
+    if cr_common::config::load_guardian_enabled(Some(s_path)) {
+        let _ = cr_common::config::auto_heal_steam_dir(s_path);
+    }
 
     let ost_disabled = is_opensteamtool_cloud_disabled(s_path);
     let opensteamtool_active = s_path.join("opensteamtool.toml").exists() && !ost_disabled;
@@ -400,6 +451,8 @@ pub fn get_config() -> ConfigDto {
     let mut backup_provider = "gdrive".to_string();
     let mut debug_mode = false;
     let mut notifications = true;
+    let mut guardian = true;
+    let mut autostart = false;
 
     let ini_path = s_path.join("chronokeep.ini");
     if let Ok(content) = fs::read_to_string(&ini_path) {
@@ -419,6 +472,8 @@ pub fn get_config() -> ConfigDto {
                     "backup_provider" if !v.is_empty() => backup_provider = v.to_string(),
                     "debug" => debug_mode = v.eq_ignore_ascii_case("true") || v == "1",
                     "notifications" | "notify" => notifications = v.eq_ignore_ascii_case("true") || v == "1",
+                    "guardian" | "minimize_to_tray" => guardian = !v.eq_ignore_ascii_case("false") && v != "0",
+                    "autostart" | "start_with_windows" => autostart = v.eq_ignore_ascii_case("true") || v == "1",
                     _ => {}
                 }
             }
@@ -439,6 +494,8 @@ pub fn get_config() -> ConfigDto {
         backup_provider,
         debug_mode,
         notifications,
+        guardian,
+        autostart,
     }
 }
 
@@ -510,6 +567,8 @@ pub async fn save_config(cfg: ConfigDto) -> OperationResult {
         lines.push(format!("backup_provider={}", cfg.backup_provider));
         lines.push(format!("debug={}", cfg.debug_mode));
         lines.push(format!("notifications={}", cfg.notifications));
+        lines.push(format!("guardian={}", cfg.guardian));
+        lines.push(format!("autostart={}", cfg.autostart));
 
         if !refresh_token.is_empty() {
             lines.push(format!("gdrive_refresh_token={}", refresh_token));
@@ -523,6 +582,10 @@ pub async fn save_config(cfg: ConfigDto) -> OperationResult {
         if fs::write(&ini_path, content).is_ok() {
             save_preferred_steam_dir(&cfg.steam_dir);
             crate::i18n::save_language_pref(&normalized_lang, Some(s_path));
+            apply_windows_autostart(cfg.autostart);
+            if cfg.guardian {
+                let _ = cr_common::config::auto_heal_steam_dir(s_path);
+            }
             // Se o daemon estiver ativo (na porta anterior ou na nova), reinicia para aplicar as novas configurações
             let was_running = check_daemon_health(current_port) || (current_port != cfg.port && check_daemon_health(cfg.port));
             if was_running {
@@ -966,13 +1029,15 @@ pub async fn install_chronokeep(steam_dir: String, vault_dir: String) -> Operati
                  vault_dir={}\r\n\
                  dll_name=chronokeep.dll\r\n\
                  language={}\r\n\
-                 notifications=true\r\n",
+                 notifications=true\r\n\
+                 guardian=true\r\n\
+                 autostart=false\r\n",
                 port, vault_dir, saved_lang_pref
             );
             let _ = fs::write(&ini_path, ini_content);
         }
 
-        // Ativa [cloud] no opensteamtool.toml se existir
+        // Ativa [cloud] e library = "chronokeep.dll" no opensteamtool.toml se existir
         crate::installer::ensure_opensteamtool_cloud_enabled(s_path);
 
         // Salva o diretório da Steam como preferência da GUI
@@ -1144,7 +1209,9 @@ pub async fn uninstall_chronokeep(
             }
         }
 
-        // 4. Deletar os binários do ChronoKeep da pasta da Steam
+        // 4. Deletar os binários do ChronoKeep da pasta da Steam e desativar no opensteamtool.toml
+        cr_common::config::disable_opensteamtool_chronokeep(steam_path);
+        apply_windows_autostart(false);
         let _ = fs::remove_file(steam_path.join("chronokeep.dll"));
         cr_common::config::unlock_file_readonly(&steam_path.join("cloud_redirect.dll"));
         let _ = fs::remove_file(steam_path.join("cloud_redirect.dll"));

@@ -76,6 +76,52 @@ fn main() {
     if let Some(ref d) = exe_dir {
         let _ = fs::write(d.join("chrono_port.dat"), actual_port.to_string());
         update_ini_port(d, actual_port);
+
+        if cr_common::config::load_guardian_enabled(Some(d)) {
+            let (toml_healed, dll_healed) = cr_common::config::auto_heal_steam_dir(d);
+            if toml_healed || dll_healed {
+                log_msg(
+                    &cfg.log_path,
+                    &format!(
+                        "[Guardian] Auto-cura aplicada na inicializacao do daemon (opensteamtool.toml={}, cloud_redirect.dll={})",
+                        toml_healed, dll_healed
+                    ),
+                );
+            }
+        }
+
+        let guard_dir = d.clone();
+        let guard_log = cfg.log_path.clone();
+        thread::spawn(move || loop {
+            thread::sleep(std::time::Duration::from_secs(2));
+            if !cr_common::config::load_guardian_enabled(Some(&guard_dir)) {
+                continue;
+            }
+            let (toml_h, dll_h) = cr_common::config::auto_heal_steam_dir(&guard_dir);
+            if toml_h || dll_h {
+                log_msg(
+                    &guard_log,
+                    &format!(
+                        "[Guardian] Alteracao externa detectada (ex: LuaTools)! Auto-cura aplicada em tempo real (opensteamtool.toml={}, cloud_redirect.dll={})",
+                        toml_h, dll_h
+                    ),
+                );
+                if cr_common::config::load_notifications_enabled(Some(&guard_dir)) {
+                    let is_pt = cr_common::config::is_portuguese_language(Some(&guard_dir));
+                    let title = if is_pt {
+                        "ChronoKeep Guardião"
+                    } else {
+                        "ChronoKeep Guardian"
+                    };
+                    let msg = if is_pt {
+                        "Alteração externa detectada (ex: LuaTools). A proteção da Steam Cloud foi restaurada automaticamente!"
+                    } else {
+                        "External change detected (e.g. LuaTools). Steam Cloud protection was automatically restored!"
+                    };
+                    cr_common::notify::show_balloon_notification(title, msg, false);
+                }
+            }
+        });
     }
 
     log_msg(
