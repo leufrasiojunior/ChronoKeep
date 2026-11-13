@@ -597,6 +597,8 @@ body {
 .card-icon-box.orange { background: rgba(245, 158, 11, 0.18); color: #FBBF24; }
 .card-icon-box.cyan { background: rgba(0, 180, 216, 0.18); color: #48CAE4; }
 .card-icon-box.accent { background: rgba(96, 205, 255, 0.18); color: var(--accent-color); }
+.card-icon-box.teal { background: rgba(16, 185, 129, 0.18); color: #34D399; }
+.card-icon-box.purple { background: rgba(168, 85, 247, 0.18); color: #C084FC; }
 
 .card-name {
   font-size: 13px;

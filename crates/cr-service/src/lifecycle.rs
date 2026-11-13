@@ -113,6 +113,28 @@ pub fn ensure_parent_watcher(pid: u32, log_path: Arc<PathBuf>) {
                 std::time::Duration::from_secs(25),
                 Some(log_path.as_ref()),
             );
+
+            if let Some(exe_dir) = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            {
+                if cr_common::config::load_guardian_enabled(Some(&exe_dir)) {
+                    for _ in 0..6 {
+                        let (th, dh) = cr_common::config::auto_heal_steam_dir(&exe_dir);
+                        if th || dh {
+                            log_msg(
+                                &log_path,
+                                &format!(
+                                    "[Guardian] Auto-cura aplicada no encerramento da Steam (opensteamtool.toml={}, cloud_redirect.dll={})",
+                                    th, dh
+                                ),
+                            );
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                }
+            }
+
             std::thread::sleep(std::time::Duration::from_millis(150));
             std::process::exit(0);
         });
